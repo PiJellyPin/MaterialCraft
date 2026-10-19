@@ -1056,7 +1056,24 @@ fn phase3_scatter_nodes_keep_old_output_and_gain_properties() {
     cp.pos_rand = 0.5;
     cp.seed = 4;
     let new = scatter::splatter_circular(64, 64, &scatter::Patterns { inputs: vec![], builtin: 0, fallback: 2, distribution: 0 }, &cp);
-    assert!(diff(&old, &new) < 1e-6, "splatter circular changed");
+    // Both paths call sin/cos, so both go through the platform libm and MSVC's
+    // CRT disagrees with glibc in the last bit or two. Measured on the Windows
+    // runner: max 6.3e-6, mean 7e-9, 9 of 4096 pixels above 1e-6, none above
+    // 1e-4. The previous 1e-6 bound sat below the platforms' own agreement
+    // level, so it passed on Linux and macOS and failed only on Windows. 1e-4
+    // leaves ~16x headroom over the measured drift while still catching a real
+    // regression, which would move whole regions by order 1 rather than nudging
+    // a handful of pixels in the sixth decimal place.
+    let n = old.px.len();
+    let d: Vec<f32> = old.px.iter().zip(&new.px).map(|(p, q)| (p[0] - q[0]).abs()).collect();
+    let diag = format!(
+        "max={:.3e} mean={:.3e} over1e-4={} of {} px",
+        diff(&old, &new),
+        d.iter().sum::<f32>() / n as f32,
+        d.iter().filter(|v| **v > 1e-4).count(),
+        n
+    );
+    assert!(diff(&old, &new) < 1e-4, "splatter circular changed: {diag}");
 
     // 2. built-in patterns, offsets, masks, blending, reverse order
     let base = run("node 1 tile_sampler x_amount=4 y_amount=4 size=0.9\noutput a 1\n");

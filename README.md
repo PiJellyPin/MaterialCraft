@@ -14,6 +14,23 @@ our discord is here: if you want to submit features or got any cool ideas! https
 # MaterialCraft
 Procedural, node-based material authoring in pure Rust (Windows / Linux / macOS).
 
+## Download
+Every push to `main` is built, installed and launched on all three platforms, then published as the rolling
+[`latest` prerelease](../../releases/tag/latest). It is a development build, replaced on every push.
+
+| Platform | File | Notes |
+|---|---|---|
+| Windows 10/11 x64 | `MaterialCraft_<version>_x64-windows.zip` | Unzip and run `materialcraft-gui.exe`. Unsigned, so SmartScreen may ask once: More info > Run anyway. |
+| macOS 11+ (Apple Silicon and Intel) | `MaterialCraft_<version>_universal-macOS.dmg` | Drag MaterialCraft to Applications. Not notarised: the first time, right-click the app > Open (or System Settings > Privacy & Security > Open Anyway). The `materialcraft` CLI is next to the app in the dmg. |
+| Debian / Ubuntu | `MaterialCraft_<version>_x86_64-linux.deb` | `sudo apt install ./MaterialCraft_<version>_x86_64-linux.deb` |
+| Fedora / RHEL / openSUSE | `MaterialCraft_<version>_x86_64-linux.rpm` | `sudo dnf install ./MaterialCraft_<version>_x86_64-linux.rpm` |
+| Any Linux | `MaterialCraft_<version>_x86_64-linux.AppImage` | `chmod +x` and run. Needs FUSE (`fusermount`); without it, run with `--appimage-extract-and-run`. |
+| Any Linux | `MaterialCraft_<version>_x86_64-linux.tar.gz` | Both binaries, no install. Needs the X11/Wayland, xkbcommon and EGL/GL libraries every desktop already has. |
+
+Linux builds need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 and later).
+`SHA256SUMS` lists every file's checksum, and each file carries a build provenance attestation:
+`gh attestation verify <file> -R PiJellyPin/MaterialCraft`.
+
 ## Build & run
     cargo run --release --features gui --bin materialcraft-gui     # visual editor
     cargo run --release -- render examples/brick.mcg out --size 1024 --render3d   # CLI
@@ -50,7 +67,7 @@ Windows, Linux and macOS use the same code: `eframe` (glow / OpenGL 3.3 core) fo
 file dialogs, plus the shared Craft libraries (`craft-ui` docking, `craft-settings`, `craft-atomic`, `craft-cms`, `craft-quit`, from
 https://github.com/storytold/craft-libs, MIT OR Apache-2.0). The core library and the command-line tool still use only the Rust standard
 library unless built with `--features cms` or `--features gui`. Settings live in `config.toml` under `%APPDATA%\materialcraft`, `~/.config/materialcraft` or
-`~/Library/Application Support/materialcraft`. Building needs Rust 1.95 or newer. GitHub Actions (`.github/workflows/ci.yml`) builds and tests all three.
+`~/Library/Application Support/materialcraft`. Building needs Rust 1.95 or newer. GitHub Actions builds and tests all three (`.github/workflows/ci.yml`); `release.yml` packages every push to `main` and installs and launches each package before `publish.yml` releases it.
 Linux needs the usual X11/Wayland/GL development packages (`libxkbcommon-dev libwayland-dev libx11-dev libgl1-mesa-dev`).
 
 ## Licence

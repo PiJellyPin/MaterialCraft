@@ -1,0 +1,164 @@
+name: Publish
+
+# Publishes the rolling `latest` prerelease from a successful Release run.
+#
+# Why this is a separate workflow: release.yml cancels superseded runs
+# (cancel-in-progress), and that cancellation is workflow-wide -- it kills
+# every job in the run, including one with its own job-level concurrency
+# block. While publishing lived in release.yml, a push that landed mid-upload
+# killed the upload half way. Here, publishing runs in its own workflow with
+# its own concurrency group that never cancels, so:
+#   * a new push can cancel a Release *build*, never a publish;
+#   * publishes run strictly one at a time, in the order their builds
+#     finished, which (because a newer push cancels an older build) is commit
+#     order on main;
+#   * at most one publish waits; GitHub replaces a waiting run with a newer
+#     one, so a burst of pushes publishes only the last.
+#
+# workflow_run only fires for the copy of this file on the default branch, so
+# changes here take effect once merged to main.
+#
+# ===========================================================================
+# TODO(1.0): switch from the rolling `latest` prerelease to real releases.
+#
+# `latest` is a development channel: one moving tag, overwritten on every push
+# to main, with no history, no stable download URL and no version in its
+# name. At 1.0, switch to semver releases tagged `materialcraft-v<version>`.
+# MaterialCraft is destined to join the ArtCraft suite, whose convention is
+# `artcraft-v<version>` (see storytold/artcraft). The bare `0.2.0` / `0.3.0`
+# tags and the stale `beta` release already in this repo can stay; both
+# schemes coexisting records the transition honestly.
+#
+# To do it:
+#   1. Bump `version` in Cargo.toml to 1.0.0 -- release.yml already reads it.
+#   2. Trigger release.yml on `push: tags: ['materialcraft-v*']`, or on a
+#      dedicated `release` branch as ArtCraft does (it cuts the tag by hand).
+#      If ArtCraft's own workflows end up building MaterialCraft, retire
+#      release.yml and this file instead of converting them.
+#   3. Here: drop "Move the rolling tag" (a tag push already points it) and
+#      "Remove assets left by earlier builds" (each release is new); set
+#      `tag_name` to the pushed tag, `name` to the version, drop
+#      `prerelease: true`, and replace the `head_branch == 'main'` condition
+#      with a tag check.
+#   4. Asset names already follow the suite style,
+#      MaterialCraft_<version>_<platform>.<ext>; nothing to rename.
+#
+# Keep `latest` until 1.0 actually ships -- it is the only way contributors
+# can get an unreleased build today.
+# ===========================================================================
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+
+concurrency:
+  group: publish-latest
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish rolling `latest` release
+    # Only a fully green Release run (tests, builds AND verify) from main.
+    # workflow_dispatch also fires from feature branches; without the branch
+    # check a manual run from any branch would move `latest` off main.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # release + tag
+      actions: read     # download artifacts from the Release run
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          rm -f SHA256SUMS
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Short SHA
+        id: meta
+        run: echo "short=${SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update the release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: latest
+          # Only used when the tag does not exist yet; the step after next
+          # moves an existing tag explicitly.
+          target_commitish: ${{ github.event.workflow_run.head_sha }}
+          name: latest (${{ steps.meta.outputs.short }})
+          prerelease: true
+          body: |
+            Rolling build of `${{ github.event.workflow_run.head_sha }}` on `main`.
+
+            Rebuilt on every push, so these files are replaced each time. This
+            is a development channel, not a release. Every file was installed
+            and launched on its target platform before being published.
+
+            Verify a download's provenance with:
+
+                gh attestation verify <file> -R ${{ github.repository }}
+
+            See the README for install notes per platform.
+          overwrite_files: true
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.dmg
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
+            dist/SHA256SUMS
+
+      # Asset names carry the version, so overwrite_files only replaces files
+      # whose name is unchanged; after a version bump the old ones would
+      # linger, and SHA256SUMS -- which covers only this build -- would stop
+      # describing the release. Delete exactly the assets this run did not
+      # produce. This runs AFTER the upload, so the release is never empty,
+      # and it deletes assets by name rather than the release itself, so the
+      # release object -- its comments, reactions and position -- survives.
+      - name: Remove assets left by earlier builds
+        run: |
+          set -euo pipefail
+          keep=$(cd dist && ls -1)
+          gh release view latest --repo "$REPO" --json assets --jq '.assets[].name' |
+          while IFS= read -r a; do
+            if ! grep -qxF -- "$a" <<<"$keep"; then
+              echo "deleting stale asset: $a"
+              gh release delete-asset latest "$a" --repo "$REPO" --yes
+            fi
+          done
+
+      # Deliberately LAST: assets finish uploading before `latest` moves, so
+      # the tag never points at a commit whose binaries are not the ones
+      # published. With publishes serialised (see the top of this file) and
+      # nothing able to cancel them, the interval in which tag and assets
+      # disagree is just the few seconds between the upload and this call.
+      - name: Move the rolling tag
+        run: |
+          set -euo pipefail
+          # The REST API is asymmetric here: GET takes git/ref/{ref} but PATCH
+          # takes git/refs/{ref} (plural). Using the singular form for both
+          # makes the update 404 while the lookup succeeds.
+          if gh api "repos/$REPO/git/ref/tags/latest" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$REPO/git/refs/tags/latest" -f sha="$SHA" -F force=true
+          else
+            gh api -X POST "repos/$REPO/git/refs" -f ref=refs/tags/latest -f sha="$SHA"
+          fi
