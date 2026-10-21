@@ -6,7 +6,7 @@ Roadmap items are listed in no particular order. Milestone tracking will be avai
 
 - [ ] Use `.sbs` as the standard project format, interoperable with [Adobe Substance 3D Designer](https://experienceleague.adobe.com/en/docs/substance-3d-designer/using/getting-started/overview/overview).
 - [ ] Support all native Adobe Substance 3D Designer nodes, including [atomic and library nodes](https://experienceleague.adobe.com/en/docs/substance-3d-designer/using/substance-graphs/nodes-reference-for-substance-graphs/nodes-reference-for-substance-compositing-graphs) and [function nodes](https://experienceleague.adobe.com/en/docs/substance-3d-designer/using/substance-function-graphs/nodes-reference-for-substance-function-graphs/function-nodes-overview).
-- [ ] Provide a complete workflow from project creation through editing, previewing, saving, and export, with familiar keyboard shortcuts, buttons, menus, and panels.
+- [ ] Provide a complete workflow from project creation through editing, previewing, saving, and export, with minimum necessary keyboard shortcuts, buttons, menus, and panels.
 - [ ] Export [MaterialX](https://materialx.org/Specification.html) (`.mtlx`) and image files only, with controls matching [Adobe Substance 3D Designer](https://experienceleague.adobe.com/en/docs/substance-3d-designer/using/substance-graphs/exporting-bitmaps)
 - [ ] Verified [Unreal Engine support](https://dev.epicgames.com/documentation/unreal-engine/importing-materialx-files-in-unreal-engine).
 
@@ -66,6 +66,8 @@ Note: Initial MaterialX exports may not fully reproduce advanced node graph beha
 
 ## User Interface
 
+- [ ] Add additional outstanding keyboard shortcuts, UI widgets, menus, etc.
+- [ ] Add localization to major languages as well as a clean workflow for additional ones.
 - [ ] Prioritize practical workflow improvements from community feedback and unmet [Adobe Substance 3D Designer feature requests](https://community.adobe.com/substance-3d-designer-47?content_type=idea).
 - [ ] Reduce repetitive work in graph navigation and parameter editing.
 - [ ] Provide [Physically Based](https://physicallybased.info/) reference values in material controls.
