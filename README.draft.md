@@ -42,7 +42,7 @@
 
 <!-- DRAFT: Replace this placeholder with a full editor screenshot. -->
 <p align="center">
-  <img src="assets/readme/screenshot-placeholder.svg" alt="Screenshot placeholder: MaterialCraft's graph editor and 3D material preview together" width="100%"><br>
+  <img width="2555" height="1387" alt="image" src="https://github.com/user-attachments/assets/aed97881-c091-4ef3-b2f4-065f99dd44fe" />
   <sub><b>Screenshot placeholder:</b> the full editor, showing a node graph and its material in 3D.</sub>
 </p>
 
