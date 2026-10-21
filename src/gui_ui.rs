@@ -52,10 +52,25 @@ impl App {
         }
 
         if ui.rect_contains_pointer(rect) {
-            let sc = ui.input(|i| i.smooth_scroll_delta.y);
-            if sc != 0.0 {
+            // Trackpads and the Magic Mouse report scrolling in points (two fingers pan the graph, a pinch or
+            // Ctrl/Cmd + scroll zooms); a wheel mouse reports lines (the wheel zooms, Shift + wheel pans sideways).
+            let (smooth, pinch, line_wheel) = ui.input(|i| {
+                let wheel = i.events.iter().any(|e| matches!(e, egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page, .. }));
+                (i.smooth_scroll_delta, i.zoom_delta(), wheel)
+            });
+            let mut zoom_by = 1.0;
+            if pinch != 1.0 {
+                zoom_by = pinch;
+            } else if line_wheel && !mods.shift {
+                zoom_by = 1.0 + smooth.y * 0.0012;
+            } else if mods.shift && line_wheel {
+                self.pan.x += smooth.y + smooth.x;
+            } else if smooth != Vec2::ZERO {
+                self.pan += smooth;
+            }
+            if zoom_by != 1.0 {
                 let old = self.zoom;
-                let nz = (old * (1.0 + sc * 0.0012)).clamp(0.25, 2.5);
+                let nz = (old * zoom_by).clamp(0.25, 2.5);
                 if let Some(p) = pointer {
                     let wp = ((p - rect.min) - self.pan) / old;
                     self.pan = (p - rect.min) - wp * nz;
