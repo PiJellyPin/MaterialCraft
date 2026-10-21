@@ -1,0 +1,157 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '23 7 * * *' # 07:23 UTC, daily on the default branch.
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prepare:
+    name: Check for changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      changed: ${{ steps.meta.outputs.changed }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Compare with the last successful nightly
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/prepare-nightly.sh
+
+  build:
+    name: Build and test ${{ matrix.label }}
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Keep glibc 2.35 compatibility for Ubuntu 22.04 and newer desktops.
+          - os: ubuntu-22.04
+            targets: x86_64-unknown-linux-gnu
+            test-target: x86_64-unknown-linux-gnu
+            out: target/x86_64-unknown-linux-gnu/release
+            label: x86_64-linux
+          - os: windows-latest
+            targets: x86_64-pc-windows-msvc
+            test-target: x86_64-pc-windows-msvc
+            out: target/x86_64-pc-windows-msvc/release
+            label: x64-windows
+          - os: macos-latest
+            targets: aarch64-apple-darwin x86_64-apple-darwin
+            test-target: aarch64-apple-darwin
+            out: target/universal-apple-darwin/release
+            label: universal-macOS
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      LABEL: ${{ matrix.label }}
+      TARGETS: ${{ matrix.targets }}
+      TEST_TARGET: ${{ matrix.test-target }}
+      OUT: ${{ matrix.out }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Toolchain targets
+        id: tc
+        run: echo "targets=${TARGETS// /,}" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch
+        with:
+          toolchain: stable
+          targets: ${{ steps.tc.outputs.targets }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: ${{ matrix.label }}
+
+      - name: Linux build and verification dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libgl1-mesa-dev libxkbcommon-x11-0 \
+            rpm dpkg-dev xvfb xauth xdotool fuse3 libgl1-mesa-dri libegl1
+
+      - name: Tests
+        run: cargo test --locked --release --target "$TEST_TARGET"
+
+      - name: Build CLI and editor
+        run: |
+          args=()
+          for target in $TARGETS; do args+=(--target "$target"); done
+          cargo build --locked --release --features gui --bins "${args[@]}"
+
+      - name: Collect license notices
+        run: |
+          python_cmd=python3
+          if [ "$RUNNER_OS" = Windows ]; then python_cmd=python; fi
+          "$python_cmd" .github/scripts/collect-notices.py
+
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        run: bash .github/scripts/package-linux.sh
+      - name: Verify Ubuntu installation and portable Linux packages
+        if: runner.os == 'Linux'
+        run: xvfb-run -a -s '-screen 0 1600x1000x24 -nolisten tcp -ac' bash .github/scripts/verify-linux.sh
+      - name: Package and verify Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./.github/scripts/package-windows.ps1
+      - name: Package and verify universal macOS
+        if: runner.os == 'macOS'
+        run: bash .github/scripts/package-macos.sh
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nightly-${{ matrix.label }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish:
+    name: Publish nightly
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: nightly-*
+          path: dist
+          merge-multiple: true
+      - name: Update rolling prerelease
+        run: bash .github/scripts/publish-nightly.sh
