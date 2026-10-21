@@ -1,11 +1,17 @@
 name: Nightly
 
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, e.g. 0.4.0 (blank rebuilds latest)'
+        required: false
+        type: string
   schedule:
     - cron: '23 7 * * *' # 07:23 UTC, daily on the default branch.
 
 concurrency:
-  group: nightly
+  group: ${{ inputs.version != '' && format('release-{0}', inputs.version) || 'nightly' }}
   cancel-in-progress: false
 
 permissions:
@@ -20,21 +26,23 @@ defaults:
 
 jobs:
   prepare:
-    name: Check for changes
+    name: Prepare build
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: read
-      actions: read
+      contents: write
+      actions: write
     outputs:
       changed: ${{ steps.meta.outputs.changed }}
       version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Compare with the last successful nightly
+      - name: Prepare build
         id: meta
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: bash .github/scripts/prepare-nightly.sh
 
   build:
@@ -137,8 +145,12 @@ jobs:
           compression-level: 0
 
   publish:
-    name: Publish nightly
+    name: Publish prerelease
     needs: [prepare, build]
+    # Publish rolling builds from the default branch, or the requested release tag.
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) ||
+      (inputs.version != '' && github.ref == format('refs/tags/{0}', inputs.version))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -146,6 +158,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_TAG: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -153,5 +166,5 @@ jobs:
           pattern: nightly-*
           path: dist
           merge-multiple: true
-      - name: Update rolling prerelease
+      - name: Publish prerelease
         run: bash .github/scripts/publish-nightly.sh
