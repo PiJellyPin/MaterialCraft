@@ -321,12 +321,18 @@ pub fn compute(kind: &str, id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, s
         "lookup_table" => {
             let (t, lut) = (need("in")?, need("lut")?);
             let (lw, lh) = (lut.w, lut.h);
-            let row = ((f("row", 0.5).clamp(0.0, 1.0) * lh as f32) as usize).min(lh - 1);
+            // the line of the lookup image that is read: a row, or a column when `vertical`
+            let vertical = f("vertical", 0.0) > 0.5;
+            let repeat = f("repeat", 0.0) > 0.5;
+            let (len, across) = if vertical { (lh, lw) } else { (lw, lh) };
+            let line = ((f("row", 0.5).clamp(0.0, 1.0) * across as f32) as usize).min(across - 1);
+            let px = |k: usize| if vertical { lut.px[k * lw + line] } else { lut.px[line * lw + k] };
             let at = |x: f32| -> [f32; 4] {
-                let fx = x.clamp(0.0, 1.0) * (lw - 1) as f32;
-                let i = fx.floor() as usize;
-                let j = (i + 1).min(lw - 1);
-                mix4(lut.px[row * lw + i], lut.px[row * lw + j], fx - i as f32)
+                let x = if repeat { x - x.floor() } else { x.clamp(0.0, 1.0) };
+                let fx = x * (len - 1) as f32;
+                let i = (fx.floor() as usize).min(len - 1);
+                let j = (i + 1).min(len - 1);
+                mix4(px(i), px(j), fx - i as f32)
             };
             if f("mode", 0.0) > 0.5 {
                 t.map(|p| {

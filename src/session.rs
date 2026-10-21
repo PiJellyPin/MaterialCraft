@@ -15,9 +15,8 @@
 //! * every successful edit is one undo step (`batch` makes many commands one step).
 
 use crate::export::{self, Format};
-use crate::graph::{self, Comment, Error as GError, Exposed, Graph, Node, NodeCache, OUTPUT_USAGES};
+use crate::graph::{self, Comment, Error as GError, Graph, Node, NodeCache, OUTPUT_USAGES};
 use crate::json::Json;
-use crate::params::{self, PK};
 use crate::tex::Tex;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -92,28 +91,97 @@ pub const COMMANDS: &[Command] = &[
     Command { id: "command.list", doc: "List every command with its parameters.", args: &[arg!("filter", "string", false, "only commands whose id or text contains this")], kind: Kind::Query, run: c_command_list },
     Command {
         id: "node.types",
-        doc: "List the node types you can add: name, category and what it does. Filter by words (name, category or description).",
-        args: &[arg!("query", "string", false, "words to look for, e.g. 'noise' or 'blur'"), arg!("category", "string", false, "only this category, e.g. Noises"), arg!("functions", "boolean", false, "list the function-graph nodes instead")],
+        doc: "List the node types you can add: name, category and what it does. Graphs, function graphs and FX-map pattern graphs each have their own nodes (sbs:<filter>, sbs:lib:<package>/<graph>, sbs:fn:<function>, sbs:fx:<node>). Filter by words (name, category or description).",
+        args: &[
+            arg!("query", "string", false, "words to look for, e.g. 'noise' or 'blur'"),
+            arg!("category", "string", false, "only this category, e.g. Noises"),
+            arg!("family", "string", false, "texture, function or pattern (FX-map) (default: the family of the focused graph)"),
+            arg!("functions", "boolean", false, "same as family=function"),
+        ],
         kind: Kind::Query,
         run: c_node_types,
     },
-    Command { id: "node.describe", doc: "Everything about one node type: inputs, outputs, and every parameter with its default, range, choices and group.", args: &[arg!("kind", "string", true, "node type, e.g. voronoi")], kind: Kind::Query, run: c_node_describe },
-    Command { id: "library.search", doc: "Search the built-in library of ready-made materials, generators and filters.", args: &[arg!("query", "string", false, "words, e.g. 'rusty metal'"), arg!("kind", "string", false, "material, generator or filter")], kind: Kind::Query, run: c_library_search },
-    // ---- the graph
-    Command { id: "graph.inspect", doc: "The whole graph: settings, every node with its parameters and connections, the outputs, and problems found.", args: &[arg!("compact", "boolean", false, "leave out positions and unchanged-looking details")], kind: Kind::Query, run: c_graph_inspect },
-    Command { id: "graph.validate", doc: "Check the graph: missing inputs, wrong pin types, cycles, outputs, nodes that feed nothing. Returns a list of problems (empty = fine).", args: &[], kind: Kind::Query, run: c_graph_validate },
-    Command { id: "graph.text", doc: "The graph as .mcg text (the file format).", args: &[], kind: Kind::Query, run: c_graph_text },
-    Command { id: "graph.new", doc: "Start a new empty graph.", args: &[arg!("size", "integer", false, "width in pixels, a power of two from 16 to 8192 (default 512)"), arg!("height", "integer", false, "height in pixels; omit for square")], kind: Kind::Edit, run: c_graph_new },
-    Command { id: "graph.open", doc: "Open a .mcg or .mca file.", args: &[arg!("path", "string", true, "file path")], kind: Kind::Edit, run: c_graph_open },
-    Command { id: "graph.load_text", doc: "Replace the graph with .mcg text.", args: &[arg!("text", "string", true, "the .mcg text")], kind: Kind::Edit, run: c_graph_load_text },
-    Command { id: "graph.save", doc: "Save the graph as .mcg (to `path`, or to the file it was opened from).", args: &[arg!("path", "string", false, "file path")], kind: Kind::Query, run: c_graph_save },
-    Command { id: "graph.set", doc: "Change graph settings.", args: &[arg!("size", "integer", false, "width in pixels (16..8192)"), arg!("height", "integer", false, "height in pixels (0 = square)"), arg!("seed_offset", "integer", false, "added to every node's random seed"), arg!("precision", "integer", false, "0 = 32-bit float, 1 = 8 bit, 2 = 16 bit, 3 = 16-bit float")], kind: Kind::Edit, run: c_graph_set },
-    Command { id: "graph.layout", doc: "Arrange all nodes in tidy columns from inputs to outputs (so the editor shows a readable graph).", args: &[], kind: Kind::Edit, run: c_graph_layout },
-    Command { id: "library.load", doc: "Replace the graph with a library material, generator or filter, ready to edit.", args: &[arg!("id", "string", true, "library id from library.search")], kind: Kind::Edit, run: c_library_load },
+    Command { id: "node.describe", doc: "Everything about one node type: inputs, outputs, and every parameter with its default, range, choices and group.", args: &[arg!("kind", "string", true, "node type from node.types, e.g. sbs:blend, sbs:fn:add or sbs:fx:quadrant")], kind: Kind::Query, run: c_node_describe },
+    // ---- the package and its graphs
+    Command { id: "graph.list", doc: "Every graph of the package that is open: its graphs and functions (in .sbs packages, also the functions inside node values), with their kind, outputs, inputs and which graphs use them. Graph and node commands work on the focused graph unless they get a `graph` parameter.", args: &[], kind: Kind::Query, run: c_graph_list },
+    Command { id: "graph.focus", doc: "Open one graph of the package for editing, like opening it in the editor's explorer: later commands without a `graph` parameter work on it. Omit `graph` to go back to the main graph.", args: &[arg!("graph", "string", false, "graph name from graph.list; omit for the main graph")], kind: Kind::Query, run: c_graph_focus },
+    Command {
+        id: "graph.create",
+        doc: "Add a new graph to the package. Other graphs use a graph through a node of kind sbs:graph (params {\"graph\": <name>}); its input nodes become that node's inputs. A function graph computes a value: node.set_result picks the node that gives it, and nodes call it with sbs:fn:instance. (FX-map pattern graphs live inside FX-Map nodes: node.add kind=sbs:fxmaps.)",
+        args: &[
+            arg!("name", "string", true, "graph name: letters, digits and _"),
+            arg!("kind", "string", false, "texture (default), material (with the usual outputs) or function"),
+            arg!("focus", "boolean", false, "focus the new graph (as graph.focus)"),
+        ],
+        kind: Kind::Edit,
+        run: c_graph_create,
+    },
+    Command { id: "graph.rename", doc: "Rename a graph of the package; every node that uses it (graph instances, function calls) follows.", args: &[arg!("graph", "string", true, "the graph to rename (the main graph's name is its identifier)"), arg!("name", "string", true, "new name: letters, digits and _")], kind: Kind::Edit, run: c_graph_rename },
+    Command { id: "graph.delete", doc: "Remove a graph from the package (refused while another graph still uses it).", args: &[arg!("graph", "string", true, "graph name")], kind: Kind::Edit, run: c_graph_delete },
+    Command { id: "graph.duplicate", doc: "Copy a graph of the package as a new graph. Returns the new name.", args: &[arg!("graph", "string", false, "graph to copy (default: the focused graph)"), arg!("name", "string", false, "name of the copy (default: <name>_copy)")], kind: Kind::Edit, run: c_graph_duplicate },
+    Command { id: "graph.inspect", doc: "One graph: settings, every node with its parameters and connections, the outputs, and problems found. In function graphs every node also shows the type of value it makes.", args: &[arg!("compact", "boolean", false, "leave out positions and unchanged-looking details")], kind: Kind::Query, run: c_graph_inspect },
+    Command { id: "graph.validate", doc: "Check a graph: missing inputs, wrong pin types, cycles, outputs; in function graphs also the value types. Returns `problems` (errors to fix; empty = fine) and `warnings` (allowed but probably not meant: nodes whose result reaches no output).", args: &[], kind: Kind::Query, run: c_graph_validate },
+    Command { id: "graph.text", doc: "The package as .sbs file text (XML), or with `graph` one graph and the graphs it uses as a package of its own.", args: &[arg!("graph", "string", false, "just this graph and what it uses")], kind: Kind::Query, run: c_graph_text },
+    Command {
+        id: "graph.new",
+        doc: "Start a new .sbs package with one graph (empty, or with the usual material outputs fed by Uniform Color nodes).",
+        args: &[
+            arg!("size", "integer", false, "width in pixels, a power of two from 16 to 8192 (default 512)"),
+            arg!("height", "integer", false, "height in pixels; omit for square"),
+            arg!("name", "string", false, "name of the graph (default Substance_graph)"),
+            arg!("template", "string", false, "empty (default) or material"),
+        ],
+        kind: Kind::Edit,
+        run: c_graph_new,
+    },
+    Command { id: "graph.open", doc: "Open an .sbs package to edit it as it is (the result says what draws approximately).", args: &[arg!("path", "string", true, "file path")], kind: Kind::Edit, run: c_graph_open },
+    Command { id: "graph.load_text", doc: "Replace the package with the text of an .sbs package (its XML).", args: &[arg!("text", "string", true, "the file text")], kind: Kind::Edit, run: c_graph_load_text },
+    Command { id: "graph.save", doc: "Save the package as .sbs (to `path`, or to the file it was opened from). Only the changes are rewritten, so a package opened and saved unchanged stays byte-identical.", args: &[arg!("path", "string", false, "file path (.sbs)")], kind: Kind::Query, run: c_graph_save },
+    Command { id: "graph.add_file", doc: "Add every graph and function of another .sbs package to this one; names that are taken get a number. Returns the name its first graph got.", args: &[arg!("path", "string", true, "file path")], kind: Kind::Edit, run: c_graph_add_file },
+    Command {
+        id: "graph.set",
+        doc: "Change settings of a graph.",
+        args: &[
+            arg!("size", "integer", false, "width in pixels (16..8192)"),
+            arg!("height", "integer", false, "height in pixels (0 = square)"),
+            arg!("seed_offset", "integer", false, "added to every node's random seed"),
+            arg!("precision", "integer", false, "node precision: 0 = 32-bit float, 1 = 8 bit, 2 = 16 bit, 3 = 16-bit float"),
+            arg!("output_format", "integer", false, "bits per channel of exported maps: 8 or 16"),
+            arg!("default_format", "any", false, "format of every node of the graph: 8, 16, \"16f\" or \"32f\". Existing nodes get it now and nodes added later start with it (saved in the file). null clears it for new nodes"),
+            arg!("view", "object", false, "3D preview defaults saved with the graph (any render.3d view option: tiling, displacement, shape, env, yaw ...); render.3d and render.review use them unless a call gives its own. {} clears them"),
+            arg!("normal_format", "string", false, "directx (green down, what imported .sbs graphs use) or opengl (green up)"),
+            arg!("details", "object", false, "label, description, category, author, author_url, tags, type (Standard material, Filter, Generator, Other), phys_x / phys_y / phys_z (cm), exposed and show_in_library (yes / no)"),
+        ],
+        kind: Kind::Edit,
+        run: c_graph_set,
+    },
+    Command { id: "graph.layout", doc: "Arrange all nodes of a graph in tidy columns from inputs to outputs (so the editor shows a readable graph).", args: &[], kind: Kind::Edit, run: c_graph_layout },
+    // ---- resources
+    Command { id: "resource.list", doc: "The resources of the package (bitmaps, SVG, fonts ...): their name, type, whether they are embedded and the file they link.", args: &[], kind: Kind::Query, run: c_resource_list },
+    Command {
+        id: "spline.set",
+        doc: "Draw a spline shape: it becomes an SVG resource of the package and an SVG node showing it (white shapes on black; closed paths are filled, any path can be stroked), so it feeds Bevel, Distance, Blur and every other node like any picture. Give `spline` (text: lines `path closed=1 smooth=1` followed by `pt x y [hin=dx,dy] [hout=dx,dy]` in 0..1 texture coordinates, y down) or a `preset`. With `node` an existing SVG node is updated.",
+        args: &[
+            arg!("spline", "string", false, "the spline text (see spline.get for the format)"),
+            arg!("preset", "string", false, "circle, square, rounded_square, triangle, star, heart, arrow, gear, wave, spiral or cross"),
+            arg!("styles", "array", false, "one {fill: bool, stroke: width in 0..1 units} per path (default: closed paths filled, no stroke; open paths are stroked)"),
+            arg!("name", "string", false, "resource name (letters, digits, _; default spline)"),
+            arg!("node", "node", false, "an existing SVG node to update; omitted: a new SVG node is added"),
+        ],
+        kind: Kind::Edit,
+        run: c_spline_set,
+    },
+    Command {
+        id: "spline.get",
+        doc: "The spline an SVG node of this package shows when it was drawn with spline.set or the spline editor: its text and styles.",
+        args: &[arg!("node", "node", true, "the SVG node")],
+        kind: Kind::Query,
+        run: c_spline_get,
+    },
     // ---- nodes
     Command {
         id: "node.add",
-        doc: "Add a node. Returns its id. Parameters not given keep the node's defaults (see node.describe).",
+        doc: "Add a node to a graph. Returns its id. Parameters not given keep the node's defaults (see node.describe). The node must belong to the graph's family: sbs:<filter> and sbs:lib:* nodes in graphs, sbs:fn:* nodes in function graphs, sbs:fx:* nodes in FX-map pattern graphs.",
         args: &[
             arg!("kind", "string", true, "node type (node.types)"),
             arg!("params", "object", false, "parameter values: numbers, choice names for dropdowns, true/false, or text for text parameters"),
@@ -127,24 +195,64 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         id: "node.set",
-        doc: "Set parameters of a node. Numbers are range-checked (out-of-range values are clamped and reported); dropdowns take a choice name or index; null restores the default.",
+        doc: "Set parameters of a node. Numbers are range-checked (out-of-range values are clamped and reported); dropdowns take a choice name or index; null restores the default. On a graph instance the parameters are those of its graph (node.params lists them).",
         args: &[arg!(NODE, "node", true, "node id or name"), arg!("params", "object", true, "{parameter: value}"), arg!("allow_unknown", "boolean", false, "accept parameter names this node type does not list")],
         kind: Kind::Edit,
         run: c_node_set,
     },
-    Command { id: "node.remove", doc: "Delete nodes. Links that used them are removed too.", args: &[arg!("nodes", "nodes", true, "node ids or names")], kind: Kind::Edit, run: c_node_remove },
-    Command { id: "node.connect", doc: "Connect the output of one node to an input slot of another (replacing what was there).", args: &[arg!("from", "node", true, "source node"), arg!("to", "node", true, "target node"), arg!("slot", "string", false, "input slot of the target (default: the first free required slot, else 'in')"), arg!("output", "string", false, "which output of a multi-output source")], kind: Kind::Edit, run: c_node_connect },
+    Command { id: "node.params", doc: "Every parameter one node can take with its current value: its own, those of the graph a graph instance runs, and which values are computed by a function graph.", args: &[arg!(NODE, "node", true, "node id or name")], kind: Kind::Query, run: c_node_params },
+    Command {
+        id: "node.drive",
+        doc: "Compute a value of a node with a function graph of its own (it starts as one constant of the current value; add sbs:fn:* nodes to it with graph=<the returned name>), or stop computing it (stop=true).",
+        args: &[
+            arg!(NODE, "node", true, "node id or name"),
+            arg!("param", "string", true, "parameter name"),
+            arg!("stop", "boolean", false, "stop computing the value with a function (back to its default)"),
+        ],
+        kind: Kind::Edit,
+        run: c_node_drive,
+    },
+    Command {
+        id: "node.expression",
+        doc: "Compute a value with a math expression written as text instead of wiring function nodes by hand: the expression is turned into the value's function graph (sbs:fn:* nodes, saved in the file like hand-made ones). Works for any parameter, the Pixel Processor's per-pixel function (param perpixel; sample($pos) reads its first input) and the Value Processor (param function); with `function` instead of node/param it rebuilds a function graph of the package. Returns the function graph's name and an outline of its nodes. Language: see the `expression` argument.",
+        args: &[
+            arg!(NODE, "node", false, "node id or name (with param)"),
+            arg!("param", "string", false, "parameter to compute (perpixel for a Pixel Processor)"),
+            arg!("function", "string", false, "instead of node/param: a function graph of the package to rebuild"),
+            Arg { name: "expression", ty: "string", req: true, doc: crate::fexpr::HELP },
+        ],
+        kind: Kind::Edit,
+        run: c_node_expression,
+    },
+    Command {
+        id: "macro.add",
+        doc: "Insert a ready-made group of standard nodes for a common job that has no single node: grow / shrink / outline a mask, a star with any number of points, a polygon, your own shape repeated as tiles, directional strokes per cell, a whole-number zoom for patterns without a scale setting. Everything is made of ordinary nodes (Distance, Levels, Blend, Pixel Processor, Tile Generator, Tile Sampler, Transformation 2D), so it can be edited afterwards. macro=list shows them all with their options. Returns the new nodes and the one to connect onwards (output_node).",
+        args: &[
+            arg!("macro", "string", true, "grow, shrink, outline, star, polygon, tile_shape, strokes, tile_scale (or list)"),
+            arg!("input", "node", false, "the node it works on (grow, shrink, outline, tile_shape, tile_scale)"),
+            arg!("options", "object", false, "settings of the macro (see macro=list), e.g. {\"pixels\": 6} or {\"points\": 7}"),
+            arg!("name", "string", false, "name for the output node"),
+        ],
+        kind: Kind::Edit,
+        run: c_macro_add,
+    },
+    Command { id: "node.set_result", doc: "In a function graph of an .sbs package: the node whose value is the function's result.", args: &[arg!(NODE, "node", true, "node id or name")], kind: Kind::Edit, run: c_node_set_result },
+    Command { id: "node.remove", doc: "Delete nodes. Links that used them are removed too.", args: &[arg!("nodes", "nodes", false, "node ids or names (`node` works too)"), arg!("node", "node", false, "one node id or name")], kind: Kind::Edit, run: c_node_remove },
+    Command { id: "node.duplicate", doc: "Copy nodes with their parameters; links between the copied nodes are copied too. Returns the new ids in the same order.", args: &[arg!("nodes", "nodes", true, "node ids or names"), arg!("dx", "number", false, "offset of the copies (default 40)"), arg!("dy", "number", false, "offset of the copies (default 40)")], kind: Kind::Edit, run: c_node_duplicate },
+    Command { id: "node.connect", doc: "Connect the output of one node to an input slot of another (replacing what was there).", args: &[arg!("from", "node", true, "source node"), arg!("to", "node", true, "target node"), arg!("slot", "string", false, "input slot of the target (default: the first free required slot, else 'in')"), arg!("output", "string", false, "which output of a multi-output source (for a Graph node: an output of its graph)")], kind: Kind::Edit, run: c_node_connect },
     Command { id: "node.disconnect", doc: "Remove the link into an input slot.", args: &[arg!("to", "node", true, "target node"), arg!("slot", "string", true, "input slot")], kind: Kind::Edit, run: c_node_disconnect },
     Command { id: "node.move", doc: "Move a node in the editor.", args: &[arg!(NODE, "node", true, "node id or name"), arg!("x", "number", true, "x"), arg!("y", "number", true, "y")], kind: Kind::Edit, run: c_node_move },
-    Command { id: "output.add", doc: "Make a node a material output (base colour, normal, roughness, metallic, height, ambient_occlusion, opacity, emissive ...). Replaces an existing output of the same usage.", args: &[arg!(NODE, "node", true, "node that provides the image"), arg!("usage", "string", true, "basecolor, normal, roughness, metallic, height, ambient_occlusion, opacity, emissive, diffuse, specular, glossiness or out"), arg!("output", "string", false, "which output of a multi-output node"), arg!("name", "string", false, "file name for the exported map (default: the usage)")], kind: Kind::Edit, run: c_output_add },
+    Command { id: "output.add", doc: "Make a node a material output (base colour, normal, roughness, metallic, height, ambient_occlusion, opacity, emissive ...). Replaces an existing output of the same usage. (A function graph gives its value through node.set_result instead.)", args: &[arg!(NODE, "node", true, "node that provides the image"), arg!("usage", "string", true, "basecolor, normal, roughness, metallic, height, ambient_occlusion, opacity, emissive, diffuse, specular, glossiness or out"), arg!("output", "string", false, "which output of a multi-output node"), arg!("name", "string", false, "file name for the exported map (default: the usage)")], kind: Kind::Edit, run: c_output_add },
     Command { id: "output.remove", doc: "Remove the output with this usage.", args: &[arg!("usage", "string", true, "the usage to remove")], kind: Kind::Edit, run: c_output_remove },
-    Command { id: "graph.expose", doc: "Expose a node parameter as a graph parameter (a slider for whoever uses the published material).", args: &[arg!("label", "string", true, "name shown to the user"), arg!(NODE, "node", true, "node"), arg!("param", "string", true, "parameter name"), arg!("min", "number", false, "smallest value (default: the parameter's range)"), arg!("max", "number", false, "largest value")], kind: Kind::Edit, run: c_graph_expose },
+    Command { id: "graph.expose", doc: "Expose a node parameter as a graph parameter (a slider for whoever uses the graph).", args: &[arg!("label", "string", true, "name shown to the user"), arg!(NODE, "node", true, "node"), arg!("param", "string", true, "parameter name"), arg!("min", "number", false, "smallest value (default: the parameter's range)"), arg!("max", "number", false, "largest value")], kind: Kind::Edit, run: c_graph_expose },
     Command { id: "graph.unexpose", doc: "Stop exposing a graph parameter.", args: &[arg!("label", "string", true, "its label")], kind: Kind::Edit, run: c_graph_unexpose },
+    Command { id: "graph.set_input", doc: "Change a graph parameter (made by graph.expose or read from the file): its default value, its label or its slider range. graph.inspect lists them (value_inputs).", args: &[arg!("input", "string", true, "its identifier or label"), arg!("value", "any", false, "new default: a number, a list of numbers (colours, vectors) or true/false"), arg!("label", "string", false, "new label"), arg!("min", "number", false, "slider minimum"), arg!("max", "number", false, "slider maximum")], kind: Kind::Edit, run: c_graph_set_input },
     Command { id: "comment.add", doc: "Add a comment box to the editor canvas.", args: &[arg!("text", "string", true, "text"), arg!("x", "number", false, "x"), arg!("y", "number", false, "y"), arg!("width", "number", false, "width"), arg!("height", "number", false, "height")], kind: Kind::Edit, run: c_comment_add },
+    Command { id: "comment.remove", doc: "Remove a comment box (graph.inspect lists them in order, starting at 0).", args: &[arg!("index", "integer", true, "which comment")], kind: Kind::Edit, run: c_comment_remove },
     // ---- looking at results
     Command {
         id: "render.node",
-        doc: "Render one node and return a picture and statistics (min / max / mean per channel, whether it is flat, and a tiling check: seam values near 1 mean the edges match).",
+        doc: "Render one node and return a picture and statistics (min / max / mean per channel, whether it is flat, and a tiling check: seam_horizontal / seam_vertical compare the step across the tile border with the largest step inside the image, so values at or below about 1 mean the edges match and tiles_seamlessly is true below 1.5; for Flood Fill nodes and the nodes reading them also the number of regions and a warning when shapes merged). In a function graph the node's value is drawn per pixel; in an FX-map pattern graph the pattern up to that node is drawn.",
         args: &[
             arg!(NODE, "node", true, "node id or name"),
             arg!("output", "string", false, "which output of a multi-output node"),
@@ -157,46 +265,141 @@ pub const COMMANDS: &[Command] = &[
         kind: Kind::Query,
         run: c_render_node,
     },
-    Command { id: "render.outputs", doc: "A contact sheet of every material output (base colour, normal, roughness ...), labelled in the data.", args: &[arg!("size", "integer", false, "cell size in pixels (default 192)"), arg!("columns", "integer", false, "columns (default 3)")], kind: Kind::Query, run: c_render_outputs },
+    Command { id: "render.outputs", doc: "A contact sheet of every output of a graph (base colour, normal, roughness ...), labelled in the data. For a function graph or FX-map pattern graph: its result.", args: &[arg!("size", "integer", false, "cell size in pixels (default 192)"), arg!("columns", "integer", false, "columns (default 3)")], kind: Kind::Query, run: c_render_outputs },
     Command { id: "render.sheet", doc: "A contact sheet of several nodes, to compare steps of the graph.", args: &[arg!("nodes", "nodes", true, "node ids or names"), arg!("size", "integer", false, "cell size in pixels (default 192)"), arg!("columns", "integer", false, "columns (default 3)")], kind: Kind::Query, run: c_render_sheet },
     Command {
         id: "render.3d",
-        doc: "Render the material on a 3D object (software renderer) and return the picture.",
+        doc: "Render the material of a graph on a 3D object (software renderer) and return the picture. list=true returns the names every option accepts (shapes, environments, light rigs, cameras, post looks) and all view settings instead. The path tracer needs about 128 samples or more before rough surfaces stop looking grainy; compare looks with the raster mode or with high spp.",
         args: &[
             arg!("size", "integer", false, "picture width and height (16..1024, default 512)"),
-            arg!("shape", "string", false, "sphere, cube, plane, ... (default sphere)"),
+            arg!("shape", "string", false, "sphere, cube, plane, cylinder, ... (default sphere)"),
             arg!("scene", "string", false, "single, floor, lookdev or pedestal"),
-            arg!("channel", "string", false, "lit (default), base, roughness, metallic, normal, ao, height, emissive"),
-            arg!("camera", "string", false, "three_quarter, front, top, close_up ..."),
-            arg!("env", "string", false, "environment preset"),
+            arg!("channel", "string", false, "lit (default), base, roughness, metallic, normal, ao, height, emissive, world_normal, uv"),
+            arg!("camera", "string", false, "three_quarter, front, back, left, right, top, bottom, close_up"),
+            arg!("env", "string", false, "environment preset (list=true shows them)"),
+            arg!("env_rotation", "number", false, "turn the environment (radians)"),
+            arg!("env_exposure", "number", false, "environment brightness in stops (-8..8)"),
+            arg!("background", "string", false, "environment, color or gradient"),
+            arg!("rig", "string", false, "light rig: three_point, key_only, top, sun, none"),
+            arg!("light_intensity", "number", false, "multiply the rig's lights (0 = environment light only)"),
+            arg!("exposure", "number", false, "picture exposure multiplier (default 1)"),
+            arg!("post", "string", false, "post look: neutral, cinematic, punchy, soft"),
+            arg!("tiling", "number", false, "how many times the texture repeats across the object (default 1)"),
+            arg!("displacement", "number", false, "how far the height map moves the surface (object units, sphere radius 1; default 0.08; 0 = off)"),
+            arg!("relief", "string", false, "how height is shown: displace (default), parallax, bump or off"),
+            arg!("bump", "number", false, "strength of bump relief from the height map (relief=bump)"),
+            arg!("normal_strength", "number", false, "strength of the normal map 0..1 (default 1)"),
+            arg!("yaw", "number", false, "camera angle around the object (radians)"),
+            arg!("pitch", "number", false, "camera angle above the object (radians)"),
+            arg!("settings", "object", false, "any other view settings by key, e.g. {\"light.0.intensity\": 5, \"post.bloom\": 0.2, \"fov\": 30}"),
             arg!("mode", "string", false, "raster (fast, default) or pt (path traced, slow)"),
+            arg!("spp", "integer", false, "path tracer samples per pixel (default 128)"),
             arg!("tex", "integer", false, "resolution the material is computed at (default 512)"),
+            arg!("list", "boolean", false, "return the option names and view settings instead of a picture"),
         ],
         kind: Kind::Query,
         run: c_render_3d,
     },
-    Command { id: "export", doc: "Write the material's output maps to a folder as image files.", args: &[arg!("dir", "string", true, "folder"), arg!("size", "integer", false, "resolution (default: the graph's size)"), arg!("format", "string", false, "png (default), jpg, tiff, exr, hdr"), arg!("depth", "integer", false, "8, 16 or 32")], kind: Kind::Query, run: c_export },
+    Command {
+        id: "graph.extract",
+        doc: "Make a subgraph from nodes: move them into a new graph of the package and put one node running that graph in their place. Links coming in from other nodes become the new graph's inputs, links going out (to other nodes or to the graph's outputs) become its outputs, named after the nodes they come from; node names move along. Edit the new graph with graph=<name> (or graph.focus).",
+        args: &[
+            arg!("nodes", "nodes", true, "the nodes to move (ids or names)"),
+            arg!("name", "string", true, "name of the new graph (letters, digits and _)"),
+            arg!("replace", "boolean", false, "put a node running the new graph in their place (default true); false only copies them"),
+            arg!("node_name", "string", false, "a name for the node that runs the new graph"),
+        ],
+        kind: Kind::Edit,
+        run: c_graph_extract,
+    },
+    Command { id: "graph.outline", doc: "The graph as compact text: one line per node with its changed values (numbered choices with their names) and where each input comes from, then the outputs. Cheaper to read than graph.inspect.", args: &[], kind: Kind::Query, run: c_graph_outline },
+    Command {
+        id: "render.review",
+        doc: "One picture to check the whole material, plus numbers and the graph as text: the lit 3D preview, an optional reference picture beside it, every output map, and the node graph with a thumbnail in each node (outputs marked). The data has `outline` (every node with its changed values, the names of numbered choices and where each input comes from), statistics and a tiling check per map, problems / warnings / approximations, and with a reference: a comparison (brightness, colour, contrast, fine detail, how many features repeat across, a similarity score) with hints in words on what to change. Use it after each round of edits and compare against the reference.",
+        args: &[
+            arg!("reference", "string", false, "an image file (photo or render of the target material) to compare with"),
+            arg!("compare", "string", false, "what to compare the reference with: auto (default: the closer of the two), render (the middle of the 3D preview) or basecolor (the base colour map)"),
+            arg!("size", "integer", false, "size of the 3D preview (128..1024, default 384)"),
+            arg!("tex", "integer", false, "resolution the maps are computed at (default 512)"),
+            arg!("thumbnails", "boolean", false, "draw a picture in every node of the graph (default true)"),
+            arg!("shape", "string", false, "3D object (default sphere); the view options are the same as render.3d's, and the defaults saved with the graph (graph.set view) apply"),
+            arg!("scene", "string", false, "single, floor, lookdev or pedestal"),
+            arg!("channel", "string", false, "lit (default), base, roughness, metallic, normal, ao, height, emissive"),
+            arg!("camera", "string", false, "three_quarter, front, back, left, right, top, bottom, close_up"),
+            arg!("env", "string", false, "environment preset"),
+            arg!("env_rotation", "number", false, "turn the environment (radians)"),
+            arg!("env_exposure", "number", false, "environment brightness in stops"),
+            arg!("background", "string", false, "environment, color or gradient"),
+            arg!("rig", "string", false, "light rig: three_point, key_only, top, sun, none"),
+            arg!("light_intensity", "number", false, "multiply the rig's lights"),
+            arg!("exposure", "number", false, "picture exposure multiplier"),
+            arg!("post", "string", false, "post look: neutral, cinematic, punchy, soft"),
+            arg!("tiling", "number", false, "texture repeats on the object"),
+            arg!("displacement", "number", false, "height displacement amount (0 = off)"),
+            arg!("relief", "string", false, "displace, parallax, bump or off"),
+            arg!("bump", "number", false, "strength of bump relief"),
+            arg!("normal_strength", "number", false, "strength of the normal map 0..1"),
+            arg!("yaw", "number", false, "camera angle around the object (radians)"),
+            arg!("pitch", "number", false, "camera angle above the object (radians)"),
+            arg!("match_lighting", "boolean", false, "with a reference: also report how the render's brightness would match the reference after an exposure change, and use that to judge colour and contrast (default true)"),
+            arg!("crop", "object", false, "with a reference: the part of the reference picture that shows the material, as {x, y, w, h} fractions of the picture (default: found automatically by dropping the plain background)"),
+            arg!("settings", "object", false, "any other view settings by key"),
+        ],
+        kind: Kind::Query,
+        run: c_render_review,
+    },
+    Command { id: "export", doc: "Write the output maps of a graph to a folder as image files (any graph of the package with its `graph` parameter).", args: &[arg!("dir", "string", true, "folder"), arg!("size", "integer", false, "resolution (default: the graph's size)"), arg!("format", "string", false, "png (default), jpg, tiff, exr, hdr"), arg!("depth", "integer", false, "8, 16 or 32")], kind: Kind::Query, run: c_export },
     // ---- history
     Command { id: "edit.undo", doc: "Undo the last change.", args: &[], kind: Kind::Special, run: c_noop },
     Command { id: "edit.redo", doc: "Redo the change that was undone.", args: &[], kind: Kind::Special, run: c_noop },
     Command { id: "edit.history", doc: "How many undo and redo steps there are, and the last commands.", args: &[], kind: Kind::Query, run: c_history },
-    Command { id: "batch", doc: "Run several commands in order as ONE undoable step. All or nothing: if one fails, none of them is applied. Use node names (the `name` of node.add) to refer to nodes created earlier in the batch.", args: &[arg!("steps", "array", true, "list of {command, params}")], kind: Kind::Special, run: c_noop },
+    Command { id: "batch", doc: "Run several commands in order as ONE undoable step. All or nothing: if one fails, none of them is applied. Use node names (the `name` of node.add) to refer to nodes created earlier in the batch. Each step may carry its own `graph` parameter.", args: &[arg!("steps", "array", true, "list of {command, params}")], kind: Kind::Special, run: c_noop },
 ];
+
+/// The `graph` parameter every command that works on one graph takes.
+pub static GRAPH_ARG: Arg = Arg { name: "graph", ty: "string", req: false, doc: "which graph of the package (graph.list); default: the focused graph" };
+
+/// Commands that work on one graph of the package: they take the `graph` parameter and otherwise use the focused
+/// graph.
+pub fn scoped(id: &str) -> bool {
+    matches!(
+        id,
+        "graph.inspect" | "graph.outline" | "graph.extract" | "graph.validate" | "graph.set" | "graph.layout" | "graph.expose" | "graph.unexpose" | "graph.set_input" | "comment.add" | "comment.remove" | "render.node" | "render.outputs" | "render.sheet" | "render.3d" | "render.review" | "export" | "function.probe"
+    ) || (id.starts_with("node.") && !matches!(id, "node.types" | "node.describe"))
+        || id == "macro.add"
+        || id.starts_with("output.")
+}
+
+/// Commands that change the package as a whole (its list of graphs, links and resources) rather than one graph.
+pub fn package_level(id: &str) -> bool {
+    matches!(id, "graph.create" | "graph.rename" | "graph.delete" | "graph.duplicate" | "graph.add_file" | "graph.link" | "graph.unlink" | "resource.add" | "resource.remove" | "graph.load_text")
+}
 
 pub fn find(id: &str) -> Option<&'static Command> {
     COMMANDS.iter().find(|c| c.id == id)
 }
 
 impl Command {
+    /// The command's parameters, with the `graph` parameter of the commands that work on one graph.
+    pub fn all_args(&self) -> Vec<&'static Arg> {
+        let mut v: Vec<&'static Arg> = self.args.iter().collect();
+        if scoped(self.id) {
+            v.push(&GRAPH_ARG);
+        }
+        v
+    }
+
     /// The JSON Schema (draft 2020-12) of the command's parameters, for MCP.
     pub fn schema(&self) -> Json {
         let mut props = Json::obj();
         let mut req: Vec<Json> = Vec::new();
-        for a in self.args {
+        for a in self.all_args() {
             let mut p = match a.ty {
                 "node" => Json::obj().with("type", Json::Arr(vec!["integer".into(), "string".into()])),
                 "nodes" => Json::obj().with("type", "array").with("items", Json::obj().with("type", Json::Arr(vec!["integer".into(), "string".into()]))),
                 "array" => Json::obj().with("type", "array").with("items", Json::obj()),
+                // a value of any shape (a number, a list, true/false, text)
+                "any" => Json::obj(),
                 t => Json::obj().with("type", t),
             };
             p.set("description", a.doc);
@@ -226,18 +429,38 @@ pub fn find_tool(name: &str) -> Option<&'static Command> {
 // ------------------------------------------------------------------------------------------ the session
 
 pub struct Session {
+    /// the package: its main graph, which holds the other graphs (`subgraphs`) and the resources
     pub graph: Graph,
     pub path: Option<PathBuf>,
     pub dirty: bool,
     undo: Vec<Graph>,
     redo: Vec<Graph>,
+    /// node names of the graph being worked on
     aliases: BTreeMap<String, u32>,
+    /// node names of the other graphs ("" = the main graph)
+    other_aliases: BTreeMap<String, BTreeMap<String, u32>>,
+    /// the graph commands work on when they get no `graph` parameter (`None` = the main graph)
+    focus: Option<String>,
+    /// while a command works on another graph: the package it was taken from
+    outer: Option<Outer>,
     log: Vec<String>,
     cache: Arc<NodeCache>,
     /// when set, file commands may only touch paths inside this folder
     pub root: Option<PathBuf>,
     changed: bool,
 }
+
+/// The package while one of its graphs is being worked on, and what that graph had of its own.
+struct Outer {
+    name: String,
+    root: Graph,
+    seed: u32,
+    own_subgraphs: BTreeMap<String, Graph>,
+    own_resources: BTreeMap<String, Arc<Vec<u8>>>,
+}
+
+/// Node names of every graph of a package: graph name ("" = the main graph) to node name to id.
+pub type AliasBook = BTreeMap<String, BTreeMap<String, u32>>;
 
 impl Default for Session {
     fn default() -> Self {
@@ -251,11 +474,113 @@ fn panic_text(p: Box<dyn std::any::Any + Send>) -> String {
 
 impl Session {
     pub fn new() -> Session {
-        Session::from_graph(Graph::default(), None)
+        Session::from_graph(native::new_package("Substance_graph", 512), None)
     }
 
     pub fn from_graph(graph: Graph, path: Option<PathBuf>) -> Session {
-        Session { graph, path, dirty: false, undo: Vec::new(), redo: Vec::new(), aliases: BTreeMap::new(), log: Vec::new(), cache: Arc::new(NodeCache::with_default_budget()), root: None, changed: false }
+        Session {
+            graph,
+            path,
+            dirty: false,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            aliases: BTreeMap::new(),
+            other_aliases: BTreeMap::new(),
+            focus: None,
+            outer: None,
+            log: Vec::new(),
+            cache: Arc::new(NodeCache::with_default_budget()),
+            root: None,
+            changed: false,
+        }
+    }
+
+    /// A session over a whole package that lives somewhere else (the open editor): `book` holds the node names
+    /// handed out so far in each graph and `focus` is the graph commands work on by default (`None`: the main one).
+    pub fn from_package(graph: Graph, path: Option<PathBuf>, dirty: bool, mut book: AliasBook, focus: Option<String>, cache: Arc<NodeCache>) -> Session {
+        let mut s = Session::from_graph(graph, path);
+        s.dirty = dirty;
+        s.aliases = book.remove("").unwrap_or_default();
+        s.other_aliases = book;
+        s.focus = focus.filter(|f| s.graph.subgraphs.contains_key(f));
+        s.cache = cache;
+        s
+    }
+
+    /// The node names handed out in every graph ("" = the main graph).
+    pub fn alias_book(&self) -> AliasBook {
+        let mut b = self.other_aliases.clone();
+        b.insert(String::new(), self.aliases.clone());
+        b.retain(|_, v| !v.is_empty());
+        b
+    }
+
+    /// The graph commands work on when they get no `graph` parameter (`None`: the main graph).
+    pub fn focus(&self) -> Option<&str> {
+        self.focus.as_deref()
+    }
+
+    pub fn set_focus(&mut self, f: Option<String>) {
+        self.focus = f.filter(|f| self.graph.subgraphs.contains_key(f));
+    }
+
+    /// Forget node names and focus (the package was replaced).
+    fn reset_names(&mut self) {
+        self.aliases.clear();
+        self.other_aliases.clear();
+        self.focus = None;
+    }
+
+    /// Work on graph `name` of the package: it becomes `self.graph` and sees the package's other graphs and
+    /// resources, as when the editor opens it. [`Session::leave`] puts everything back.
+    fn enter(&mut self, name: &str) {
+        let Some(mut w) = self.graph.subgraphs.remove(name) else { return };
+        let mut root = std::mem::take(&mut self.graph);
+        let own_subgraphs = std::mem::replace(&mut w.subgraphs, std::mem::take(&mut root.subgraphs));
+        native::add_owner(&mut w.subgraphs, &mut root);
+        let own_resources = std::mem::replace(&mut w.resources, std::mem::take(&mut root.resources));
+        let seed = std::mem::replace(&mut w.seed_offset, root.seed_offset);
+        self.outer = Some(Outer { name: name.to_string(), root, seed, own_subgraphs, own_resources });
+        self.graph = w;
+        let mine = self.other_aliases.remove(name).unwrap_or_default();
+        let main = std::mem::replace(&mut self.aliases, mine);
+        self.other_aliases.insert(String::new(), main);
+    }
+
+    /// Put the graph worked on back into the package (see [`Session::enter`]).
+    fn leave(&mut self) {
+        let Some(o) = self.outer.take() else { return };
+        let mut root = o.root;
+        let mut w = std::mem::take(&mut self.graph);
+        native::adopt_package(&mut root, &w);
+        native::drop_owner(&mut w.subgraphs, &root);
+        root.subgraphs = std::mem::replace(&mut w.subgraphs, o.own_subgraphs);
+        root.resources = std::mem::replace(&mut w.resources, o.own_resources);
+        if w.seed_offset == root.seed_offset {
+            w.seed_offset = o.seed;
+        }
+        root.subgraphs.insert(o.name.clone(), w);
+        self.graph = root;
+        let main = self.other_aliases.remove("").unwrap_or_default();
+        let mine = std::mem::replace(&mut self.aliases, main);
+        if mine.is_empty() {
+            self.other_aliases.remove(&o.name);
+        } else {
+            self.other_aliases.insert(o.name, mine);
+        }
+    }
+
+    /// Name of the graph being worked on.
+    fn current_name(&self) -> String {
+        match &self.outer {
+            Some(o) => o.name.clone(),
+            None => main_name(&self.graph),
+        }
+    }
+
+    /// The package (also while a command works on one of its other graphs).
+    fn package(&self) -> &Graph {
+        self.outer.as_ref().map(|o| &o.root).unwrap_or(&self.graph)
     }
 
     /// A session over a graph that lives somewhere else (the open editor): `aliases` are the node names handed
@@ -316,13 +641,40 @@ impl Session {
     }
 
     fn run_one(&mut self, cmd: &'static Command, params: &Json, record: bool) -> Result<Outcome, String> {
+        // the graph the command works on: its `graph` parameter, else the focused graph
+        let target = if scoped(cmd.id) {
+            let want = params.get("graph").and_then(Json::as_str);
+            if want.is_none() && self.focus.as_ref().map(|f| !self.graph.subgraphs.contains_key(f)).unwrap_or(false) {
+                // the focused graph went away (undo, delete): back to the main graph
+                self.focus = None;
+            }
+            match want {
+                Some(w) => resolve_graph(&self.graph, w)?,
+                None => self.focus.clone(),
+            }
+        } else {
+            None
+        };
         let before = (cmd.kind == Kind::Edit).then(|| self.graph.clone());
-        let aliases = self.aliases.clone();
+        let aliases = (self.aliases.clone(), self.other_aliases.clone(), self.focus.clone());
         let run = cmd.run;
-        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(self, params)));
+        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if let Some(t) = &target {
+                self.enter(t);
+            }
+            let r = run(self, params);
+            self.prune_names();
+            r
+        }));
+        self.leave();
         let res = match res {
             Ok(r) => r,
             Err(p) => Err(format!("internal error in {}: {}", cmd.id, panic_text(p))),
+        };
+        let restore = |s: &mut Session| {
+            s.aliases = aliases.0.clone();
+            s.other_aliases = aliases.1.clone();
+            s.focus = aliases.2.clone();
         };
         match (res, before) {
             (Ok(o), Some(b)) => {
@@ -336,7 +688,7 @@ impl Session {
             (Ok(o), None) => Ok(o),
             (Err(e), Some(b)) => {
                 self.graph = b;
-                self.aliases = aliases;
+                restore(self);
                 Err(e)
             }
             (Err(e), None) => Err(e),
@@ -373,7 +725,7 @@ impl Session {
             return Err(format!("a batch can hold at most {MAX_BATCH} commands"));
         }
         let before = self.graph.clone();
-        let aliases = self.aliases.clone();
+        let saved = (self.aliases.clone(), self.other_aliases.clone(), self.focus.clone());
         let mut results: Vec<Json> = Vec::new();
         let mut edits = 0;
         for (i, s) in steps.iter().enumerate() {
@@ -382,7 +734,7 @@ impl Session {
                 Some(n) => n,
                 None => {
                     self.graph = before;
-                    self.aliases = aliases;
+                    (self.aliases, self.other_aliases, self.focus) = saved;
                     return Err(step("every step needs a \"command\"".into()));
                 }
             };
@@ -390,7 +742,7 @@ impl Session {
                 Some(c) if !matches!(c.id, "batch" | "edit.undo" | "edit.redo") => c,
                 _ => {
                     self.graph = before;
-                    self.aliases = aliases;
+                    (self.aliases, self.other_aliases, self.focus) = saved;
                     return Err(step("not a command that can be used in a batch".into()));
                 }
             };
@@ -406,7 +758,7 @@ impl Session {
                 }
                 Err(e) => {
                     self.graph = before;
-                    self.aliases = aliases;
+                    (self.aliases, self.other_aliases, self.focus) = saved;
                     return Err(step(e));
                 }
             }
@@ -456,6 +808,12 @@ impl Session {
         self.aliases.iter().find(|(_, v)| **v == id).map(|(k, _)| k.as_str())
     }
 
+    /// Forget names of nodes that no longer exist in the graph being worked on.
+    fn prune_names(&mut self) {
+        let g = &self.graph;
+        self.aliases.retain(|_, v| g.nodes.contains_key(v));
+    }
+
     fn resolve_path(&self, p: &str) -> Result<PathBuf, String> {
         match &self.root {
             Some(root) => confine(root, p),
@@ -464,6 +822,71 @@ impl Session {
     }
 
     fn eval(&self, id: u32, size: usize, out: Option<&str>) -> Result<Tex, String> {
+        if let Some(sd) = &self.graph.sd {
+            if sd.role != native::Role::Graph {
+                // a function or FX-map graph: drawn with `id` as its result
+                let mut probe = self.graph.clone();
+                if let Some(psd) = probe.sd.as_mut() {
+                    psd.root = Some(id);
+                }
+                let (host, show) = native::preview_host(&probe).ok_or("this graph cannot be drawn on its own")?;
+                let r = host.evaluate_all_cached(size, &[show], 0, &self.cache, Some(show), false, &mut |_| {});
+                return r.kept.get(&show).map(|t| (**t).clone()).ok_or_else(|| r.errors.values().next().cloned().unwrap_or_else(|| "the graph produced no image".into()));
+            }
+            let n = self.graph.nodes.get(&id).ok_or("no such node")?;
+            if let Some(o) = out {
+                // one output of a node with several: read through a Dot linked to it, as a link in the file reads it
+                let outs = native::outputs(n, &self.graph.subgraphs);
+                let label = native::label(n, &self.graph);
+                if !outs.iter().any(|x| x == o) {
+                    return Err(if outs.len() < 2 { format!("{label} has a single output") } else { format!("{label} has no output '{o}' (outputs: {})", outs.join(", ")) });
+                }
+                if outs.len() > 1 {
+                    let mut probe = self.graph.clone();
+                    let dot = native::free_id(&probe);
+                    let mut d = native::new_node("sbs:passthrough", None, n.pos);
+                    d.ins.insert("input".into(), id);
+                    d.in_out.insert("input".into(), o.to_string());
+                    probe.nodes.insert(dot, d);
+                    let low = native::lower(&probe)?.graph;
+                    if !low.nodes.contains_key(&dot) {
+                        return Err("this output gives no image".into());
+                    }
+                    let mut s2 = Session { graph: low, ..Session::from_graph(Graph::default(), None) };
+                    s2.cache = self.cache.clone();
+                    return s2.eval(dot, size, None);
+                }
+            }
+            let low = native::lower(&self.graph)?.graph;
+            if !low.nodes.contains_key(&id) {
+                return Err("this node gives no image".into());
+            }
+            let mut s2 = Session { graph: low, ..Session::from_graph(Graph::default(), None) };
+            s2.cache = self.cache.clone();
+            return s2.eval(id, size, None);
+        }
+        let fam = family_of_graph(&self.graph);
+        if fam != "texture" {
+            // a function or pattern program is drawn by a host graph that runs it, with `id` as its result
+            let end = if fam == "function" { "f_out" } else { "fxm_out" };
+            let mut probe = self.graph.clone();
+            let src = match probe.nodes.get(&id) {
+                Some(n) if n.kind == end => n.ins.get("in").copied().ok_or_else(|| format!("the {end} node has no input yet"))?,
+                Some(_) => id,
+                None => return Err("no such node".into()),
+            };
+            probe.nodes.retain(|_, n| n.kind != end);
+            let mut o = Node { kind: end.into(), ..Default::default() };
+            o.ins.insert("in".into(), src);
+            let oid = next_id(&probe);
+            probe.nodes.insert(oid, o);
+            let (host, show) = probe.preview_host().ok_or("not a function graph or pattern program")?;
+            let r = host.evaluate_all_cached(size, &[show], 0, &self.cache, Some(show), false, &mut |_| {});
+            if let Some(t) = r.kept.get(&show) {
+                return Ok((**t).clone());
+            }
+            return Err(r.errors.values().next().cloned().unwrap_or_else(|| "the graph produced no image".into()));
+        }
         let mut g = &self.graph;
         let tmp;
         let mut target = id;
@@ -510,8 +933,39 @@ pub fn confine(root: &Path, p: &str) -> Result<PathBuf, String> {
     Ok(full)
 }
 
+/// Name of a package's main graph (its identifier).
+fn main_name(g: &Graph) -> String {
+    g.meta.get("identifier").cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| "main".into())
+}
+
+/// Graph `name` of package `root`: `None` for the main graph (its identifier, "main" or ""), `Some` for one of
+/// the other graphs.
+pub fn resolve_graph(root: &Graph, name: &str) -> Result<Option<String>, String> {
+    let name = name.trim();
+    if root.subgraphs.contains_key(name) {
+        return Ok(Some(name.to_string()));
+    }
+    if name.is_empty() || name == "main" || root.meta.get("identifier").map(|i| i == name).unwrap_or(false) {
+        return Ok(None);
+    }
+    let mut names: Vec<String> = root.subgraphs.keys().cloned().collect();
+    names.push(main_name(root));
+    let hint = closest(name, &names);
+    Err(if hint.is_empty() { format!("the package has no graph '{name}' (graph.list shows them)") } else { format!("the package has no graph '{name}'. Did you mean: {}?", hint.join(", ")) })
+}
+
+/// The family of nodes a graph holds: texture, function or pattern.
+fn family_of_graph(g: &Graph) -> &'static str {
+    match g.graph_kind() {
+        "function" => "function",
+        "fxmap" => "pattern",
+        _ => "texture",
+    }
+}
+
 fn check_args(cmd: &Command, p: &Json) -> Result<(), String> {
-    for a in cmd.args {
+    let args = cmd.all_args();
+    for a in &args {
         match p.get(a.name) {
             None | Some(Json::Null) if a.req => return Err(format!("{}: missing required parameter '{}' ({})", cmd.id, a.name, a.doc)),
             None | Some(Json::Null) => {}
@@ -535,8 +989,8 @@ fn check_args(cmd: &Command, p: &Json) -> Result<(), String> {
     }
     if let Json::Obj(o) = p {
         for (k, _) in o {
-            if !cmd.args.iter().any(|a| a.name == k) {
-                let names: Vec<&str> = cmd.args.iter().map(|a| a.name).collect();
+            if !args.iter().any(|a| a.name == k) {
+                let names: Vec<&str> = args.iter().map(|a| a.name).collect();
                 return Err(format!("{}: unknown parameter '{k}' (parameters: {})", cmd.id, if names.is_empty() { "none".into() } else { names.join(", ") }));
             }
         }
@@ -577,59 +1031,19 @@ fn edit_distance(a: &str, b: &str) -> usize {
 }
 
 fn closest(word: &str, options: &[String]) -> Vec<String> {
-    let mut v: Vec<(usize, &String)> = options.iter().map(|o| (edit_distance(&word.to_lowercase(), &o.to_lowercase()), o)).collect();
+    let w = word.to_lowercase();
+    // a name that holds the word (`opacity` in `opacitymult`) is as close as names get
+    let score = |o: &str| {
+        let o = o.to_lowercase();
+        if w.len() >= 3 && o.len() >= 3 && (o.contains(&w) || w.contains(&o)) {
+            0
+        } else {
+            edit_distance(&w, &o)
+        }
+    };
+    let mut v: Vec<(usize, &String)> = options.iter().map(|o| (score(o), o)).collect();
     v.sort();
     v.into_iter().filter(|(d, _)| *d <= 3.max(word.len() / 3)).take(3).map(|(_, o)| o.clone()).collect()
-}
-
-fn all_specs(functions: bool) -> Vec<&'static graph::Spec> {
-    if functions {
-        crate::func::FUNC_SPECS.iter().collect()
-    } else {
-        graph::SPECS.iter().collect()
-    }
-}
-
-fn find_spec(kind: &str) -> Result<&'static graph::Spec, String> {
-    if let Some(s) = graph::spec(kind) {
-        return Ok(s);
-    }
-    let names: Vec<String> = graph::SPECS.iter().map(|s| s.kind.to_string()).collect();
-    let hint = closest(kind, &names);
-    Err(if hint.is_empty() { format!("unknown node type '{kind}' (node.types lists them)") } else { format!("unknown node type '{kind}'. Did you mean: {}?", hint.join(", ")) })
-}
-
-/// Words of a spec's doc line: the parameter names it mentions.
-fn doc_words(doc: &str) -> BTreeSet<String> {
-    doc.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).map(|w| w.to_string()).collect()
-}
-
-fn param_json(pd: &params::PD) -> Json {
-    let mut j = Json::obj().with("name", pd.name).with("label", pd.label).with("group", params::param_group("", pd.name).0);
-    match pd.k {
-        PK::F { def, lo, hi } => {
-            j.set("type", "float");
-            j.set("default", def);
-            j.set("min", lo);
-            j.set("max", hi);
-        }
-        PK::I { def, lo, hi } => {
-            j.set("type", "integer");
-            j.set("default", def);
-            j.set("min", lo);
-            j.set("max", hi);
-        }
-        PK::E { def, opts } => {
-            j.set("type", "choice");
-            j.set("default", opts.get(def.max(0) as usize).copied().unwrap_or(""));
-            j.set("options", Json::Arr(opts.iter().map(|o| Json::from(*o)).collect()));
-        }
-        PK::B { def } => {
-            j.set("type", "boolean");
-            j.set("default", def);
-        }
-    }
-    j
 }
 
 // ------------------------------------------------------------------------------------------ discovery
@@ -644,252 +1058,85 @@ fn c_command_list(_: &mut Session, p: &Json) -> Result<Outcome, String> {
         .iter()
         .filter(|c| f.is_empty() || c.id.contains(&f) || c.doc.to_lowercase().contains(&f))
         .map(|c| {
-            let args: Vec<Json> = c.args.iter().map(|a| Json::obj().with("name", a.name).with("type", a.ty).with("required", a.req).with("doc", a.doc)).collect();
+            let args: Vec<Json> = c.all_args().iter().map(|a| Json::obj().with("name", a.name).with("type", a.ty).with("required", a.req).with("doc", a.doc)).collect();
             Json::obj().with("id", c.id).with("tool", c.tool_name()).with("kind", match c.kind { Kind::Query => "query", Kind::Edit => "edit", Kind::Special => "special" }).with("doc", c.doc).with("params", Json::Arr(args))
         })
         .collect();
     Outcome::data(Json::obj().with("commands", Json::Arr(list)))
 }
 
-fn c_node_types(_: &mut Session, p: &Json) -> Result<Outcome, String> {
-    let q = p.get("query").and_then(Json::as_str).unwrap_or("").to_lowercase();
-    let cat = p.get("category").and_then(Json::as_str).unwrap_or("").to_lowercase();
-    let functions = p.get("functions").and_then(Json::as_bool).unwrap_or(false);
-    let words: Vec<&str> = q.split_whitespace().collect();
-    let mut cats: BTreeSet<&str> = BTreeSet::new();
-    let mut list = Vec::new();
-    for s in all_specs(functions) {
-        let c = if functions { "Function" } else { graph::category(s.kind) };
-        cats.insert(c);
-        if !cat.is_empty() && c.to_lowercase() != cat {
-            continue;
-        }
-        let hay = format!("{} {} {} {}", s.kind, graph::label(s.kind), c, s.doc).to_lowercase().replace('_', " ");
-        if !words.iter().all(|w| hay.contains(&w.replace('_', " "))) {
-            continue;
-        }
-        let mut j = Json::obj().with("kind", s.kind).with("label", graph::label(s.kind)).with("category", c);
-        j.set("inputs", Json::Arr([s.req, s.opt].concat().iter().map(|x| Json::from(*x)).collect::<Vec<_>>()));
-        let outs = graph::node_outputs(s.kind);
-        if !outs.is_empty() {
-            j.set("outputs", Json::Arr(outs.iter().map(|x| Json::from(*x)).collect::<Vec<_>>()));
-        }
-        j.set("doc", s.doc.split(':').next().unwrap_or(s.doc));
-        list.push(j);
-    }
-    Outcome::data(Json::obj().with("count", list.len()).with("categories", Json::Arr(cats.into_iter().map(Json::from).collect())).with("nodes", Json::Arr(list)))
+fn c_node_types(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    sd_node_types(s, p)
 }
 
 fn c_node_describe(_: &mut Session, p: &Json) -> Result<Outcome, String> {
-    let kind = p.get("kind").and_then(Json::as_str).unwrap_or("");
-    let s = match find_spec(kind) {
-        Ok(s) => s,
-        Err(e) => match crate::func::FUNC_SPECS.iter().find(|s| s.kind == kind) {
-            Some(s) => s,
-            None => return Err(e),
-        },
-    };
-    let pd = params::pdefs(kind);
-    let mut j = Json::obj().with("kind", s.kind).with("label", graph::label(s.kind)).with("category", graph::category(s.kind)).with("doc", s.doc);
-    j.set("required_inputs", Json::Arr(s.req.iter().map(|x| Json::from(*x)).collect::<Vec<_>>()));
-    j.set("optional_inputs", Json::Arr(s.opt.iter().map(|x| Json::from(*x)).collect::<Vec<_>>()));
-    let outs = graph::node_outputs(kind);
-    j.set("outputs", if outs.is_empty() { Json::Arr(vec!["output".into()]) } else { Json::Arr(outs.iter().map(|x| Json::from(*x)).collect::<Vec<_>>()) });
-    j.set("params", Json::Arr(pd.iter().map(param_json).collect()));
-    let known: BTreeSet<&str> = pd.iter().map(|d| d.name).collect();
-    let others: Vec<Json> = doc_words(s.doc).into_iter().filter(|w| !known.contains(w.as_str()) && w.len() > 1 && !w.chars().all(|c| c.is_ascii_digit())).map(Json::from).collect();
-    j.set("other_words_in_doc", Json::Arr(others));
-    let dflt = params::new_node_defaults(kind);
-    if !dflt.is_empty() {
-        let mut d = Json::obj();
-        for (k, v) in dflt {
-            d.set(k, *v);
-        }
-        j.set("values_set_on_creation", d);
+    let kind = p.get("kind").and_then(Json::as_str).unwrap_or("").trim();
+    if kind.is_empty() {
+        return Err("give a node kind (node.types lists them)".into());
     }
-    Outcome::data(j)
-}
-
-fn c_library_search(_: &mut Session, p: &Json) -> Result<Outcome, String> {
-    let kind = match p.get("kind").and_then(Json::as_str) {
-        Some(k) => Some(crate::library::AssetKind::parse(k).ok_or("kind must be material, generator or filter")?),
-        None => None,
-    };
-    let hits = crate::library::search(p.get("query").and_then(Json::as_str).unwrap_or(""), kind);
-    let list: Vec<Json> = hits.iter().map(|a| Json::obj().with("id", a.id).with("name", a.name).with("kind", a.kind.label()).with("category", a.category).with("tags", Json::Arr(a.tags.iter().map(|t| Json::from(*t)).collect::<Vec<_>>())).with("about", a.description)).collect();
-    Outcome::data(Json::obj().with("count", list.len()).with("assets", Json::Arr(list)))
+    let k = if kind.starts_with("sbs:") { kind.to_string() } else { format!("sbs:{kind}") };
+    sd_node_describe(&k)
 }
 
 // ------------------------------------------------------------------------------------------ graph
 
-fn describe_node(s: &Session, id: u32, n: &Node, compact: bool) -> Json {
-    let mut j = Json::obj().with("id", id);
-    if let Some(a) = s.alias_of(id) {
-        j.set("name", a);
-    }
-    j.set("kind", n.kind.as_str());
-    let mut pr = Json::obj();
-    for (k, v) in &n.nums {
-        if !k.starts_with('_') {
-            pr.set(k, *v);
-        }
-    }
-    for (k, v) in &n.strs {
-        pr.set(k, v.as_str());
-    }
-    j.set("params", pr);
-    let mut ins = Json::obj();
-    for (slot, src) in &n.ins {
-        ins.set(
-            slot,
-            match n.in_out.get(slot) {
-                Some(o) => Json::obj().with("node", *src).with("output", o.as_str()),
-                None => Json::from(*src),
-            },
-        );
-    }
-    j.set("inputs", ins);
-    if !compact {
-        j.set("x", n.pos[0]);
-        j.set("y", n.pos[1]);
-    }
-    j
-}
-
-/// Problems with the graph, as readable lines (more than `Graph::validate`, which stops at the first).
-fn problems(g: &Graph) -> Vec<String> {
-    let mut v = Vec::new();
-    for (id, n) in &g.nodes {
-        match graph::spec(&n.kind) {
-            None => v.push(format!("node {id}: unknown type '{}'", n.kind)),
-            Some(sp) => {
-                for r in sp.req {
-                    if !n.ins.contains_key(*r) {
-                        v.push(format!("node {id} ({}): required input '{r}' is not connected", n.kind));
-                    }
-                }
-                for (slot, src) in &n.ins {
-                    if !sp.req.contains(&slot.as_str()) && !sp.opt.contains(&slot.as_str()) {
-                        v.push(format!("node {id} ({}): has no input '{slot}' (inputs: {})", n.kind, [sp.req, sp.opt].concat().join(", ")));
-                    }
-                    if !g.nodes.contains_key(src) {
-                        v.push(format!("node {id} ({}): input '{slot}' comes from node {src}, which does not exist", n.kind));
-                    }
-                }
-            }
-        }
-    }
-    if let Err(e) = g.check_cycles() {
-        v.push(e.to_string());
-    }
-    if g.output_nodes().is_empty() {
-        v.push("the graph has no outputs (output.add makes a node an output)".into());
-    }
-    for (id, slot, m) in graph::connection_issues(g) {
-        v.push(format!("node {id}: {slot}: {m}"));
-    }
-    if let Err(e) = g.validate() {
-        let t = e.to_string();
-        if !v.iter().any(|x| x.contains(&t)) && v.is_empty() {
-            v.push(t);
-        }
-    }
-    // nodes whose result nothing uses
-    let mut used: BTreeSet<u32> = BTreeSet::new();
-    let mut stack: Vec<u32> = g.output_nodes().iter().map(|o| o.2).collect();
-    while let Some(i) = stack.pop() {
-        if used.insert(i) {
-            if let Some(n) = g.nodes.get(&i) {
-                stack.extend(n.ins.values().copied());
-            }
-        }
-    }
-    let unused: Vec<String> = g.nodes.keys().filter(|i| !used.contains(i)).map(|i| i.to_string()).collect();
-    if !unused.is_empty() && !g.output_nodes().is_empty() {
-        v.push(format!("nodes {} do not feed any output", unused.join(", ")));
-    }
-    v
-}
-
 fn c_graph_inspect(s: &mut Session, p: &Json) -> Result<Outcome, String> {
-    let compact = p.get("compact").and_then(Json::as_bool).unwrap_or(false);
-    let g = &s.graph;
-    let nodes: Vec<Json> = g.nodes.iter().map(|(id, n)| describe_node(s, *id, n, compact)).collect();
-    let outs: Vec<Json> = g.output_nodes().into_iter().map(|(usage, ident, id)| Json::obj().with("usage", usage).with("name", ident).with("node", id)).collect();
-    let exposed: Vec<Json> = g.exposed.iter().map(|e| Json::obj().with("label", e.label.as_str()).with("node", e.node).with("param", e.param.as_str()).with("min", e.min).with("max", e.max)).collect();
-    let mut j = Json::obj().with("size", g.size).with("height", if g.is_square() { g.size } else { g.height });
-    j.set("seed_offset", g.seed_offset);
-    j.set("precision", g.default_format());
-    j.set("file", s.path.as_ref().map(|p| p.display().to_string()));
-    j.set("unsaved_changes", s.dirty);
-    j.set("nodes", Json::Arr(nodes));
-    j.set("outputs", Json::Arr(outs));
-    if !exposed.is_empty() {
-        j.set("exposed", Json::Arr(exposed));
-    }
-    if !g.subgraphs.is_empty() {
-        j.set("subgraphs", Json::Arr(g.subgraphs.keys().map(|k| Json::from(k.as_str())).collect::<Vec<_>>()));
-    }
-    j.set("problems", Json::Arr(problems(g).into_iter().map(Json::from).collect::<Vec<_>>()));
-    Outcome::data(j)
+    sd_graph_inspect(s, p)
 }
 
 fn c_graph_validate(s: &mut Session, _: &Json) -> Result<Outcome, String> {
-    let pr = problems(&s.graph);
-    Outcome::data(Json::obj().with("ok", pr.is_empty()).with("problems", Json::Arr(pr.into_iter().map(Json::from).collect::<Vec<_>>())))
+    let pr = sd_problems(&s.graph);
+    let warn = sd_warnings(&s.graph);
+    Outcome::data(
+        Json::obj()
+            .with("ok", pr.is_empty())
+            .with("problems", Json::Arr(pr.into_iter().map(Json::from).collect::<Vec<_>>()))
+            .with("warnings", Json::Arr(warn.into_iter().map(Json::from).collect::<Vec<_>>())),
+    )
 }
 
-fn c_graph_text(s: &mut Session, _: &Json) -> Result<Outcome, String> {
-    Outcome::data(Json::obj().with("text", s.graph.to_text()))
-}
-
-fn check_size(v: usize) -> Result<(), String> {
-    if (16..=8192).contains(&v) {
-        Ok(())
-    } else {
-        Err("the size must be between 16 and 8192".into())
-    }
+fn c_graph_text(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    let text = match p.get("graph").and_then(Json::as_str) {
+        Some(name) => native::save_text(&native::extract_package(&s.graph, name)?)?,
+        None => native::save_text(&s.graph)?,
+    };
+    Outcome::data(Json::obj().with("format", "sbs").with("file_kind", "package (.sbs)").with("text", text))
 }
 
 fn c_graph_new(s: &mut Session, p: &Json) -> Result<Outcome, String> {
-    let size = opt_usize(p, "size", 16, 8192, 512)?;
-    let height = opt_usize(p, "height", 16, 8192, size)?;
-    let mut g = Graph::default();
-    g.size = size;
-    g.height = if height == size { 0 } else { height };
-    s.graph = g;
-    s.path = None;
-    s.aliases.clear();
-    Outcome::data(Json::obj().with("size", size).with("height", height))
-}
-
-fn load_graph(path: &Path) -> Result<(Graph, Vec<String>), String> {
-    if let Some(dir) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        crate::resources::set_search_dirs(vec![dir.to_path_buf(), dir.join("resources")]);
-    }
-    let (mut g, issues) = Graph::load_file(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    g.migrate_outputs();
-    Ok((g, issues))
+    sd_new_package(s, p)
 }
 
 fn c_graph_open(s: &mut Session, p: &Json) -> Result<Outcome, String> {
     let path = s.resolve_path(p.get("path").and_then(Json::as_str).unwrap_or(""))?;
-    let (g, issues) = load_graph(&path)?;
-    let (n, o) = (g.nodes.len(), g.output_nodes().len());
-    s.graph = g;
-    s.path = Some(path.clone());
-    s.aliases.clear();
-    Outcome::data(Json::obj().with("file", path.display().to_string()).with("nodes", n).with("outputs", o).with("warnings", Json::Arr(issues.into_iter().map(Json::from).collect::<Vec<_>>())))
+    if path.extension().map(|e| e.eq_ignore_ascii_case("sbs")).unwrap_or(false) {
+        // an .sbs package opens as it is: its own nodes and values, saved back with only the changes written
+        let (g, warnings) = native::open(&path)?;
+        let report = native::lower(&g).map(|l| l.report.summary()).unwrap_or_default();
+        let graphs = native::all_graphs(&g).values().filter(|x| native::listed(x)).count();
+        let (n, o) = (g.nodes.len(), g.output_nodes().len());
+        s.graph = g;
+        s.path = Some(path.clone());
+        s.reset_names();
+        return Outcome::data(Json::obj().with("file", path.display().to_string()).with("format", "sbs").with("graphs", graphs).with("nodes", n).with("outputs", o).with("rendering", report).with("warnings", Json::Arr(warnings.into_iter().map(Json::from).collect::<Vec<_>>())));
+    }
+    Err(format!("{}: only Substance packages (.sbs) can be opened", path.display()))
 }
 
 fn c_graph_load_text(s: &mut Session, p: &Json) -> Result<Outcome, String> {
     let text = p.get("text").and_then(Json::as_str).unwrap_or("");
-    let mut g = Graph::parse_unchecked(text).map_err(gerr)?;
-    g.migrate_outputs();
-    let n = g.nodes.len();
-    s.graph = g;
-    s.aliases.clear();
-    Outcome::data(Json::obj().with("nodes", n))
+    let head = text.trim_start();
+    if head.is_empty() {
+        return Err("text is empty: give the file text of a package".into());
+    }
+    if head.starts_with("<?xml") || head.starts_with("<package") {
+        let (g, warnings) = native::load(text, None)?;
+        let n = g.nodes.len();
+        s.graph = g;
+        s.reset_names();
+        return Outcome::data(Json::obj().with("format", "sbs").with("nodes", n).with("warnings", Json::Arr(warnings.into_iter().map(Json::from).collect::<Vec<_>>())));
+    }
+    Err("this is not the text of an .sbs package (it starts with <?xml or <package)".into())
 }
 
 fn c_graph_save(s: &mut Session, p: &Json) -> Result<Outcome, String> {
@@ -897,37 +1144,16 @@ fn c_graph_save(s: &mut Session, p: &Json) -> Result<Outcome, String> {
         Some(x) => s.resolve_path(x)?,
         None => s.path.clone().ok_or("this graph has no file yet: give a path")?,
     };
-    s.graph.validate().map_err(|e| format!("not saved, the graph is not valid yet: {e}"))?;
-    crate::safeio::write_file(&path, s.graph.to_text().as_bytes()).map_err(|e| format!("{}: {e}", path.display()))?;
+    let path = if path.extension().map(|e| e.eq_ignore_ascii_case("sbs")).unwrap_or(false) { path } else { path.with_extension("sbs") };
+    let text = native::save_text(&s.graph)?;
+    crate::safeio::write_file(&path, text.as_bytes()).map_err(|e| format!("{}: {e}", path.display()))?;
     s.path = Some(path.clone());
     s.dirty = false;
-    Outcome::data(Json::obj().with("saved", path.display().to_string()))
+    Outcome::data(Json::obj().with("saved", path.display().to_string()).with("format", "sbs"))
 }
 
 fn c_graph_set(s: &mut Session, p: &Json) -> Result<Outcome, String> {
-    if p.as_obj().map(|o| o.is_empty()).unwrap_or(true) {
-        return Err("give at least one of size, height, seed_offset, precision".into());
-    }
-    if p.get("size").is_some() {
-        let v = opt_usize(p, "size", 16, 8192, 512)?;
-        check_size(v)?;
-        s.graph.size = v;
-    }
-    if p.get("height").is_some() {
-        let h = opt_usize(p, "height", 0, 8192, 0)?;
-        if h != 0 {
-            check_size(h)?;
-        }
-        s.graph.height = if h == s.graph.size { 0 } else { h };
-    }
-    if p.get("seed_offset").is_some() {
-        s.graph.seed_offset = opt_usize(p, "seed_offset", 0, u32::MAX as usize, 0)? as u32;
-    }
-    if p.get("precision").is_some() {
-        let v = opt_usize(p, "precision", 0, 3, 0)?;
-        s.graph.meta.insert("ofmt".into(), v.to_string());
-    }
-    Outcome::data(Json::obj().with("size", s.graph.size).with("height", if s.graph.is_square() { s.graph.size } else { s.graph.height }))
+    sd_graph_set(s, p)
 }
 
 fn c_graph_layout(s: &mut Session, _: &Json) -> Result<Outcome, String> {
@@ -976,22 +1202,91 @@ fn c_graph_layout(s: &mut Session, _: &Json) -> Result<Outcome, String> {
     for (c, list) in &cols {
         for (r, id) in list.iter().enumerate() {
             if let Some(n) = g.nodes.get_mut(id) {
-                n.pos = [*c as f32 * 170.0, r as f32 * 130.0];
+                n.pos = [*c as f32 * 170.0, r as f32 * 150.0];
             }
         }
     }
     Outcome::data(Json::obj().with("columns", cols.len()).with("nodes", ids.len()))
 }
 
-fn c_library_load(s: &mut Session, p: &Json) -> Result<Outcome, String> {
-    let id = p.get("id").and_then(Json::as_str).unwrap_or("");
-    let a = crate::library::find(id).ok_or_else(|| format!("no library entry '{id}' (library.search finds them)"))?;
-    let g = a.graph().map_err(gerr)?;
-    let n = g.nodes.len();
-    s.graph = g;
-    s.path = None;
-    s.aliases.clear();
-    Outcome::data(Json::obj().with("loaded", a.name).with("nodes", n))
+// ------------------------------------------------------------------------------------------ the package
+
+fn kind_label(g: &Graph) -> &'static str {
+    family_of_graph(g)
+}
+
+fn c_graph_list(s: &mut Session, _: &Json) -> Result<Outcome, String> {
+    sd_graph_list(s)
+}
+
+fn c_graph_focus(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    let want = p.get("graph").and_then(Json::as_str).unwrap_or("");
+    let t = resolve_graph(&s.graph, want)?;
+    s.focus = t.clone();
+    let (name, kind) = match &t {
+        Some(n) => (n.clone(), s.graph.subgraphs.get(n).map(kind_label).unwrap_or("texture")),
+        None => (main_name(&s.graph), kind_label(&s.graph)),
+    };
+    Outcome::data(Json::obj().with("focused", name).with("kind", kind))
+}
+
+fn c_graph_create(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    sd_graph_create(s, p)
+}
+
+fn c_graph_rename(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    sd_graph_rename(s, p)
+}
+
+fn c_graph_delete(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    let name = p.get("graph").and_then(Json::as_str).unwrap_or("");
+    let Some(n) = resolve_graph(&s.graph, name)? else {
+        return Err("the main graph cannot be deleted".into());
+    };
+    s.graph.remove_graph(&n)?;
+    s.other_aliases.remove(&n);
+    if s.focus.as_deref() == Some(n.as_str()) {
+        s.focus = None;
+    }
+    Outcome::data(Json::obj().with("deleted", n).with("graphs", s.graph.subgraphs.len() + 1))
+}
+
+fn c_graph_duplicate(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    let src = match p.get("graph").and_then(Json::as_str) {
+        Some(n) => resolve_graph(&s.graph, n)?,
+        None => s.focus.clone().filter(|f| s.graph.subgraphs.contains_key(f)),
+    };
+    let new = s.graph.duplicate_graph(src.as_deref(), p.get("name").and_then(Json::as_str))?;
+    Outcome::data(Json::obj().with("created", new))
+}
+
+fn c_graph_add_file(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    let path = s.resolve_path(p.get("path").and_then(Json::as_str).unwrap_or(""))?;
+    if !path.extension().map(|e| e.eq_ignore_ascii_case("sbs")).unwrap_or(false) {
+        return Err(format!("{}: only the graphs of other .sbs packages can be added", path.display()));
+    }
+    let (other, mut warnings) = native::open(&path)?;
+    let (name, n, more) = native::add_package(&mut s.graph, other)?;
+    warnings.extend(more);
+    Outcome::data(Json::obj().with("added", name).with("with_graphs", n).with("warnings", Json::Arr(warnings.into_iter().map(Json::from).collect::<Vec<_>>())))
+}
+
+// ------------------------------------------------------------------------------------------ resources
+
+fn c_spline_set(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    sd_spline_set(s, p)
+}
+
+fn c_spline_get(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    sd_spline_get(s, p)
+}
+
+fn c_resource_list(s: &mut Session, _: &Json) -> Result<Outcome, String> {
+    let list: Vec<Json> = match s.package().sd.as_ref() {
+        Some(sd) => sd.pkg.resources.iter().map(|r| Json::obj().with("name", r.path()).with("type", r.kind.as_str()).with("embedded", r.embedded.is_some()).with("file", r.filepath.clone())).collect(),
+        None => Vec::new(),
+    };
+    Outcome::data(Json::obj().with("count", list.len()).with("resources", Json::Arr(list)))
 }
 
 // ------------------------------------------------------------------------------------------ nodes
@@ -1029,288 +1324,76 @@ fn parse_link(s: &Session, v: &Json) -> Result<(u32, Option<String>), String> {
     }
 }
 
-/// Is `slot` of `kind` a valid input slot? Lists the valid ones in the error.
-fn check_slot(kind: &str, slot: &str) -> Result<(), String> {
-    let sp = find_spec(kind)?;
-    if sp.req.contains(&slot) || sp.opt.contains(&slot) {
-        return Ok(());
-    }
-    let all = [sp.req, sp.opt].concat();
-    if all.is_empty() {
-        Err(format!("{kind} has no inputs"))
-    } else {
-        Err(format!("{kind} has no input '{slot}' (inputs: {})", all.join(", ")))
-    }
-}
-
-fn set_link(g: &mut Graph, to: u32, slot: &str, from: u32, out: Option<String>) -> Result<(), String> {
-    let kind = g.nodes.get(&to).map(|n| n.kind.clone()).ok_or("no such target node")?;
-    check_slot(&kind, slot)?;
-    if from == to {
-        return Err("a node cannot feed itself".into());
-    }
-    if let Some(o) = &out {
-        let sk = g.nodes.get(&from).map(|n| n.kind.clone()).ok_or("no such source node")?;
-        let outs = graph::node_outputs(&sk);
-        if !outs.contains(&o.as_str()) {
-            return Err(if outs.is_empty() { format!("{sk} has a single output; leave 'output' out") } else { format!("{sk} has no output '{o}' (outputs: {})", outs.join(", ")) });
-        }
-    }
-    let n = g.nodes.get_mut(&to).ok_or("no such target node")?;
-    let old = (n.ins.get(slot).copied(), n.in_out.get(slot).cloned());
-    n.ins.insert(slot.to_string(), from);
-    match out {
-        Some(o) => {
-            n.in_out.insert(slot.to_string(), o);
-        }
-        None => {
-            n.in_out.remove(slot);
-        }
-    }
-    let undo = |g: &mut Graph| {
-        if let Some(n) = g.nodes.get_mut(&to) {
-            match &old.0 {
-                Some(o) => {
-                    n.ins.insert(slot.to_string(), *o);
-                }
-                None => {
-                    n.ins.remove(slot);
-                }
-            }
-            match &old.1 {
-                Some(o) => {
-                    n.in_out.insert(slot.to_string(), o.clone());
-                }
-                None => {
-                    n.in_out.remove(slot);
-                }
-            }
-        }
-    };
-    if let Err(e) = g.check_cycles() {
-        undo(g);
-        return Err(format!("that connection would make a loop ({e})"));
-    }
-    if let Some((_, _, m)) = graph::connection_issues(g).into_iter().find(|(i, sl, _)| *i == to && sl == slot) {
-        undo(g);
-        return Err(format!("connection rejected: {m}"));
-    }
-    Ok(())
-}
-
-/// Apply `values` to a node with range checks. Returns warnings (clamped values).
-fn apply_params(node: &mut Node, kind: &str, values: &[(String, Json)], allow_unknown: bool) -> Result<Vec<String>, String> {
-    let pd = params::pdefs(kind);
-    let sp = graph::spec(kind);
-    let mut known: BTreeSet<String> = pd.iter().map(|d| d.name.to_string()).collect();
-    if let Some(sp) = sp {
-        known.extend(doc_words(sp.doc));
-    }
-    known.extend(params::new_node_defaults(kind).iter().map(|(k, _)| k.to_string()));
-    known.extend(node.nums.keys().cloned());
-    known.extend(node.strs.keys().cloned());
-    let mut warn = Vec::new();
-    for (k, v) in values {
-        let def = pd.iter().find(|d| d.name == k);
-        if def.is_none() && !known.contains(k) && !allow_unknown {
-            let names: Vec<String> = known.iter().cloned().collect();
-            let hint = closest(k, &names);
-            return Err(format!("{kind} has no parameter '{k}'.{} (node.describe shows them all; allow_unknown=true overrides)", if hint.is_empty() { String::new() } else { format!(" Did you mean: {}?", hint.join(", ")) }));
-        }
-        match v {
-            Json::Null => {
-                node.nums.remove(k);
-                node.strs.remove(k);
-            }
-            Json::Bool(b) => {
-                node.strs.remove(k);
-                node.nums.insert(k.clone(), f32::from(u8::from(*b)));
-            }
-            Json::Str(t) => match def.map(|d| d.k) {
-                Some(PK::E { opts, .. }) => {
-                    let lower = t.trim().to_lowercase();
-                    let idx = opts.iter().position(|o| o.to_lowercase() == lower).or_else(|| {
-                        let m: Vec<usize> = opts.iter().enumerate().filter(|(_, o)| o.to_lowercase().starts_with(&lower)).map(|(i, _)| i).collect();
-                        (m.len() == 1).then(|| m[0])
-                    });
-                    match idx {
-                        Some(i) => {
-                            node.strs.remove(k);
-                            node.nums.insert(k.clone(), i as f32);
-                        }
-                        None => return Err(format!("{k}: '{t}' is not one of: {}", opts.join(", "))),
-                    }
-                }
-                Some(PK::F { .. } | PK::I { .. } | PK::B { .. }) => return Err(format!("{k} is a number; got text")),
-                None => {
-                    if t.contains('"') || t.contains('#') || t.contains('\n') {
-                        return Err(format!("{k}: text may not contain quotes, '#' or line breaks"));
-                    }
-                    node.nums.remove(k);
-                    node.strs.insert(k.clone(), t.clone());
-                }
-            },
-            Json::Num(_) => {
-                let mut x = v.as_f32().ok_or_else(|| format!("{k}: not a finite number"))?;
-                match def.map(|d| d.k) {
-                    Some(PK::F { lo, hi, .. }) => {
-                        let c = x.clamp(lo, hi);
-                        if c != x {
-                            warn.push(format!("{k}: {x} is outside {lo}..{hi}, used {c}"));
-                        }
-                        x = c;
-                    }
-                    Some(PK::I { lo, hi, .. }) => {
-                        let c = x.round().clamp(lo as f32, hi as f32);
-                        if c != x {
-                            warn.push(format!("{k}: {x} is not a whole number inside {lo}..{hi}, used {c}"));
-                        }
-                        x = c;
-                    }
-                    Some(PK::E { opts, .. }) => {
-                        let c = x.round().clamp(0.0, opts.len().saturating_sub(1) as f32);
-                        if c != x {
-                            warn.push(format!("{k}: choice {x} does not exist (0..{}), used {c}", opts.len().saturating_sub(1)));
-                        }
-                        x = c;
-                    }
-                    Some(PK::B { .. }) => x = f32::from(u8::from(x != 0.0)),
-                    None => {}
-                }
-                node.strs.remove(k);
-                node.nums.insert(k.clone(), x);
-            }
-            _ => return Err(format!("{k}: a parameter is a number, true/false or text")),
-        }
-    }
-    Ok(warn)
-}
-
 fn c_node_add(s: &mut Session, p: &Json) -> Result<Outcome, String> {
-    let kind = p.get("kind").and_then(Json::as_str).unwrap_or("").to_string();
-    find_spec(&kind)?;
-    if kind == "output" {
-        return Err("use output.add to make a node an output".into());
-    }
-    let name = p.get("name").and_then(Json::as_str).map(str::to_string);
-    if let Some(n) = &name {
-        if n.is_empty() || n.parse::<u32>().is_ok() || n.starts_with('@') || n.len() > 64 {
-            return Err("a node name must be text that is not a number (at most 64 characters)".into());
-        }
-        if let Some(old) = s.aliases.get(n) {
-            if s.graph.nodes.contains_key(old) {
-                return Err(format!("the name '{n}' is already used by node {old}"));
-            }
-        }
-    }
-    let id = next_id(&s.graph);
-    let mut node = Node { kind: kind.clone(), ..Default::default() };
-    match kind.as_str() {
-        "pixel_processor" => {
-            node.strs.insert("expr".into(), "u".into());
-        }
-        "colorize" => {
-            for (i, c) in [(0, 0.0f32), (1, 1.0)] {
-                node.nums.insert(format!("p{i}"), c);
-                for ch in ["r", "g", "b"] {
-                    node.nums.insert(format!("{ch}{i}"), c);
-                }
-            }
-        }
-        _ => {}
-    }
-    for (k, v) in params::new_node_defaults(&kind) {
-        node.nums.insert((*k).to_string(), *v);
-    }
-    let mut warnings = Vec::new();
-    if let Some(Json::Obj(o)) = p.get("params") {
-        warnings = apply_params(&mut node, &kind, o, false)?;
-    }
-    let mut links: Vec<(String, u32, Option<String>)> = Vec::new();
-    if let Some(Json::Obj(o)) = p.get("inputs") {
-        for (slot, v) in o {
-            let (src, out) = parse_link(s, v).map_err(|e| format!("inputs.{slot}: {e}"))?;
-            links.push((slot.clone(), src, out));
-        }
-    } else if p.get("inputs").map(|v| !v.is_null()).unwrap_or(false) {
-        return Err("inputs must be an object {slot: node}".into());
-    }
-    let map: BTreeMap<String, u32> = links.iter().map(|(k, v, _)| (k.clone(), *v)).collect();
-    node.pos = match (p.get("x").and_then(Json::as_f32), p.get("y").and_then(Json::as_f32)) {
-        (Some(x), Some(y)) => [x, y],
-        _ => free_pos(&s.graph, &map),
-    };
-    s.graph.nodes.insert(id, node);
-    for (slot, src, out) in links {
-        set_link(&mut s.graph, id, &slot, src, out).map_err(|e| format!("inputs.{slot}: {e}"))?;
-    }
-    if let Some(n) = name {
-        s.aliases.insert(n, id);
-    }
-    let mut j = Json::obj().with("id", id).with("kind", kind);
-    if !warnings.is_empty() {
-        j.set("warnings", Json::Arr(warnings.into_iter().map(Json::from).collect::<Vec<_>>()));
-    }
-    Outcome::data(j)
+    sd_node_add(s, p)
 }
 
 fn c_node_set(s: &mut Session, p: &Json) -> Result<Outcome, String> {
-    let id = s.arg_node(p, NODE)?;
-    let values = p.get("params").and_then(Json::as_obj).ok_or("params must be an object")?;
-    if values.is_empty() {
-        return Err("params is empty".into());
+    sd_node_set(s, p)
+}
+
+fn c_node_params(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    sd_node_params(s, p)
+}
+
+fn c_node_drive(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    sd_node_drive(s, p)
+}
+
+fn c_graph_extract(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    sd_graph_extract(s, p)
+}
+
+fn c_graph_outline(s: &mut Session, _: &Json) -> Result<Outcome, String> {
+    Outcome::data(Json::obj().with("graph", s.current_name()).with("outline", sd_outline(s)))
+}
+
+fn c_render_review(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    sd_render_review(s, p)
+}
+
+fn c_macro_add(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    sd_macro_add(s, p)
+}
+
+fn c_node_expression(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    sd_node_expression(s, p)
+}
+
+fn c_node_duplicate(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    sd_node_duplicate(s, p)
+}
+
+fn c_node_set_result(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    sd_node_set_result(s, p)
+}
+
+fn c_comment_remove(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    let i = opt_usize(p, "index", 0, usize::MAX >> 1, 0)?;
+    if i >= s.graph.comments.len() {
+        return Err(format!("there are {} comment(s); index {i} does not exist", s.graph.comments.len()));
     }
-    let allow = p.get("allow_unknown").and_then(Json::as_bool).unwrap_or(false);
-    let node = s.graph.nodes.get_mut(&id).ok_or("no such node")?;
-    let kind = node.kind.clone();
-    let warnings = apply_params(node, &kind, values, allow)?;
-    let mut j = Json::obj().with("id", id).with("updated", values.len());
-    if !warnings.is_empty() {
-        j.set("warnings", Json::Arr(warnings.into_iter().map(Json::from).collect::<Vec<_>>()));
-    }
-    Outcome::data(j)
+    s.graph.comments.remove(i);
+    Outcome::data(Json::obj().with("comments", s.graph.comments.len()))
 }
 
 fn c_node_remove(s: &mut Session, p: &Json) -> Result<Outcome, String> {
-    let ids = s.nodes_arg(p, "nodes")?;
-    let set: BTreeSet<u32> = ids.iter().copied().collect();
-    let mut cut = 0;
-    for n in s.graph.nodes.values_mut() {
-        let dead: Vec<String> = n.ins.iter().filter(|(_, v)| set.contains(v)).map(|(k, _)| k.clone()).collect();
-        for k in dead {
-            n.ins.remove(&k);
-            n.in_out.remove(&k);
-            cut += 1;
-        }
-    }
-    for id in &set {
-        s.graph.nodes.remove(id);
-    }
-    s.graph.exposed.retain(|e| !set.contains(&e.node));
-    s.graph.outputs.retain(|(_, i)| !set.contains(i));
-    s.aliases.retain(|_, v| !set.contains(v));
-    Outcome::data(Json::obj().with("removed", set.len()).with("links_removed", cut))
+    sd_node_remove(s, p)
 }
 
 fn c_node_connect(s: &mut Session, p: &Json) -> Result<Outcome, String> {
     let from = s.arg_node(p, "from")?;
     let to = s.arg_node(p, "to")?;
     let out = p.get("output").and_then(Json::as_str).map(str::to_string);
-    let kind = s.graph.nodes.get(&to).map(|n| n.kind.clone()).ok_or("no such node")?;
-    let sp = find_spec(&kind)?;
+    let n = s.graph.nodes[&to].clone();
     let slot = match p.get("slot").and_then(Json::as_str) {
         Some(x) => x.to_string(),
         None => {
-            let n = &s.graph.nodes[&to];
-            let free = sp.req.iter().chain(sp.opt.iter()).find(|x| !n.ins.contains_key(**x));
-            match (free, [sp.req, sp.opt].concat().first()) {
-                (Some(f), _) => (*f).to_string(),
-                (None, Some(first)) => (*first).to_string(),
-                (None, None) => return Err(format!("{kind} has no inputs")),
-            }
+            let slots = native::slots(&n, &s.graph.subgraphs);
+            slots.iter().find(|x| !n.ins.contains_key(*x)).or(slots.first()).cloned().ok_or_else(|| format!("{} has no inputs", n.kind))?
         }
     };
-    set_link(&mut s.graph, to, &slot, from, out)?;
+    sd_set_link(&mut s.graph, to, &slot, from, out)?;
     Outcome::data(Json::obj().with("from", from).with("to", to).with("slot", slot))
 }
 
@@ -1335,91 +1418,45 @@ fn c_node_move(s: &mut Session, p: &Json) -> Result<Outcome, String> {
 }
 
 fn c_output_add(s: &mut Session, p: &Json) -> Result<Outcome, String> {
-    let id = s.arg_node(p, NODE)?;
-    let usage = p.get("usage").and_then(Json::as_str).unwrap_or("").to_string();
-    if !OUTPUT_USAGES.contains(&usage.as_str()) {
-        return Err(format!("unknown usage '{usage}' (use one of: {})", OUTPUT_USAGES.join(", ")));
-    }
-    let out = p.get("output").and_then(Json::as_str).map(str::to_string);
-    let ident = p.get("name").and_then(Json::as_str).map(str::to_string);
-    if let Some(i) = &ident {
-        if i.is_empty() || i.contains(['/', '\\', '.', '"', '#', ' ']) {
-            return Err("an output name may not be empty or contain / \\ . \" # or spaces".into());
-        }
-    }
-    if s.graph.nodes.get(&id).map(|n| n.kind == "output").unwrap_or(false) {
-        return Err("that node is already an output; give the node that feeds it".into());
-    }
-    // the same usage twice would clash when exporting
-    let dup: Vec<u32> = s.graph.nodes.iter().filter(|(_, n)| n.kind == "output" && n.strs.get("usage").map(|u| u == &usage).unwrap_or(false)).map(|(i, _)| *i).collect();
-    for d in &dup {
-        s.graph.nodes.remove(d);
-    }
-    let nid = next_id(&s.graph);
-    let src_pos = s.graph.nodes.get(&id).map(|n| n.pos).unwrap_or([0.0, 0.0]);
-    let mut node = Node { kind: "output".into(), pos: [src_pos[0] + 170.0, src_pos[1]], ..Default::default() };
-    node.strs.insert("usage".into(), usage.clone());
-    if let Some(i) = ident {
-        node.strs.insert("identifier".into(), i);
-    }
-    s.graph.nodes.insert(nid, node);
-    set_link(&mut s.graph, nid, "in", id, out)?;
-    Outcome::data(Json::obj().with("output_node", nid).with("usage", usage).with("replaced", dup.len()))
+    sd_output_add(s, p)
 }
 
 fn c_output_remove(s: &mut Session, p: &Json) -> Result<Outcome, String> {
-    let usage = p.get("usage").and_then(Json::as_str).unwrap_or("");
-    let ids: Vec<u32> = s.graph.nodes.iter().filter(|(_, n)| n.kind == "output" && n.strs.get("usage").map(|u| u == usage).unwrap_or(usage == "basecolor")).map(|(i, _)| *i).collect();
-    if ids.is_empty() {
-        return Err(format!("there is no output with usage '{usage}'"));
-    }
-    for i in &ids {
-        s.graph.nodes.remove(i);
-    }
-    Outcome::data(Json::obj().with("removed", ids.len()))
+    sd_output_remove(s, p)
 }
 
 fn c_graph_expose(s: &mut Session, p: &Json) -> Result<Outcome, String> {
-    let id = s.arg_node(p, NODE)?;
-    let label = p.get("label").and_then(Json::as_str).unwrap_or("").trim().to_string();
-    let param = p.get("param").and_then(Json::as_str).unwrap_or("").to_string();
-    if label.is_empty() || label.contains(['"', '#']) {
-        return Err("the label may not be empty or contain quotes or '#'".into());
-    }
-    if s.graph.exposed.iter().any(|e| e.label == label) {
-        return Err(format!("a parameter named '{label}' is already exposed"));
-    }
-    let kind = s.graph.nodes[&id].kind.clone();
-    let def = params::pdefs(&kind).into_iter().find(|d| d.name == param);
-    let (lo, hi) = match def.map(|d| d.k) {
-        Some(PK::F { lo, hi, .. }) => (lo, hi),
-        Some(PK::I { lo, hi, .. }) => (lo as f32, hi as f32),
-        Some(PK::E { opts, .. }) => (0.0, opts.len().saturating_sub(1) as f32),
-        Some(PK::B { .. }) => (0.0, 1.0),
-        None => {
-            if !s.graph.nodes[&id].nums.contains_key(&param) {
-                return Err(format!("{kind} has no numeric parameter '{param}' (node.describe lists them)"));
-            }
-            (0.0, 1.0)
-        }
-    };
-    let min = p.get("min").and_then(Json::as_f32).unwrap_or(lo);
-    let max = p.get("max").and_then(Json::as_f32).unwrap_or(hi);
-    if min >= max {
-        return Err("min must be smaller than max".into());
-    }
-    s.graph.exposed.push(Exposed { label, node: id, param, min, max });
-    Outcome::data(Json::obj().with("exposed", s.graph.exposed.len()))
+    sd_graph_expose(s, p)
 }
 
 fn c_graph_unexpose(s: &mut Session, p: &Json) -> Result<Outcome, String> {
-    let label = p.get("label").and_then(Json::as_str).unwrap_or("");
-    let n = s.graph.exposed.len();
-    s.graph.exposed.retain(|e| e.label != label);
-    if s.graph.exposed.len() == n {
-        return Err(format!("no exposed parameter '{label}'"));
+    sd_graph_unexpose(s, p)
+}
+
+fn c_graph_set_input(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    let input = p.get("input").and_then(Json::as_str).ok_or("give input: the identifier or label of a graph parameter")?.to_string();
+    let value: Option<Vec<f32>> = match p.get("value").filter(|v| !v.is_null()) {
+        None => None,
+        Some(v) => Some(match v {
+            Json::Bool(b) => vec![if *b { 1.0 } else { 0.0 }],
+            Json::Arr(a) => a.iter().map(|x| x.as_f32().filter(|f| f.is_finite()).ok_or("value: a list of numbers")).collect::<Result<Vec<f32>, _>>()?,
+            _ => vec![v.as_f32().filter(|f| f.is_finite()).ok_or("value: a number, a list of numbers or true/false")?],
+        }),
+    };
+    if value.as_ref().map(|v| v.is_empty() || v.len() > 4).unwrap_or(false) {
+        return Err("value: 1 to 4 numbers".into());
     }
-    Outcome::data(Json::obj().with("exposed", s.graph.exposed.len()))
+    let label = p.get("label").and_then(Json::as_str).map(|l| l.trim().to_string()).filter(|l| !l.is_empty());
+    let range = match (p.get("min").and_then(Json::as_f32), p.get("max").and_then(Json::as_f32)) {
+        (Some(a), Some(b)) if a.is_finite() && b.is_finite() && b > a => Some((a, b)),
+        (None, None) => None,
+        _ => return Err("give both min and max, min smaller than max".into()),
+    };
+    if value.is_none() && label.is_none() && range.is_none() {
+        return Err("give at least one of value, label, min/max".into());
+    }
+    let id = native::set_input(&mut s.graph, &input, value.as_deref(), label.as_deref(), range)?;
+    Outcome::data(Json::obj().with("input", id))
 }
 
 fn c_comment_add(s: &mut Session, p: &Json) -> Result<Outcome, String> {
@@ -1451,32 +1488,32 @@ fn stats_json(t: &Tex) -> Json {
     let flat = (0..3).all(|c| mx[c] - mn[c] < 1e-5);
     let l = |p: &[f32; 4]| 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
     let (w, h) = (t.w, t.h);
-    // tiling check: how different the two opposite edges are, compared with how different neighbouring pixels are
+    // tiling check: the step across the tile border (last line -> first line) compared with the largest step between
+    // neighbouring lines inside the image. A tileable image has no step at the border that is bigger than the steps
+    // it already has inside (hard bands, brick joints), so the value stays near or below 1; a seam shows up as a
+    // border step far larger than anything inside.
     let seam = |horizontal: bool| -> f32 {
-        let (mut edge, mut inner, mut cnt) = (0f64, 0f64, 0usize);
-        let lines = if horizontal { h } else { w };
-        let len = if horizontal { w } else { h };
-        if len < 4 {
+        // horizontal = compare the left and right edges (columns); otherwise the top and bottom edges (rows)
+        let (lines, len) = if horizontal { (w, h) } else { (h, w) };
+        if lines < 4 || len < 1 {
             return 1.0;
         }
-        for i in 0..lines {
-            let at = |k: usize| if horizontal { l(&t.px[i * w + k]) } else { l(&t.px[k * w + i]) };
-            edge += (at(0) - at(len - 1)).abs() as f64;
-            for k in 0..len - 1 {
-                inner += (at(k) - at(k + 1)).abs() as f64;
-            }
-            cnt += 1;
-        }
-        let inner = inner / (cnt * (len - 1)).max(1) as f64;
-        let edge = edge / cnt.max(1) as f64;
-        if inner < 1e-6 {
-            if edge < 1e-6 {
+        let at = |line: usize, k: usize| if horizontal { l(&t.px[k * w + line]) } else { l(&t.px[line * w + k]) };
+        let step = |a: usize, b: usize| (0..len).map(|k| (at(a, k) - at(b, k)).abs() as f64).sum::<f64>() / len as f64;
+        let mut inside: Vec<f64> = (0..lines - 1).map(|i| step(i, i + 1)).collect();
+        let border = step(lines - 1, 0);
+        inside.sort_by(|a, b| a.total_cmp(b));
+        let top = inside[inside.len() - 1];
+        let mean = inside.iter().sum::<f64>() / inside.len() as f64;
+        let scale = top.max(mean * 2.0);
+        if scale < 1e-6 {
+            if border < 1e-5 {
                 1.0
             } else {
                 99.0
             }
         } else {
-            (edge / inner) as f32
+            (border / scale).min(99.0) as f32
         }
     };
     let r2 = |v: f32| (v * 100.0).round() / 100.0;
@@ -1485,7 +1522,7 @@ fn stats_json(t: &Tex) -> Json {
     j.set("flat", flat);
     j.set("seam_horizontal", sh);
     j.set("seam_vertical", sv);
-    j.set("tiles_seamlessly", sh < 2.5 && sv < 2.5);
+    j.set("tiles_seamlessly", sh < 1.5 && sv < 1.5);
     if bad > 0 {
         j.set("non_finite_values", bad);
     }
@@ -1608,12 +1645,77 @@ fn c_render_node(s: &mut Session, p: &Json) -> Result<Outcome, String> {
     let mut j = stats_json(&t);
     j.set("node", id);
     j.set("kind", s.graph.nodes.get(&id).map(|n| n.kind.as_str()));
+    if let Some(info) = flood_info(s, id, base, &t) {
+        j.set("flood_fill", info);
+    }
     let mut images = Vec::new();
     if want_image {
         let d = display(&tiled(&t, tile), channel, normalize)?;
         images.push(Image { label: format!("node {id}"), png: png_of(&d) });
     }
     Ok(Outcome { data: j, images })
+}
+
+/// For the Flood Fill node and the nodes that read its result: how many regions the mask was split into, so merged
+/// shapes (a gap too thin at this size) are visible in the numbers instead of only in the picture.
+fn flood_info(s: &Session, id: u32, size: usize, t: &Tex) -> Option<Json> {
+    let is_fill = |k: &str| k.ends_with("/flood_fill") || k == "flood_fill";
+    let mut at = id;
+    let mut tex = None;
+    let mut fill_node = id;
+    for _ in 0..6 {
+        let n = s.graph.nodes.get(&at)?;
+        if !n.kind.contains("flood_fill") {
+            return None;
+        }
+        if is_fill(&n.kind) {
+            tex = Some(if at == id { t.clone() } else { s.eval(at, size, None).ok()? });
+            fill_node = at;
+            break;
+        }
+        at = *n.ins.get("input").or_else(|| n.ins.values().next())?;
+    }
+    let tex = tex?;
+    let (_, regions) = crate::ops::flood_regions(&tex);
+    let counts: Vec<u32> = regions.iter().skip(1).map(|r| r.2).collect();
+    let covered: u64 = counts.iter().map(|c| *c as u64).sum();
+    let largest = counts.iter().copied().max().unwrap_or(0);
+    let tiny = counts.iter().filter(|c| **c < 4).count();
+    let share = if covered > 0 { largest as f64 / covered as f64 } else { 0.0 };
+    let mut j = Json::obj().with("regions", counts.len()).with("largest_region_share", (share * 1000.0).round() / 1000.0).with("tiny_regions", tiny);
+    if counts.len() > 1 && share > 0.4 {
+        j.set(
+            "warning",
+            format!(
+                "one region holds {:.0}% of the shapes' pixels: neighbouring shapes probably merged through a gap that is too thin at {size} px (or touches at a corner through grey edge pixels). Widen the gaps, render larger, or raise the Flood Fill threshold.",
+                share * 100.0
+            ),
+        );
+    } else if counts.len() == 1 && covered as usize > tex.px.len() / 2 {
+        j.set("warning", "the whole mask is one region: the gaps between shapes did not separate them at this size (Flood Fill needs dark gaps at least one pixel wide; raise the threshold or widen the gaps)");
+    } else if tiny * 4 > counts.len().max(1) {
+        j.set("warning", "many regions are only a few pixels: the mask is noisy or has grey speckles; lower the threshold or clean the mask first");
+    }
+    // the preview may be smaller than the graph: gaps thinner than a pixel merge shapes only here, so also count
+    // the regions at the graph's own resolution
+    let gs = s.graph.size.min(1024);
+    if gs > size {
+        if let Ok(big) = s.eval(fill_node, gs, None) {
+            let (_, r2) = crate::ops::flood_regions(&big);
+            let n2 = r2.iter().skip(1).filter(|r| r.2 > 0).count();
+            j.set("regions_at_graph_size", n2);
+            j.set("graph_size_used", gs);
+            if n2 != counts.len() {
+                j.set(
+                    "resolution_note",
+                    format!("{} regions at {size} px but {n2} at {gs} px: the preview is too small for the gaps (thinner than a pixel); the {gs} px count is the one that matches the real graph (render larger with size={gs})", counts.len()),
+                );
+                let note = format!("the preview ({size} px) and the graph ({gs} px) disagree: trust the {gs} px count; render with size={gs} to see it");
+                j.set("warning", note);
+            }
+        }
+    }
+    Some(j)
 }
 
 fn cells_from(s: &Session, items: &[(String, u32)], size: usize) -> Result<Vec<Tex>, String> {
@@ -1630,6 +1732,14 @@ fn c_render_outputs(s: &mut Session, p: &Json) -> Result<Outcome, String> {
     let cols = opt_usize(p, "columns", 1, 8, 3)?;
     let mut outs = s.graph.output_nodes();
     outs.sort_by_key(|o| OUTPUT_USAGES.iter().position(|x| *x == o.0).unwrap_or(99));
+    let fam = family_of_graph(&s.graph);
+    if fam != "texture" {
+        let end = if fam == "function" { "f_out" } else { "fxm_out" };
+        outs = s.graph.nodes.iter().filter(|(_, n)| n.kind == end).map(|(i, _)| ("result".to_string(), "result".to_string(), *i)).collect();
+        if outs.is_empty() {
+            return Err(format!("the graph has no {end} node yet"));
+        }
+    }
     if outs.is_empty() {
         return Err("the graph has no outputs yet (output.add)".into());
     }
@@ -1652,34 +1762,107 @@ fn c_render_sheet(s: &mut Session, p: &Json) -> Result<Outcome, String> {
     Ok(Outcome { data: Json::obj().with("order_left_to_right_top_to_bottom", Json::Arr(order)), images: vec![Image { label: "sheet".into(), png: png_of(&sheet(&cells, size, cols)) }] })
 }
 
-fn c_render_3d(s: &mut Session, p: &Json) -> Result<Outcome, String> {
-    let size = opt_usize(p, "size", 16, 1024, 512)?;
-    let tex = opt_usize(p, "tex", 16, 2048, 512)?;
-    s.graph.validate().map_err(|e| format!("cannot render yet: {e}"))?;
-    let mut args: Vec<String> = Vec::new();
-    let tmp = std::env::temp_dir().join(format!("materialcraft-{}-{}.png", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)));
-    args.push("graph".into());
-    args.push(tmp.display().to_string());
-    args.extend(["--size".into(), format!("{size}x{size}"), "--tex".into(), tex.to_string()]);
-    for (k, flag) in [("shape", "--shape"), ("scene", "--scene"), ("channel", "--channel"), ("camera", "--camera"), ("env", "--env"), ("mode", "--mode")] {
-        if let Some(v) = p.get(k).and_then(Json::as_str) {
-            if v.starts_with('-') || v.contains(char::is_whitespace) {
-                return Err(format!("{k}: invalid value"));
+/// The 3D view a command asks for: named options first, then `settings` (any key of the view settings).
+/// The call's view options on top of the ones saved with the graph (`graph.set view`).
+fn view_params(g: &Graph, p: &Json) -> Json {
+    let Some(Json::Obj(saved)) = g.meta.get("mc_view").and_then(|t| Json::parse(t).ok()) else { return p.clone() };
+    let mut out = p.clone();
+    for (k, v) in saved {
+        match (k.as_str(), out.get(&k).cloned(), &v) {
+            (_, None, _) => out.set(&k, v),
+            ("settings", Some(Json::Obj(mine)), Json::Obj(base)) => {
+                let mut merged = Json::obj();
+                for (bk, bv) in base {
+                    merged.set(bk, bv.clone());
+                }
+                for (mk, mv) in mine {
+                    merged.set(&mk, mv.clone());
+                }
+                out.set("settings", merged);
             }
-            if k == "env" && (v.contains(['/', '\\']) || v.contains('.')) {
-                return Err("env: use a preset name".into());
-            }
-            args.push(flag.into());
-            args.push(v.to_string());
+            _ => {}
         }
     }
-    let g = s.graph.clone();
-    let r = crate::cli3d::run_quiet(&args, &|_| Ok(g.clone()));
-    let bytes = std::fs::read(&tmp);
-    let _ = std::fs::remove_file(&tmp);
-    r?;
-    let bytes = bytes.map_err(|e| format!("render failed: {e}"))?;
-    Ok(Outcome { data: Json::obj().with("size", size), images: vec![Image { label: "3d".into(), png: bytes }] })
+    out
+}
+
+fn view_from(p: &Json) -> Result<crate::render3d::View, String> {
+    let mut v = crate::render3d::View { tess: 256, ..Default::default() };
+    let text = |k: &str| p.get(k).and_then(|x| match x {
+        Json::Str(t) => Some(t.clone()),
+        Json::Num(_) | Json::Bool(_) => Some(x.to_text()),
+        _ => None,
+    });
+    let set = |v: &mut crate::render3d::View, key: &str, val: &str| v.set(key, val).map_err(|e| format!("{key}: {e}"));
+    for (arg, key) in [("shape", "shape"), ("scene", "scene"), ("channel", "channel"), ("camera", "camera"), ("rig", "rig"), ("post", "post"), ("tiling", "tiling"), ("relief", "relief"), ("bump", "bump"), ("normal_strength", "normal_amt"), ("exposure", "exposure"), ("ambient", "ambient"), ("yaw", "yaw"), ("pitch", "pitch"), ("env_rotation", "env.rotation"), ("env_exposure", "env.exposure"), ("background", "env.background")] {
+        if let Some(t) = text(arg) {
+            set(&mut v, key, &t)?;
+        }
+    }
+    if let Some(e) = text("env") {
+        if !crate::hdri::PRESETS.iter().any(|x| x.0 == e) {
+            return Err(format!("env: unknown environment '{e}' ({})", crate::hdri::PRESETS.iter().map(|x| x.0).collect::<Vec<_>>().join(", ")));
+        }
+        set(&mut v, "env.preset", &e)?;
+    }
+    if let Some(d) = p.get("displacement").and_then(Json::as_f32) {
+        // the height map moves the surface by this much (object units; the sphere's radius is 1); 0 turns it off
+        set(&mut v, "height_scale", &d.to_string())?;
+        if d > 0.0 && p.get("relief").is_none() {
+            v.relief = crate::render3d::RELIEF_DISPLACE;
+        }
+    }
+    if let Some(k) = p.get("light_intensity").and_then(Json::as_f32) {
+        if !(0.0..=100.0).contains(&k) {
+            return Err("light_intensity: a multiplier from 0 to 100".into());
+        }
+        for l in &mut v.lights {
+            l.intensity *= k;
+        }
+    }
+    if let Some(Json::Obj(o)) = p.get("settings") {
+        for (k, val) in o {
+            let t = match val {
+                Json::Str(t) => t.clone(),
+                other => other.to_text(),
+            };
+            if k == "env.file" || k == "mesh" {
+                return Err(format!("settings.{k}: files cannot be set here (use the env presets)"));
+            }
+            set(&mut v, k, &t)?;
+        }
+    }
+    Ok(v)
+}
+
+fn c_render_3d(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    if p.get("list").and_then(Json::as_bool).unwrap_or(false) {
+        let mut j = Json::obj();
+        for (what, names) in crate::cli3d::option_lists() {
+            j.set(what, Json::Arr(names.into_iter().map(Json::from).collect::<Vec<_>>()));
+        }
+        j.set("settings", crate::render3d::View::default().to_text());
+        j.set("note", "settings lists every view setting as `key value`; pass any of them in `settings` (e.g. {\"light.0.intensity\": 5, \"post.bloom\": 0})");
+        return Outcome::data(j);
+    }
+    let size = opt_usize(p, "size", 16, 1024, 512)?;
+    let tex = opt_usize(p, "tex", 16, 2048, 512)?;
+    let pt = match p.get("mode").and_then(Json::as_str).unwrap_or("raster") {
+        "raster" => false,
+        "pt" | "path_traced" | "pathtraced" => true,
+        m => return Err(format!("mode: raster or pt, not '{m}'")),
+    };
+    let spp = opt_usize(p, "spp", 1, 4096, 128)? as u32;
+    let view = view_from(&view_params(&s.graph, p))?;
+    s.graph.validate().map_err(|e| format!("cannot render yet: {e}"))?;
+    let mm = crate::cli3d::MaterialMaps::of(&s.graph, tex)?;
+    let img = crate::cli3d::render_picture(&mm, &view, size, size, pt, spp);
+    let mut j = Json::obj().with("size", size).with("mode", if pt { "pt" } else { "raster" });
+    if pt {
+        j.set("spp", spp);
+    }
+    j.set("view", view.to_text());
+    Ok(Outcome { data: j, images: vec![Image { label: "3d".into(), png: png_of(&img) }] })
 }
 
 fn c_export(s: &mut Session, p: &Json) -> Result<Outcome, String> {
@@ -1711,3 +1894,5 @@ fn c_export(s: &mut Session, p: &Json) -> Result<Outcome, String> {
 fn c_history(s: &mut Session, _: &Json) -> Result<Outcome, String> {
     Outcome::data(Json::obj().with("undo_steps", s.undo.len()).with("redo_steps", s.redo.len()).with("recent_commands", Json::Arr(s.log.iter().rev().take(20).map(|c| Json::from(c.as_str())).collect::<Vec<_>>())))
 }
+
+include!("session_sbs.rs");

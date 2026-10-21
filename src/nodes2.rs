@@ -408,6 +408,29 @@ pub fn compute(kind: &str, id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, s
                 (acc / norm).clamp(0.0, 1.0)
             }))
         }
+        "waveform" if f("style", 0.0) > 0.5 => {
+            // sound-wave bars: one soft vertical bar per sample, their heights following a bell per wave with
+            // random variation
+            let samples = f("samples", 256.0).round().clamp(1.0, 2048.0);
+            let waves = f("wave_number", 2.0).round().clamp(0.0, 64.0);
+            let (smin, smax) = (f("size_min", 0.0).clamp(0.0, 1.0), f("size_max", 1.0).clamp(0.0, 1.0));
+            let noise_amt = f("noise", 0.5).clamp(0.0, 1.0);
+            let peak = f("intensity", 1.0).clamp(0.0, 4.0);
+            let ns = samples as i32;
+            let px = 1.0 / hs as f32;
+            fin(Tex::gray_fn(s, hs, move |u, v| {
+                let i = ((u * samples).floor() as i32).rem_euclid(ns);
+                let uc = (i as f32 + 0.5) / samples;
+                let env = (std::f32::consts::PI * (uc * waves).fract()).sin().powi(2);
+                let r = crate::noise_styles::unit(i, 0, seed);
+                let half = 0.125 * (smin + (smax - smin) * env * (1.0 - noise_amt * r));
+                if half <= 0.0 {
+                    return 0.0;
+                }
+                let sigma = (half / 1.1774).max(px * 0.5);
+                peak * (-0.5 * ((v - 0.5) / sigma).powi(2)).exp()
+            }))
+        }
         "waveform" => {
             let (a, b) = ops::tileable_wave(f("count", 8.0), f("angle", 0.0));
             let (warp, w) = (f("warp", 0.3).clamp(0.0, 4.0), per("warp_scale", 4.0));
@@ -683,6 +706,65 @@ pub fn compute(kind: &str, id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, s
                 (1.0 - var + var * id) * smooth(0.0, bw.max(1e-4), d)
             }))
         }
+        "weave_generator" if f("style", 0.0) > 0.5 => {
+            // twill: every thread passes over `weave` cells and under as many, each row shifted by one cell
+            let (tx, ty) = (per("tile_x", 1.0).clamp(1, 20), per("tile_y", 1.0).clamp(1, 20));
+            let wv = per("weave", 2.0).clamp(1, 10);
+            let period = 2 * wv;
+            let (nx, ny) = ((tx * period) as f32, (ty * period) as f32);
+            let shape = f("shape", 0.5).clamp(0.0, 1.0);
+            let (gx, gy) = (f("gap_x", 0.1).clamp(0.0, 0.9) * 0.5, f("gap_y", 0.1).clamp(0.0, 0.9) * 0.5);
+            let which = f("_out", 0.0).round() as i32;
+            // height along a thread: 0 at the middle of its run over the others, 1 at the ends of that run, 2 at
+            // the middle of its run under them
+            let height = move |e: f32| -> f32 {
+                if e <= 1.0 {
+                    let flat = 1.0 - shape;
+                    let k = if shape > 0.0 { ((e - flat) / shape).clamp(0.0, 1.0) } else { 0.0 };
+                    1.0 - 0.4 * k * k
+                } else {
+                    0.55 - 0.05 * (e - 1.0)
+                }
+            };
+            let wvf = wv as f32;
+            let t = Tex::gray_fn(s, hs, move |u, v| {
+                let (x, y) = (u * nx, v * ny);
+                let (i, j) = (x.floor() as i32, y.floor() as i32);
+                let (fx, fy) = (x - i as f32, y - j as f32);
+                // a horizontal thread fills its row except a margin at the top and bottom, a vertical one its column
+                let h_here = fy >= gy && fy < 1.0 - gy;
+                let v_here = fx >= gx && fx < 1.0 - gx;
+                let h_over = (i - j + 1).rem_euclid(period) < wv;
+                // distance from the middle of each thread's run over the others, in runs
+                let run = |pos: f32, start: i32| -> f32 {
+                    let c = start as f32 + wvf * 0.5;
+                    let d = (pos - c).rem_euclid(period as f32);
+                    d.min(period as f32 - d) / (wvf * 0.5)
+                };
+                // the horizontal thread of row j is over from cell j - 1 on; the vertical one of column i from row i + 1 - period + 1
+                let eh = run(x, j - 1);
+                let ev = run(y, i + 1 - period + 1);
+                let (show_h, show_v) = match (h_here, v_here) {
+                    (true, true) => (h_over, !h_over),
+                    (h, v) => (h, v),
+                };
+                match which {
+                    1 => show_h as u32 as f32,
+                    2 => show_v as u32 as f32,
+                    3 => (h_here || v_here) as u32 as f32,
+                    _ => {
+                        if show_h {
+                            height(eh)
+                        } else if show_v {
+                            height(ev)
+                        } else {
+                            0.0
+                        }
+                    }
+                }
+            });
+            if which == 0 { fin(t) } else { t }
+        }
         "weave_generator" => {
             let (tx, ty) = (per("tile_x", 1.0).clamp(1, 20), per("tile_y", 1.0).clamp(1, 20));
             let wv = per("weave", 2.0).clamp(1, 10);
@@ -719,8 +801,40 @@ pub fn compute(kind: &str, id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, s
             });
             if which == 0 { fin(t) } else { t }
         }
+        "starburst" if f("style", 0.0) > 0.5 => {
+            // light rays: blurred lines from the centre whose brightness falls off along their length
+            let (c, rays) = (per("count", 3.0), f("rays", 8.0).round().clamp(2.0, 512.0));
+            let sig = (f("blur", 2.0).max(0.0) * 0.0045).max(0.6 / s as f32 * c as f32);
+            let (smax, smin, svar) = (f("size", 1.0).max(0.0), f("size_min", 0.05).max(0.0), f("size_variation", 0.0).clamp(0.0, 1.0));
+            let (rot, rnd_a) = (f("rotation", 0.0), f("randomness", 0.0).clamp(0.0, 1.0));
+            let nr = rays as i32;
+            let sp = TAU / rays;
+            fin(Tex::gray_fn(s, hs, move |u, v| {
+                let (x, y) = (u * c as f32, v * c as f32);
+                let (dx, dy) = (x - x.floor() - 0.5, y - y.floor() - 0.5);
+                let r = (dx * dx + dy * dy).sqrt();
+                let th = dy.atan2(dx) - rot * TAU;
+                let k0 = (th / sp).round() as i32;
+                let mut keep = 1.0f32;
+                for dk in -3..=3 {
+                    let k = k0 + dk;
+                    let kk = k.rem_euclid(nr);
+                    let ang = k as f32 * sp + (crate::noise_styles::unit(kk, 11, seed) - 0.5) * sp * rnd_a;
+                    let len = 0.35 * (smax + (smin - smax) * svar * crate::noise_styles::unit(kk, 23, seed));
+                    let (sn, cs) = (th - ang).sin_cos();
+                    if cs <= 0.0 || len <= 0.0 {
+                        continue;
+                    }
+                    let d = r * sn.abs();
+                    let i = (1.0 - r / len).clamp(0.0, 1.0);
+                    let g = i * (-0.5 * (d / sig).powi(2)).exp();
+                    keep *= 1.0 - g;
+                }
+                1.0 - keep
+            }))
+        }
         "starburst" => {
-            let (c, rays) = (per("count", 3.0), f("rays", 8.0).round().clamp(2.0, 64.0));
+            let (c, rays) = (per("count", 3.0), f("rays", 8.0).round().clamp(2.0, 512.0));
             let (sharp, size, rot) = (f("sharpness", 2.0).clamp(0.1, 16.0), f("size", 1.0).clamp(0.05, 2.0), f("rotation", 0.0));
             let rr = f("rotation_random", 0.0).clamp(0.0, 1.0);
             fin(Tex::gray_fn(s, hs, move |u, v| {
@@ -744,10 +858,8 @@ pub fn compute(kind: &str, id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, s
         "shape_stroke" | "shape_glow" => {
             let t = need("in")?;
             let w = (f("width", 8.0).clamp(0.5, 256.0) * rs).max(2.0);
-            let mask: Vec<bool> = t.px.iter().map(|p| lum(*p) > f("threshold", 0.5)).collect();
-            let inside = ops::distance_field(&mask, t.w, t.h);
-            let inv: Vec<bool> = mask.iter().map(|m| !m).collect();
-            let outside = ops::distance_field(&inv, t.w, t.h);
+            let sdist = ops::signed_distance(t, f("threshold", 0.5));
+            let mask: Vec<bool> = sdist.iter().map(|d| *d > 0.0).collect();
             let stroke = kind == "shape_stroke";
             let (off, soft, inten) = (f("offset", 0.0).clamp(-1.0, 1.0), f("softness", 0.5).clamp(0.0, 1.0), f("intensity", 1.0).clamp(0.0, 4.0));
             let (opacity, spread) = (f("opacity", 1.0).clamp(0.0, 1.0), f("spread", 0.0).clamp(0.0, 1.0));
@@ -755,7 +867,7 @@ pub fn compute(kind: &str, id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, s
             let px = (0..mask.len())
                 .map(|i| {
                     // signed distance in pixels: positive outside the shape
-                    let sd = if mask[i] { -(inside[i].min(1e8) - 0.5) } else { outside[i].min(1e8) - 0.5 };
+                    let sd = -sdist[i].clamp(-1e8, 1e8);
                     let g = if stroke {
                         let c = off * w * 0.5;
                         1.0 - smooth(w * 0.5 * (1.0 - soft), w * 0.5 + 0.5, (sd - c).abs())

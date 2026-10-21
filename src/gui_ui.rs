@@ -86,7 +86,7 @@ impl App {
         // grid
         let minor = Stroke::new(1.0_f32, Color32::from_rgb(63, 63, 63));
         let major = Stroke::new(1.0_f32, Color32::from_rgb(50, 50, 50));
-        let step = 32.0 * z;
+        let step = if self.snap_nodes && self.snap_grid >= 1.0 { self.snap_grid * z } else { 32.0 * z };
         if step > 6.0 {
             let (ox, oy) = (self.pan.x.rem_euclid(step), self.pan.y.rem_euclid(step));
             let mut x = rect.min.x + ox;
@@ -163,19 +163,13 @@ impl App {
                 id: *id,
                 kind: n.kind.clone(),
                 // a graph node only has input sockets when that graph defines inputs
-                slots: if n.kind == "subgraph" && !n.strs.get("graph").and_then(|g| self.g.subgraphs.get(g)).map(|sg| sg.nodes.values().any(|x| x.kind == "input")).unwrap_or(true) { Vec::new() } else { slots(&n.kind) },
+                slots: node_slots(n, &self.g.subgraphs),
                 ins: n.ins.iter().map(|(k, v)| (k.clone(), *v)).collect(),
                 pos: n.pos,
-                graph_name: n.strs.get("graph").cloned(),
-                dot: n.kind == "dot",
-                outs: n
-                    .strs
-                    .get("graph")
-                    .filter(|_| n.kind == "subgraph")
-                    .and_then(|g| self.g.subgraphs.get(g))
-                    .map(|sg| sg.output_idents())
-                    .filter(|o| o.len() >= 2)
-                    .unwrap_or_else(|| materialcraft::graph::node_outputs(&n.kind).iter().map(|s| s.to_string()).collect()),
+                // the graph a node opens: a graph node's graph, an FX-Map's pattern graph
+                graph_name: n.strs.get("#graph").or_else(|| n.strs.get("graph")).cloned().or_else(|| n.strs.get("#fx").and_then(|f| f.split(',').find(|x| !x.is_empty()).map(str::to_string))),
+                dot: n.kind == "sbs:passthrough",
+                outs: sd_outs(n, &self.g.subgraphs),
                 in_out: n.in_out.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
             })
             .collect();
@@ -251,13 +245,18 @@ impl App {
             let bar = Rect::from_min_size(card.min, vec2(card.width(), BAR * z));
             painter.rect_filled(bar, egui::CornerRadius { nw: (3.0 * z) as u8, ne: (3.0 * z) as u8, sw: (0.0) as u8, se: (0.0) as u8 }, kind_color(&s.kind));
             let node_ref = self.g.nodes.get(&id);
-            let usage = node_ref.and_then(|n| n.strs.get("usage").cloned()).unwrap_or_else(|| "basecolor".into());
-            let ident = node_ref.and_then(|n| n.strs.get("identifier").cloned()).filter(|x| !x.is_empty()).unwrap_or_else(|| usage.clone());
-            let label = match (&s.graph_name, s.kind.as_str()) {
-                (Some(g), "subgraph") => g.clone(),
-                (_, "output") => usage_label(&usage),
-                _ => label(&s.kind),
+            // an output node: what the file says it is used for
+            let usage = node_ref.and_then(|n| n.strs.get("#output")).and_then(|u| self.g.sd.as_ref().and_then(|sd| sd.output_usage(u))).unwrap_or_default();
+            let title = node_ref.and_then(|n| n.strs.get("title")).filter(|t| !t.is_empty()).cloned();
+            let label = match (&s.graph_name, s.kind.as_str(), title) {
+                (_, _, Some(t)) => t,
+                _ => node_ref.map(|n| materialcraft::sbs_native::label(n, &self.g)).unwrap_or_default(),
             };
+            // nodes the importer could not convert carry a note: an orange corner marks them
+            if node_ref.map(|n| n.strs.contains_key("import_note")).unwrap_or(false) {
+                let tri = [bar.right_top(), bar.right_top() + vec2(-10.0 * z, 0.0), bar.right_top() + vec2(0.0, 10.0 * z)];
+                painter.add(egui::Shape::convex_polygon(tri.to_vec(), Color32::from_rgb(235, 120, 60), Stroke::NONE));
+            }
             let fs = if label.len() > 16 { 8.0 } else if label.len() > 12 { 9.0 } else { 10.5 };
             painter.text(bar.center(), Align2::CENTER_CENTER, label, FontId::proportional(fs * z), Color32::WHITE);
             let th = Rect::from_min_size(card.min + vec2(3.0, BAR + 3.0 + (body_of(s) - CARD) * 0.5) * z, vec2(CARD - 6.0, CARD - 6.0) * z);
@@ -278,7 +277,7 @@ impl App {
                 painter.rect_stroke(card, egui::CornerRadius::same((3.0 * z) as u8), Stroke::new(1.5_f32, Color32::from_rgb(150, 150, 150)), egui::StrokeKind::Inside);
             }
 
-            if s.kind == "output" {
+            if s.kind == "sbs:output" {
                 let bc = card.left_top() + vec2(3.0, -1.0) * z;
                 painter.circle(bc, 10.5 * z, Color32::from_rgb(30, 30, 30), Stroke::new(1.5_f32, Color32::from_gray(205)));
                 painter.circle_stroke(bc, 5.6 * z, Stroke::new(1.3_f32, Color32::from_gray(235)));
@@ -289,17 +288,21 @@ impl App {
                 }
                 painter.add(egui::Shape::line(pts, Stroke::new(1.0_f32, Color32::from_gray(200))));
                 painter.circle_filled(bc + vec2(-1.8, -1.8) * z, 1.4 * z, Color32::WHITE);
-                painter.text(card.left_top() + vec2(16.0, -4.0) * z, Align2::LEFT_BOTTOM, format!("({ident})"), FontId::proportional(9.0 * z), Color32::from_gray(150));
+                if !usage.is_empty() {
+                    painter.text(card.left_top() + vec2(16.0, -4.0) * z, Align2::LEFT_BOTTOM, format!("({usage})"), FontId::proportional(9.0 * z), Color32::from_gray(150));
+                }
                 let bits = if self.g.meta.get("output_format").map(|f| f == "16").unwrap_or(false) { 16 } else { 8 };
                 painter.text(card.center_bottom() + vec2(0.0, 3.0) * z, Align2::CENTER_TOP, format!("{0}x{0} - C{1}", self.nominal_node_size(id), bits), FontId::proportional(10.5 * z), Color32::from_gray(185));
             }
             }
 
             // a node with its own Output Size shows its size under the card
-            if s.kind != "output" && !matches!(s.kind.as_str(), "comment" | "frame" | "dot") {
+            if !matches!(s.kind.as_str(), "sbs:output" | "sbs:passthrough") {
+                // every node shows its resolution; teal when it differs from the graph's
                 let ns = self.nominal_node_size(id);
-                if ns != self.g.size {
-                    painter.text(card.center_bottom() + vec2(0.0, 3.0) * z, Align2::CENTER_TOP, format!("{}x{}", ns, (ns as f64 * self.g.height_for(self.g.size) as f64 / self.g.size.max(1) as f64).round() as usize), FontId::proportional(10.0 * z), Color32::from_rgb(140, 230, 210));
+                if z >= 0.35 {
+                    let own = ns != self.g.size;
+                    painter.text(card.center_bottom() + vec2(0.0, 3.0) * z, Align2::CENTER_TOP, format!("{}x{}", ns, (ns as f64 * self.g.height_for(self.g.size) as f64 / self.g.size.max(1) as f64).round() as usize), FontId::proportional(10.0 * z), if own { Color32::from_rgb(140, 230, 210) } else { Color32::from_gray(140) });
                 }
             }
 
@@ -321,10 +324,29 @@ impl App {
             }
             if nr.dragged() && (self.connecting.is_none() && self.connecting_in.is_none()) {
                 let d = nr.drag_delta() / z;
-                for sid in self.sel.clone() {
-                    if let Some(n) = self.g.nodes.get_mut(&sid) {
-                        n.pos[0] += d.x;
-                        n.pos[1] += d.y;
+                let drag_id = Id::new("node_drag_origin");
+                if self.snap_nodes && self.snap_grid >= 1.0 {
+                    // the pointer moves freely; the nodes land on the grid: every node's start position plus the
+                    // total drag so far, rounded
+                    let (mut total, origin): (Vec2, Vec<(u32, [f32; 2])>) = if nr.drag_started() {
+                        (Vec2::ZERO, self.sel.iter().filter_map(|k| self.g.nodes.get(k).map(|n| (*k, n.pos))).collect())
+                    } else {
+                        ui.ctx().data(|dt| dt.get_temp(drag_id)).unwrap_or((Vec2::ZERO, Vec::new()))
+                    };
+                    total += d;
+                    let gs = self.snap_grid;
+                    for (k, o) in &origin {
+                        if let Some(n) = self.g.nodes.get_mut(k) {
+                            n.pos = [((o[0] + total.x) / gs).round() * gs, ((o[1] + total.y) / gs).round() * gs];
+                        }
+                    }
+                    ui.ctx().data_mut(|dt| dt.insert_temp(drag_id, (total, origin)));
+                } else {
+                    for sid in self.sel.clone() {
+                        if let Some(n) = self.g.nodes.get_mut(&sid) {
+                            n.pos[0] += d.x;
+                            n.pos[1] += d.y;
+                        }
                     }
                 }
             }
@@ -343,7 +365,7 @@ impl App {
                 }
             }
             if nr.double_clicked() {
-                if let (Some(g), "subgraph") = (&s.graph_name, s.kind.as_str()) {
+                if let (Some(g), "sbs:graph" | "sbs:fxmaps") = (&s.graph_name, s.kind.as_str()) {
                     acts.push(Act::EnterSub(g.clone()));
                 }
             }
@@ -356,7 +378,6 @@ impl App {
                 nr.clone().on_hover_text(e);
             }
             let (kind, gname) = (s.kind.clone(), s.graph_name.clone());
-            let is_template = gname.as_ref().and_then(|g| self.g.subgraphs.get(g)).map(|sg| sg.meta.contains_key("template")).unwrap_or(false);
             nr.context_menu(|ui| {
                 if ui.button("Copy").clicked() {
                     acts.push(Act::Copy);
@@ -371,21 +392,14 @@ impl App {
                     ui.close();
                 }
                 ui.separator();
-                if kind == "subgraph" {
+                if matches!(kind.as_str(), "sbs:graph" | "sbs:fxmaps") {
                     if let Some(g) = &gname {
-                        if ui.button(if is_template { "Edit template" } else { "Open subgraph" }).on_hover_text(if is_template { "Opens the template's graph. Changes apply to every instance of it in this package." } else { "Opens the subgraph" }).clicked() {
+                        let label = if kind == "sbs:fxmaps" { "Open pattern graph" } else { "Open graph" };
+                        if ui.button(label).clicked() {
                             acts.push(Act::EnterSub(g.clone()));
                             ui.close();
                         }
                     }
-                }
-                if kind != "output" && kind != "subgraph" && ui.button("Trace to spline").on_hover_text("Outline the light areas of this node's picture as a spline and draw it with a Path Stroke node").clicked() {
-                    acts.push(Act::SplineTrace(id));
-                    ui.close();
-                }
-                if ui.button("Create subgraph from selection").clicked() {
-                    acts.push(Act::Subgraph);
-                    ui.close();
                 }
                 ui.menu_button("Add output node", |ui| {
                     for name in &out_names {
@@ -398,7 +412,7 @@ impl App {
             });
 
             // ports
-            if s.kind != "output" && s.outs.len() >= 2 {
+            if s.kind != "sbs:output" && s.outs.len() >= 2 {
                 // a graph node: one socket per output, labelled to the right of the card
                 for (oi, oname) in s.outs.iter().enumerate() {
                     let op = out_port_i(s.pos, oi, s.outs.len(), body_of(s));
@@ -421,7 +435,7 @@ impl App {
                         self.relink_all = mods.shift && !self.children_of(id, Some(oname.as_str())).is_empty();
                     }
                 }
-            } else if s.kind != "output" {
+            } else if s.kind != "sbs:output" {
                 let op = out_port(s.pos, s.dot, body_of(s));
                 out_ports.push((id, None, op));
                 painter.circle(op, if s.dot { 3.5 } else { 4.8 } * z, pin_fill(pins.get(&id).copied().unwrap_or(materialcraft::graph::Pin::Gray)), Stroke::new(1.0_f32, Color32::BLACK));
@@ -436,7 +450,7 @@ impl App {
             for (i, (slot, required)) in s.slots.iter().enumerate() {
                 let ip = in_port(s.pos, i, n, s.dot, body_of(s));
                 ports.push((id, *slot, ip));
-                painter.circle(ip, 4.5 * z, if s.kind == "output" { Color32::from_rgb(70, 210, 180) } else if *required { Color32::from_rgb(210, 210, 210) } else { Color32::from_rgb(60, 60, 60) }, Stroke::new(1.2_f32, Color32::from_rgb(190, 190, 190)));
+                painter.circle(ip, 4.5 * z, if s.kind == "sbs:output" { Color32::from_rgb(70, 210, 180) } else if *required { Color32::from_rgb(210, 210, 210) } else { Color32::from_rgb(60, 60, 60) }, Stroke::new(1.2_f32, Color32::from_rgb(190, 190, 190)));
                 let ir = ui.interact(Rect::from_center_size(ip, Vec2::splat(14.0 * z)), Id::new(("in", id, i)), Sense::drag());
                 if ir.drag_started() {
                     let had = self.g.nodes.get(&id).and_then(|nd| nd.ins.get(*slot).copied());
@@ -456,6 +470,44 @@ impl App {
                 }
                 if ir.hovered() {
                     painter.text(ip + vec2(-8.0 * z, 0.0), Align2::RIGHT_CENTER, *slot, FontId::proportional(10.5 * z.max(0.8)), Color32::WHITE);
+                }
+            }
+        }
+
+        // while a link is being dragged, name the sockets of the node under the pointer (the plain hover label does
+        // not fire during a drag): input names when dragging from an output, output names when dragging from an input
+        if (self.connecting.is_some() && !self.relink_all) || self.connecting_in.is_some() {
+            if let Some(pt) = pointer {
+                let over: Option<u32> = snaps.iter().zip(&cards).find(|(_, c)| c.expand(18.0 * z).contains(pt)).map(|(sn, _)| sn.id);
+                if let Some(nid) = over {
+                    let font = FontId::proportional(11.0 * z.max(0.8));
+                    if self.connecting.is_some() {
+                        let mine: Vec<&(u32, &str, Pos2)> = ports.iter().filter(|(i, _, _)| *i == nid).collect();
+                        let nearest = mine.iter().min_by(|a, b| (a.2 - pt).length().partial_cmp(&(b.2 - pt).length()).unwrap_or(std::cmp::Ordering::Equal)).map(|x| x.1);
+                        for (_, slot, ip) in &mine {
+                            let hot = nearest == Some(*slot) && (*ip - pt).length() < 24.0 * z;
+                            let g = painter.layout_no_wrap(slot.to_string(), font.clone(), if hot { Color32::WHITE } else { Color32::from_gray(200) });
+                            let r = Rect::from_min_size(*ip + vec2(-12.0 * z - g.size().x, -g.size().y / 2.0), g.size()).expand2(vec2(4.0, 1.0));
+                            painter.rect(r, 3.0, Color32::from_rgba_unmultiplied(20, 20, 20, 235), Stroke::new(1.0_f32, if hot { Color32::from_rgb(110, 225, 200) } else { Color32::from_gray(80) }), egui::StrokeKind::Inside);
+                            painter.galley(r.min + vec2(4.0, 1.0), g, Color32::WHITE);
+                            if hot {
+                                painter.circle_stroke(*ip, 8.0 * z, Stroke::new(1.5_f32, Color32::from_rgb(110, 225, 200)));
+                            }
+                        }
+                    } else {
+                        let mine: Vec<&(u32, Option<String>, Pos2)> = out_ports.iter().filter(|(i, _, _)| *i == nid).collect();
+                        for (_, name, op) in &mine {
+                            let hot = (*op - pt).length() < 24.0 * z;
+                            let label = name.as_deref().map(usage_label).unwrap_or_else(|| "output".to_string());
+                            let g = painter.layout_no_wrap(label, font.clone(), if hot { Color32::WHITE } else { Color32::from_gray(200) });
+                            let r = Rect::from_min_size(*op + vec2(12.0 * z, -g.size().y / 2.0), g.size()).expand2(vec2(4.0, 1.0));
+                            painter.rect(r, 3.0, Color32::from_rgba_unmultiplied(20, 20, 20, 235), Stroke::new(1.0_f32, if hot { Color32::from_rgb(110, 225, 200) } else { Color32::from_gray(80) }), egui::StrokeKind::Inside);
+                            painter.galley(r.min + vec2(4.0, 1.0), g, Color32::WHITE);
+                            if hot {
+                                painter.circle_stroke(*op, 8.0 * z, Stroke::new(1.5_f32, Color32::from_rgb(110, 225, 200)));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -482,7 +534,7 @@ impl App {
                 if let Some(pt) = pointer {
                     // target: the nearest output socket, else the node card under the pointer
                     let target = out_ports.iter().filter(|(_, _, p)| (*p - pt).length() < 16.0 * z).min_by(|a, b| (a.2 - pt).length().partial_cmp(&(b.2 - pt).length()).unwrap_or(std::cmp::Ordering::Equal)).map(|(i, o, _)| (*i, o.clone()))
-                        .or_else(|| snaps.iter().zip(&cards).find(|(sn, c)| c.contains(pt) && sn.kind != "output").map(|(sn, _)| (sn.id, None)));
+                        .or_else(|| snaps.iter().zip(&cards).find(|(sn, c)| c.contains(pt) && sn.kind != "sbs:output").map(|(sn, _)| (sn.id, None)));
                     if let Some((t, tout)) = target {
                         let o = self.connecting_out.clone();
                         self.relink_children(src, o, t, tout);
@@ -593,11 +645,13 @@ impl App {
             Act::Open => self.open_file(),
             Act::Save => self.save(),
             Act::SaveAs => self.save_as(),
-            Act::Publish => self.publish(),
-            Act::ImportBitmap => self.import_bitmap(),
-            Act::Export => self.export.open = true,
+            Act::Export => {
+                // the graph on screen
+                self.export.target = None;
+                self.export.open = true;
+            }
             Act::Bake => self.bake.open = true,
-            Act::Resources => self.res.open = true,
+            Act::NewSpline => self.new_spline_node(),
             Act::Undo => self.undo(),
             Act::Redo => self.redo(),
             Act::Copy => self.copy(),
@@ -617,10 +671,6 @@ impl App {
                 self.dirty = true;
             }
             Act::Comment => self.add_comment(),
-            Act::Subgraph => self.make_subgraph(),
-            Act::EnterSub(n) if self.g.is_linked(&n) => {
-                self.status(format!("'{n}' is a live link to another package and is read-only here - open that package to edit it"), false);
-            }
             Act::EnterSub(n) => {
                 if self.parents.iter().any(|(_, name)| *name == n) {
                     return;
@@ -631,10 +681,6 @@ impl App {
                 self.enter_sub(&n);
             }
             Act::ExitSub => self.exit_sub(),
-            Act::SplineEdit(id) => self.spl_start(id),
-            Act::SplineImportSvg(id) => self.spl_import_svg(id),
-            Act::SplineTrace(id) => self.spl_trace(id),
-            Act::SplDelete => self.spl_delete_point(),
             Act::AutoLayout => {
                 self.snap();
                 auto_layout(&mut self.g);
@@ -653,18 +699,9 @@ impl App {
             Act::Drop(key, p) => {
                 let world = self.screen_to_world(p);
                 let w = pos2(world.x - CARD * 0.5, world.y - CARD_H * 0.5);
-                if let Some(id) = key.strip_prefix("asset:") {
-                    self.add_template_node(id, Some(w));
-                } else if let Some(e) = self.entries().into_iter().find(|e| e.label == key) {
+                if let Some(e) = self.entries().into_iter().find(|e| e.label == key || (e.kind == "sbs:graph" && key.strip_prefix("subgraph: ") == e.sub.as_deref())) {
                     self.spawn(&e, w, None);
                 }
-            }
-            Act::ImportGraph(path, p, gn) => {
-                let at = p.map(|p| {
-                    let w = self.screen_to_world(p);
-                    pos2(w.x - CARD * 0.5, w.y - CARD_H * 0.5)
-                });
-                self.import_graph_file(path, at, gn);
             }
             Act::ImportFromPkg(i, gn, p) => {
                 let at = p.map(|p| {
@@ -673,10 +710,25 @@ impl App {
                 });
                 self.import_from_pkg(i, gn, at);
             }
-            Act::LinkPackage => self.link_package(),
-            Act::RefreshLinks => self.refresh_links(true),
             Act::NewPackage => self.open_new_dialog(None),
             Act::NewGraphIn(i) => self.open_new_dialog(Some(i)),
+            Act::NewFunctionIn(i) => {
+                let mut made = None;
+                self.graph_edit(i, |g| {
+                    let mut name = "Function".to_string();
+                    let mut k = 2;
+                    while materialcraft::sbs_native::all_graphs(g).contains_key(&name) {
+                        name = format!("Function_{k}");
+                        k += 1;
+                    }
+                    materialcraft::sbs_native::create_graph(g, &name, "function")?;
+                    made = Some(name.clone());
+                    Ok(format!("Created function '{name}': add function nodes, then make one the result"))
+                });
+                if let Some(n) = made {
+                    self.enter_sub(&n);
+                }
+            }
             Act::SwitchPkg(i) => self.switch_pkg(i),
             Act::OpenGraphTab(n) => self.open_graph_tab(&n),
             Act::CloseGraphTab(n) => self.close_graph_tab(&n),
@@ -693,15 +745,53 @@ impl App {
                 }
             }
             Act::NewOutput(usage, from) => self.new_output(&usage, from),
-            Act::OpenTemplate(id) => self.open_template(&id),
-            Act::AddTemplate(id) => self.add_template_to_project(&id),
+            Act::NewFromTemplate(i) => self.new_from_template(i),
+            Act::ExportMaps(i, name) => {
+                self.export.target = Some((i, name));
+                self.export.open = true;
+            }
+            Act::ExportGraphFile(i, name) => self.export_graph_file(i, name),
+            Act::AddGraphFile(i) => self.add_graph_file(i),
+            Act::RenameGraph(i, name) => self.rename_graph = Some((i, name.clone(), name)),
+            Act::DeleteGraph(i, name) => self.graph_edit(i, move |g| g.remove_graph(&name).map(|_| format!("Removed graph '{name}'"))),
+            Act::DuplicateGraph(i, name) => self.graph_edit(i, move |g| g.duplicate_graph(name.as_deref(), None).map(|k| format!("Copied as '{k}'"))),
+        }
+    }
+
+    /// The Explorer's rename box.
+    fn rename_graph_ui(&mut self, ctx: &egui::Context) {
+        let Some((i, old, mut new)) = self.rename_graph.take() else { return };
+        let (mut ok, mut cancel) = (false, false);
+        egui::Window::new("Rename graph").collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
+            ui.label(format!("New name for '{old}' (letters, digits and _); every node that uses it follows."));
+            let r = ui.add(egui::TextEdit::singleline(&mut new).desired_width(260.0));
+            r.request_focus();
+            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                ok = true;
+            }
+            ui.horizontal(|ui| {
+                ok |= ui.button("Rename").clicked();
+                cancel = ui.button("Cancel").clicked();
+            });
+        });
+        if ok {
+            let (o, n) = (old.clone(), new.trim().to_string());
+            self.graph_edit(i, move |g| g.rename_graph(&o, &n).map(|_| format!("Renamed '{o}' to '{n}'")));
+            let n = new.trim().to_string();
+            for t in self.graph_tabs.iter_mut() {
+                if *t == old {
+                    *t = n.clone();
+                }
+            }
+        } else if !cancel {
+            self.rename_graph = Some((i, old, new));
         }
     }
 
     fn search_ui(&mut self, ctx: &egui::Context) {
         let Some(mut st) = self.search.take() else { return };
         let q = st.text.to_lowercase();
-        let rank = |c: &str| ["Utility", "Generators", "Filters", "Material", "SDF", "Subgraphs"].iter().position(|x| *x == c).unwrap_or(9);
+        let rank = |c: &str| ["Utility", "Atomic generators", "Atomic filters", "Generators", "Filters", "Material", "Graphs"].iter().position(|x| *x == c).unwrap_or(9);
         let mut list: Vec<(u8, Entry)> = self
             .entries()
             .into_iter()
@@ -808,7 +898,7 @@ impl App {
             let (w, l) = (st.world, st.link_from);
             let new_id = self.spawn(&e, w, l);
             if let (Some(id), Some((dst, slot))) = (new_id, st.link_to.clone()) {
-                if e.kind != "output" {
+                if e.kind != "sbs:output" {
                     self.try_connect(id, dst, &slot);
                 }
             }
@@ -822,11 +912,12 @@ impl App {
     fn windows(&mut self, ctx: &egui::Context) {
         if self.export.open {
             let mut open = true;
-            let outputs: Vec<(String, String)> = {
-                let root = self.parents.first().map(|p| &p.0).unwrap_or(&self.g);
-                root.output_nodes().into_iter().map(|(u, i, _)| (usage_label(&u), i)).collect()
-            };
+            let (gtitle, outputs) = self.export_outputs();
             egui::Window::new("Export textures").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Graph:");
+                    ui.strong(&gtitle);
+                });
                 ui.horizontal(|ui| {
                     if ui.button("Choose folder...").clicked() {
                         if let Some(d) = rfd::FileDialog::new().pick_folder() {
@@ -914,109 +1005,24 @@ impl App {
         if self.bake.open {
             self.bake_window(ctx);
         }
-        if self.res.open {
-            self.resources_window(ctx);
-        }
         if self.show_deps {
             let mut open = true;
-            let mut todo: Option<(&'static str, String)> = None;
-            let in_sub = !self.parents.is_empty();
-            egui::Window::new("Package dependencies").open(&mut open).collapsible(false).default_width(560.0).show(ctx, |ui| {
-                if in_sub {
-                    ui.label("Links belong to the package: leave the nested graph to manage them.");
-                    return;
+            let root: &Graph = self.parents.first().map(|p| &p.0).unwrap_or(&self.g);
+            let deps = materialcraft::sbs_native::package_dependencies(root);
+            egui::Window::new("Package dependencies").open(&mut open).collapsible(false).default_width(520.0).show(ctx, |ui| {
+                ui.small("The packages this one uses: library graphs, and graphs of other .sbs files.");
+                ui.separator();
+                if deps.is_empty() {
+                    ui.label("This package uses no other packages.");
                 }
-                if self.g.links.is_empty() {
-                    ui.label("This package has no live links. Use File > Link package as node... to add one.");
-                }
-                let rows: Vec<(String, String, Option<String>, Option<String>, Option<String>, usize)> = self
-                    .g
-                    .links
-                    .iter()
-                    .map(|l| {
-                        let info = self.g.link_info.get(&l.name);
-                        let uses = self.g.nodes.values().filter(|n| n.kind == "subgraph" && n.strs.get("graph").map(|g| *g == l.name).unwrap_or(false)).count();
-                        (l.name.clone(), l.path.clone(), l.graph.clone(), info.and_then(|i| i.found.as_ref().map(|p| p.display().to_string())), info.and_then(|i| i.issue.clone()), uses)
-                    })
-                    .collect();
-                for (name, path, graph, found, issue, uses) in rows {
-                    ui.group(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.strong(&name);
-                            match (&found, &issue) {
-                                (Some(_), _) => ui.colored_label(ACCENT, "found"),
-                                (None, _) => ui.colored_label(Color32::from_rgb(255, 120, 110), "missing"),
-                            };
-                            ui.small(format!("{uses} instance(s)"));
-                        });
-                        ui.small(format!("{path}{}", graph.as_ref().map(|g| format!("  >  {g}")).unwrap_or_default()));
-                        if let Some(f) = &found {
-                            if *f != path {
-                                ui.small(format!("read from {f}"));
-                            }
-                        }
-                        if let Some(i) = &issue {
-                            ui.colored_label(Color32::from_rgb(255, 150, 140), i);
-                        }
-                        ui.horizontal(|ui| {
-                            if ui.button("Relink...").clicked() {
-                                todo = Some(("relink", name.clone()));
-                            }
-                            if ui.add_enabled(found.is_some(), egui::Button::new("Embed copy")).on_hover_text("Turn the link into a copy saved inside this package").clicked() {
-                                todo = Some(("embed", name.clone()));
-                            }
-                            if ui.button("Remove").clicked() {
-                                todo = Some(("remove", name.clone()));
-                            }
-                        });
+                for (file, uses) in &deps {
+                    ui.horizontal(|ui| {
+                        ui.strong(file);
+                        ui.small(format!("{uses} node(s)"));
                     });
                 }
-                ui.separator();
-                ui.strong("Search folders");
-                ui.small("When a linked file is not where the link says, these folders (relative to the package, separated by ;) are searched for a file with the same name.");
-                let mut sp = self.g.meta.get("search_paths").cloned().unwrap_or_default();
-                if ui.add(egui::TextEdit::singleline(&mut sp).desired_width(f32::INFINITY)).changed() {
-                    if sp.trim().is_empty() {
-                        self.g.meta.remove("search_paths");
-                    } else {
-                        self.g.meta.insert("search_paths".into(), sp);
-                    }
-                    self.modified = true;
-                }
-                if ui.button("Refresh links").clicked() {
-                    todo = Some(("refresh", String::new()));
-                }
             });
-            match todo {
-                Some(("relink", n)) => self.relink_dialog(&n),
-                Some(("embed", n)) => self.break_link_ui(&n),
-                Some(("remove", n)) => self.remove_link_ui(&n),
-                Some(("refresh", _)) => self.refresh_links(true),
-                _ => {}
-            }
             self.show_deps = open;
-        }
-        if let Some((path, names)) = self.link_pick.clone() {
-            let mut open = true;
-            let mut chosen: Option<Option<String>> = None;
-            egui::Window::new("Link which graph?").open(&mut open).collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
-                ui.label(format!("{} contains several graphs.", path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()));
-                if ui.button("Main graph").clicked() {
-                    chosen = Some(None);
-                }
-                ui.separator();
-                for n in &names {
-                    if ui.button(n).clicked() {
-                        chosen = Some(Some(n.clone()));
-                    }
-                }
-            });
-            if let Some(c) = chosen {
-                self.link_pick = None;
-                self.link_file(path, c);
-            } else if !open {
-                self.link_pick = None;
-            }
         }
         if self.show_about {
             let mut open = true;
@@ -1034,7 +1040,7 @@ impl App {
                     ("F", "frame all"),
                     ("C", "comment frame around selection"),
                     ("Delete", "delete selection"),
-                    ("Double-click subgraph", "open it"),
+                    ("Double-click a graph node", "open its graph"),
                     ("Ctrl+S / Ctrl+O", "save / open"),
                 ] {
                     ui.horizontal(|ui| {

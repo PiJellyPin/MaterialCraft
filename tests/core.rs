@@ -98,22 +98,6 @@ fn subgraph_extract_preserves_result() {
 }
 
 #[test]
-fn publish_embeds_bitmap_and_loads() {
-    let dir = std::env::temp_dir().join("mf_test_bitmap");
-    std::fs::create_dir_all(&dir).unwrap();
-    let f = dir.join("t.png");
-    let px = vec![[1.0, 0.0, 0.0, 1.0]; 16];
-    std::fs::write(&f, png::encode(4, 4, &px, 8)).unwrap();
-    let txt = format!("size 16\nnode 1 bitmap file=\"{}\"\noutput basecolor 1\nexpose \"X\" 1 seed 0 1\n", f.display());
-    let g = G2::parse(&txt).unwrap();
-    let pkg = g.publish().unwrap();
-    std::fs::remove_file(&f).unwrap();
-    let g2 = G2::parse(&pkg).unwrap();
-    let out = g2.evaluate(None).unwrap();
-    assert!(out["basecolor"].px.iter().all(|p| p[0] > 0.99 && p[1] < 0.01));
-}
-
-#[test]
 fn exposed_parameters_apply() {
     let mut g = G2::parse(EXAMPLE).unwrap();
     let mut p = std::collections::BTreeMap::new();
@@ -1473,45 +1457,6 @@ fn m0_format_versions() {
 }
 
 #[test]
-fn m0_live_links_follow_the_file_on_disk() {
-    let dir = std::env::temp_dir().join(format!("mc_links_{}", std::process::id()));
-    std::fs::create_dir_all(dir.join("lib")).unwrap();
-    let lib = |scale: u32| format!("size 64\nnode 1 perlin scale={scale}\noutput o 1\n");
-    std::fs::write(dir.join("lib/pattern.mcg"), lib(4)).unwrap();
-    let main = "size 64\nlink pat \"lib/pattern.mcg\"\nnode 1 subgraph graph=\"pat\"\nnode 2 subgraph graph=\"pat\"\nnode 3 blend bg=@1 fg=@2 opacity=0.5\noutput o 3\n";
-    std::fs::write(dir.join("main.mcg"), main).unwrap();
-    let (mut g, issues) = Graph::load_file(&dir.join("main.mcg")).unwrap();
-    assert!(issues.is_empty(), "{issues:?}");
-    assert!(g.is_linked("pat"));
-    // the linked graph is not written into the file, only the link
-    let text = g.to_text();
-    assert!(text.contains("link pat \"lib/pattern.mcg\"") && !text.contains("subgraph pat"), "{text}");
-    let a = g.evaluate(None).unwrap().remove("o").unwrap();
-    // change the linked file: refreshing picks it up
-    std::fs::write(dir.join("lib/pattern.mcg"), lib(9)).unwrap();
-    assert!(g.resolve_links(&dir).is_empty());
-    let b = g.evaluate(None).unwrap().remove("o").unwrap();
-    assert!(a.px.iter().zip(&b.px).any(|(p, q)| (p[0] - q[0]).abs() > 0.01), "the new scale must show");
-    // a missing file is reported, not fatal, and the name then fails to evaluate with a clear error
-    std::fs::remove_file(dir.join("lib/pattern.mcg")).unwrap();
-    let issues = g.resolve_links(&dir);
-    assert_eq!(issues.len(), 1);
-    assert!(issues[0].contains("pat") && issues[0].contains("cannot read"), "{issues:?}");
-    assert!(!g.is_linked("pat"));
-    assert!(g.evaluate(None).is_err());
-    // a link to a named graph inside a package
-    std::fs::write(dir.join("lib/pkg.mcg"), "size 64\nsubgraph inner\nsize 64\nnode 1 voronoi scale=5\noutput o 1\nend\nnode 1 perlin\noutput o 1\n").unwrap();
-    let g2 = Graph::parse("size 64\nlink v \"lib/pkg.mcg\" \"inner\"\nnode 1 subgraph graph=\"v\"\noutput o 1\n").unwrap();
-    let mut g2 = g2;
-    assert!(g2.resolve_links(&dir).is_empty());
-    assert!(g2.evaluate(None).is_ok());
-    // a graph that does not exist in the package
-    let mut g3 = Graph::parse("size 64\nlink v \"lib/pkg.mcg\" \"nope\"\nnode 1 perlin\noutput o 1\n").unwrap();
-    assert!(g3.resolve_links(&dir)[0].contains("no graph 'nope'"));
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
 fn m0_remaining_multi_output_nodes() {
     let g = Graph::parse(concat!(
         "size 64\n",
@@ -1629,56 +1574,6 @@ fn m0_square_cells_follow_the_aspect_ratio() {
 }
 
 #[test]
-fn m0_dependency_management() {
-    let dir = std::env::temp_dir().join(format!("mc_deps_{}", std::process::id()));
-    std::fs::create_dir_all(dir.join("lib")).unwrap();
-    std::fs::create_dir_all(dir.join("moved")).unwrap();
-    std::fs::write(dir.join("lib/pat.mcg"), "size 64\nnode 1 perlin scale=4\noutput o 1\n").unwrap();
-    let text = "size 64\nlink pat \"lib/pat.mcg\"\nnode 1 subgraph graph=\"pat\"\nnode 2 subgraph graph=\"pat\"\nnode 3 blend bg=@1 fg=@2\noutput o 3\n";
-    let mut g = Graph::parse(text).unwrap();
-    assert!(g.resolve_links(&dir).is_empty());
-    let info = &g.link_info["pat"];
-    assert!(info.found.as_ref().unwrap().ends_with("lib/pat.mcg") && info.issue.is_none());
-    assert_eq!(info.members, vec!["pat".to_string()]);
-
-    // the file moves: reported, then found again through a search folder
-    std::fs::rename(dir.join("lib/pat.mcg"), dir.join("moved/pat.mcg")).unwrap();
-    assert_eq!(g.resolve_links(&dir).len(), 1);
-    assert!(g.link_info["pat"].found.is_none() && g.link_info["pat"].issue.as_ref().unwrap().contains("cannot read"));
-    g.meta.insert("search_paths".into(), "elsewhere; moved".into());
-    assert_eq!(g.search_paths(), vec!["elsewhere".to_string(), "moved".to_string()]);
-    assert!(g.resolve_links(&dir).is_empty(), "found by name in a search folder");
-    assert!(g.link_info["pat"].found.as_ref().unwrap().ends_with("moved/pat.mcg"));
-    assert!(g.evaluate(None).is_ok());
-
-    // relink keeps the name, so both instances follow
-    std::fs::write(dir.join("moved/other.mcg"), "size 64\nnode 1 voronoi scale=3\noutput o 1\n").unwrap();
-    let before = g.evaluate(None).unwrap().remove("o").unwrap();
-    assert!(g.relink("pat", "moved/other.mcg", None));
-    assert!(g.resolve_links(&dir).is_empty());
-    assert!(before.px != g.evaluate(None).unwrap().remove("o").unwrap().px);
-
-    // breaking the link embeds a copy that is saved with the package and no longer follows the file
-    let n = g.break_link("pat").unwrap();
-    assert_eq!(n, 1);
-    assert!(g.links.is_empty() && !g.is_linked("pat") && g.subgraphs.contains_key("pat"));
-    let saved = g.to_text();
-    assert!(!saved.contains("link pat") && saved.contains("subgraph pat"), "{saved}");
-    std::fs::remove_file(dir.join("moved/other.mcg")).unwrap();
-    let mut again = Graph::parse(&saved).unwrap();
-    assert!(again.resolve_links(&dir).is_empty());
-    assert!(again.evaluate(None).is_ok(), "the embedded copy still works without the file");
-
-    // removing a link reports the instances that are left dangling
-    let mut h = Graph::parse("size 64\nlink pat \"moved/none.mcg\"\nnode 1 subgraph graph=\"pat\"\noutput o 1\n").unwrap();
-    let _ = h.resolve_links(&dir);
-    assert!(h.break_link("pat").is_err(), "an unresolved link cannot be embedded");
-    assert_eq!(h.remove_link("pat"), 1);
-    assert!(h.links.is_empty());
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
 fn m1_curve_node() {
     use materialcraft::curve::Curve;
     let c = Curve::parse("0:0,0.5:0.8,1:1").unwrap();
@@ -1720,25 +1615,3 @@ fn colorspace_conversion_roundtrips_and_keeps_alpha() {
     assert!(colorspace::is_color_output("basecolor") && !colorspace::is_color_output("normal"));
 }
 
-#[test]
-fn library_assets_parse_and_render() {
-    use materialcraft::library::{self, AssetKind};
-    let mut ids = std::collections::HashSet::new();
-    for a in library::assets() {
-        assert!(ids.insert(a.id), "duplicate id {}", a.id);
-        assert!(!a.tags.is_empty() && !a.description.is_empty(), "{} lacks tags or description", a.id);
-        let g = a.graph().unwrap_or_else(|e| panic!("{}: {e}", a.id));
-        let out = g.evaluate(Some(64)).unwrap_or_else(|e| panic!("{}: {e}", a.id));
-        assert!(!out.is_empty(), "{} has no outputs", a.id);
-        for (k, t) in &out {
-            assert!(t.px.iter().all(|v| v.iter().all(|c| c.is_finite())), "{}:{k} has non-finite values", a.id);
-        }
-        let th = a.thumbnail(32).unwrap();
-        assert_eq!((th.w, th.h), (32, 32));
-        assert!(library::find(a.id).is_some());
-    }
-    assert!(library::assets().iter().any(|a| a.kind == AssetKind::Material));
-    assert!(!library::search("rust", None).is_empty());
-    assert!(library::search("zzzz-nothing", None).is_empty());
-    assert_eq!(library::search("", Some(AssetKind::Filter)).len(), library::categories(AssetKind::Filter).iter().map(|c| library::assets().iter().filter(|a| a.kind == AssetKind::Filter && a.category == *c).count()).sum::<usize>());
-}

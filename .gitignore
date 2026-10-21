@@ -10,3 +10,8 @@ release/MaterialCraft-0.1.0-win64/README.md
 release/MaterialCraft-0.1.0-win64/THIRD_PARTY_LICENSES.md
 /target
 /AiMaterials
+# your own .sbs projects used to test the importer: never committed
+/sbs_samples
+# reference material taken from an installed copy of another program: stays on this computer, never committed
+/Functional Node Framework SBS
+/reference

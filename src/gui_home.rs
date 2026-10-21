@@ -52,60 +52,6 @@ const TEMPLATES: &[Template] = &[
     Template { name: "Generator (color)", desc: "A single color output called 'output'.", outs: &[("output", [0.6, 0.4, 0.3])] },
 ];
 
-fn template_graph(t: &Template, name: &str, size: usize, height: usize, depth16: bool) -> Graph {
-    let mut g = Graph { size, height: if height == size { 0 } else { height }, ..Default::default() };
-    g.meta.insert("identifier".into(), name.to_string());
-    g.meta.insert("output_format".into(), if depth16 { "16" } else { "8" }.into());
-    for (i, (out, _)) in t.outs.iter().enumerate() {
-        let id = i as u32 + 1;
-        let mut n = Node { kind: "output".into(), pos: [(i / 3) as f32 * (CARD + 80.0), (i % 3) as f32 * (CARD_H + 44.0)], ..Default::default() };
-        n.strs.insert("usage".into(), out.to_string());
-        g.nodes.insert(id, n);
-    }
-    g
-}
-
-/// A ready-made template as a graph ready to edit: (display name, graph). "brick_wall" is the bundled example.
-fn template_graph_for(id: &str) -> Option<(String, Graph)> {
-    let (name, mut g) = if id == "brick_wall" {
-        let mut g = Graph::parse(EXAMPLE).ok()?;
-        g.migrate_outputs();
-        auto_layout(&mut g);
-        ("Brick wall".to_string(), g)
-    } else {
-        let a = materialcraft::library::find(id)?;
-        let mut g = a.graph().ok()?;
-        auto_layout_if_unplaced(&mut g);
-        (a.name.to_string(), g)
-    };
-    let ident: String = name.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
-    g.meta.insert("identifier".into(), ident);
-    Some((name, g))
-}
-
-/// Menu of the ready-made templates by kind and category; picking one pushes `make(id)`.
-fn template_menu(ui: &mut egui::Ui, acts: &mut Vec<Act>, make: fn(String) -> Act, with_example: bool) {
-    use materialcraft::library::{assets, categories, AssetKind};
-    if with_example && ui.button("Brick wall (example)").clicked() {
-        acts.push(make("brick_wall".into()));
-        ui.close();
-    }
-    for (label, kind) in [("Materials", AssetKind::Material), ("Generators", AssetKind::Generator), ("Filters", AssetKind::Filter)] {
-        ui.menu_button(label, |ui| {
-            for cat in categories(kind) {
-                ui.menu_button(cat, |ui| {
-                    for a in assets().iter().filter(|a| a.kind == kind && a.category == cat) {
-                        if ui.button(a.name).on_hover_text(a.description).clicked() {
-                            acts.push(make(a.id.to_string()));
-                            ui.close();
-                        }
-                    }
-                });
-            }
-        });
-    }
-}
-
 // ---------------------------------------------------------------- config / recent files
 fn config_dir() -> PathBuf {
     if let Ok(a) = std::env::var("APPDATA") {
@@ -195,33 +141,18 @@ fn spawn_banner() -> Receiver<ColorImage> {
     rx
 }
 
+/// Pictures for the library's tiles: every node type the editor offers, drawn small in the background and sent in
+/// batches as they are ready.
 fn spawn_library_thumbs() -> Receiver<HashMap<String, ColorImage>> {
     let (tx, rx) = channel();
     std::thread::spawn(move || {
         let mut out = HashMap::new();
-        for s in SPECS {
-            if let Some(text) = materialcraft::graph::demo_graph_for(s.kind) {
-                if let Ok(g) = Graph::parse(&text) {
-                    if let Ok(m) = g.evaluate(Some(64)) {
-                        if let Some(tex) = m.get("o") {
-                            out.insert(s.kind.to_string(), qimg(tex));
-                        }
-                    }
-                }
+        for d in materialcraft::sbs_defs::palette(materialcraft::sbs_defs::Fam::Texture) {
+            if let Some(t) = materialcraft::sbs_native::kind_preview(d.kind, 64) {
+                out.insert(d.kind.to_string(), qimg(&t));
             }
-        }
-        for a in materialcraft::library::assets() {
-            if let Ok(tex) = a.thumbnail(192) {
-                out.insert(format!("asset:{}", a.id), qimg(&tex));
-            }
-        }
-        if let Ok(mut g) = Graph::parse(EXAMPLE) {
-            g.migrate_outputs();
-            if let Ok(mut m) = g.evaluate(Some(192)) {
-                let t = ["basecolor", "output", "height"].iter().find_map(|k| m.remove(*k)).or_else(|| m.into_iter().next().map(|(_, t)| t));
-                if let Some(t) = t {
-                    out.insert("asset:brick_wall".to_string(), qimg(&t));
-                }
+            if out.len() >= 24 && tx.send(std::mem::take(&mut out)).is_err() {
+                return;
             }
         }
         let _ = tx.send(out);
@@ -396,15 +327,15 @@ fn graph_row(ui: &mut egui::Ui, name: &str, outs: &[String], selected: bool, key
 
 fn entry_icon(kind: &str) -> Ic {
     match kind {
-        "output" => Ic::Sphere,
+        "sbs:output" => Ic::Sphere,
         "comment" => Ic::Comment,
         "frame" => Ic::Frame,
-        "dot" => Ic::Dot,
-        "input" => Ic::Input,
-        "subgraph" => Ic::Subgraph,
-        _ => match materialcraft::graph::category(kind) {
+        "sbs:passthrough" => Ic::Dot,
+        "sbs:input" => Ic::Input,
+        "sbs:graph" => Ic::Subgraph,
+        _ => match sd_lib_group(kind).0 {
             "Generators" => Ic::Grid,
-            "Material" => Ic::Subgraph,
+            "Material tools" => Ic::Subgraph,
             _ => Ic::Layout,
         },
     }
@@ -433,11 +364,11 @@ fn panel_header(ui: &mut egui::Ui, title: &str, _closable: bool) -> bool {
 
 fn lib_group(kind: &str) -> (&'static str, &'static str) {
     match kind {
-        "white_noise" | "gaussian_noise" | "perlin" | "fbm" | "clouds" | "voronoi" | "voronoi_fractal" | "bnw_spots" | "crystal" | "directional_noise" | "blue_noise" | "caustics" | "liquid_noise" | "perlin_3d" | "anisotropic_noise" | "fur_noise" | "moisture_noise" | "microscope_noise" | "worley_3d" | "fbm_3d" | "grunge" | "grunge_map" | "plasma" | "cells" | "fractal_sum" | "waveform" | "gaussian_spots" => ("Generators", "Noises"),
+        "white_noise" | "gaussian_noise" | "perlin" | "fbm" | "clouds" | "voronoi" | "voronoi_fractal" | "bnw_spots" | "crystal" | "directional_noise" | "blue_noise" | "caustics" | "liquid_noise" | "perlin_3d" | "anisotropic_noise" | "fur_noise" | "moisture_noise" | "microscope_noise" | "worley_3d" | "fbm_3d" | "grunge" | "grunge_map" | "plasma" | "cells" | "fractal_sum" | "waveform" | "gaussian_spots" | "preset_noise" | "noise_pattern" | "noise_3d" => ("Generators", "Noises"),
         "herringbone" | "arc_pavement" | "triangle_grid" | "starburst" | "gradient_reflected" | "fibers" | "scratches" | "paving" | "wire_mesh" => ("Generators", "Patterns"),
         "path_stroke" | "path_fill" | "path_distance" | "path_border" | "path_scatter" | "path_track" | "path_cable" | "path_seam" | "path_splatter" | "path_sample" => ("Generators", "Paths"),
         "path_warp" => ("Filters", "Blur and warp"),
-        "color" | "gradient" | "gradient_axial" | "gradient_circular" | "checker" | "bricks" | "stripes" | "weave" | "weave_generator" | "tile_sampler" | "tile_generator" | "splatter" | "splatter_circular" | "pixel_processor" => ("Generators", "Patterns"),
+        "color" | "gradient" | "gradient_axial" | "gradient_circular" | "gradient_2pt" | "checker" | "bricks" | "stripes" | "weave" | "weave_preset" | "tile_preset" | "tile_random2" | "weave_generator" | "tile_sampler" | "tile_generator" | "splatter" | "splatter_circular" | "pixel_processor" => ("Generators", "Patterns"),
         "shape" | "circle" | "rect" | "polygon" | "star" | "volume_mask" | "gradient_3d" => ("Generators", "Shapes"),
         "sdf_shape" | "sdf_op" | "sdf_mask" | "sdf_form" => ("Generators", "SDF"),
         "levels" | "adjust" | "invert" | "threshold" | "histogram_scan" | "histogram_range" | "quantize" | "quantize_color" | "clamp" | "hsl" | "colorize" | "tint" | "to_gray" | "rgba_split" | "alpha_split" | "channel" | "merge" | "switch" | "color_match" | "highpass" | "auto_levels" | "channel_mixer" | "alpha_merge" | "color_to_mask" | "replace_color" | "pow" | "histogram_shift" | "grayscale_conversion" | "chrominance_extract" | "contrast_luminosity" | "srgb_to_linear" | "linear_to_srgb" | "premultiply" | "histogram_equalize" | "min_max" | "morphology" | "multi_switch" | "lookup_table" | "color_lut" | "frequency_split" | "frequency_merge" | "palette_extract" | "palette_apply" => ("Filters", "Adjustments"),
@@ -452,16 +383,39 @@ fn lib_group(kind: &str) -> (&'static str, &'static str) {
     }
 }
 
+/// The library folder of a library graph: by the node MaterialCraft draws it with, else by what it takes (a graph
+/// without image inputs makes a pattern or noise).
+fn sd_lib_group(kind: &str) -> (&'static str, &'static str) {
+    let id = kind.rsplit('/').next().unwrap_or(kind);
+    let known = materialcraft::sbs_import::library_kind(id).map(lib_group);
+    if let Some(g @ (m, sub)) = known {
+        let in_tree = LIB_TREE.iter().any(|(n, subs)| *n == m && (sub.is_empty() || subs.contains(&sub)));
+        if in_tree && m != "Structure" {
+            return g;
+        }
+    }
+    let no_inputs = materialcraft::sbs_defs::def(kind).map(|d| d.inputs.is_empty()).unwrap_or(false);
+    let l = id.to_ascii_lowercase();
+    if no_inputs && (l.contains("noise") || l.contains("grunge") || l.contains("cloud") || l.contains("fractal") || l.contains("perlin")) {
+        ("Generators", "Noises")
+    } else if no_inputs {
+        ("Generators", "Patterns")
+    } else if l.contains("normal") || l.contains("height") || l.contains("curvature") || l.contains("ambient") || l.contains("material") {
+        ("Material tools", "")
+    } else {
+        ("Filters", "Adjustments")
+    }
+}
+
 const LIB_TREE: &[(&str, &[&str])] = &[
     ("Favorites", &[]),
     ("Structure", &[]),
     ("Core nodes", &[]),
     ("Pattern builders", &[]),
     ("Logic nodes", &[]),
-    ("Generators", &["Noises", "Patterns", "Shapes", "SDF", "Paths", "Ready-made"]),
-    ("Filters", &["Adjustments", "Blur and warp", "Transform", "Effects", "Masks and regions", "Ready-made"]),
+    ("Generators", &["Noises", "Patterns", "Shapes"]),
+    ("Filters", &["Adjustments", "Blur and warp", "Transform", "Effects", "Masks and regions"]),
     ("Material tools", &[]),
-    ("Mesh-driven", &[]),
 ];
 
 fn meta_field(ui: &mut egui::Ui, meta: &mut BTreeMap<String, String>, label: &str, key: &str, multi: bool) {
@@ -514,62 +468,21 @@ impl App {
 
     fn save_settings(&mut self) {
         let (skip, tip, fav) = (self.skip_home, self.hide_suggestions, self.favorites.iter().cloned().collect::<Vec<_>>());
+        let (snap, grid) = (self.snap_nodes, self.snap_grid.round() as u32);
         self.prefs.update(|v| {
             v.general.skip_home = skip;
             v.general.hide_tip = tip;
+            v.general.snap_nodes = snap;
+            v.general.snap_grid = grid;
             v.library.favorites = fav;
         });
     }
 
     fn open_path(&mut self, p: PathBuf) {
-        // a workspace is still open behind the home screen: the file joins it instead of replacing it
-        if !self.pkgs.is_empty() {
-            let open_at = (0..self.pkgs.len()).find(|&i| match &self.pkgs[i] {
-                Some(k) => k.path.as_ref() == Some(&p),
-                None => self.file.as_ref() == Some(&p),
-            });
-            match open_at {
-                Some(i) => self.switch_pkg(i),
-                None => match read_pkg(&p) {
-                    Ok(pk) => {
-                        self.push_recent(&p);
-                        self.add_pkg_active(pk);
-                        self.need_fit = true;
-                        self.status(format!("Opened {}", p.display()), true);
-                    }
-                    Err(e) => return self.status(format!("Open failed: {e}"), false),
-                },
-            }
-            self.screen = Screen::Editor;
-            return;
+        if is_sbs(&p) {
+            return self.open_sbs(p);
         }
-        let link_note: String;
-        match std::fs::read_to_string(&p).map_err(|e| e.to_string()).and_then(|t| Graph::parse_unchecked(&t).map_err(|e| e.to_string())) {
-            Ok(mut g) => {
-                g.migrate_outputs();
-                let issues = g.resolve_links(p.parent().unwrap_or_else(|| std::path::Path::new(".")));
-                link_note = if issues.is_empty() { String::new() } else { format!("  -  {}", issues.join("; ")) };
-                auto_layout_if_unplaced(&mut g);
-                if !g.meta.contains_key("identifier") {
-                    g.meta.insert("identifier".into(), p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "graph".into()));
-                }
-                self.ws_fresh();
-                self.parents.clear();
-                self.g = g;
-                self.clear_views();
-                self.push_recent(&p);
-                self.file = Some(p.clone());
-                self.clear_history();
-                self.thumbs.clear();
-                self.thumb_px.clear();
-                self.modified = false;
-                self.screen = Screen::Editor;
-                self.fit_view();
-                let ok = link_note.is_empty();
-                self.status(format!("Opened {}{link_note}", p.display()), ok);
-            }
-            Err(e) => self.status(format!("Open failed: {e}"), false),
-        }
+        self.status(format!("{}: only Substance packages (.sbs) can be opened", p.display()), false);
     }
 
     fn open_new_dialog(&mut self, dest: Option<usize>) {
@@ -585,86 +498,80 @@ impl App {
         if name.is_empty() {
             name = if self.new_dlg.dest.is_some() { "Material_Graph".into() } else { "Graph".into() };
         }
-        let g = template_graph(t, &name, self.new_dlg.size, self.new_dlg.height, self.new_dlg.depth16);
         self.new_dlg.open = false;
-        match self.new_dlg.dest.filter(|_| self.screen == Screen::Editor) {
-            Some(dest) => self.add_graph_to_pkg(dest, g, &name),
-            None => {
-                let unsaved = if self.screen == Screen::Editor { self.unique_unsaved_name() } else { "Unsaved Package".to_string() };
-                self.add_pkg_active(Pkg { path: None, name: unsaved, g, modified: true, tabs: Vec::new(), example: None });
-                self.need_fit = true;
-                self.status(format!("Created package with '{name}' from template '{}'", t.name), true);
+        let dest = self.new_dlg.dest.filter(|_| self.screen == Screen::Editor);
+        let size = self.new_dlg.size;
+        match dest {
+            Some(d) => {
+                self.switch_pkg(d);
+                self.goto_root();
+                self.snap();
+                let base: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' }).collect();
+                let mut unique = base.clone();
+                let mut k = 2;
+                while materialcraft::sbs_native::all_graphs(&self.g).contains_key(&unique) {
+                    unique = format!("{base}_{k}");
+                    k += 1;
+                }
+                match materialcraft::sbs_native::create_graph(&mut self.g, &unique, "graph") {
+                    Ok(()) => {
+                        if let Some(sg) = self.g.subgraphs.get_mut(&unique) {
+                            materialcraft::sbs_native::template_into(sg, t.outs);
+                        }
+                        self.enter_sub(&unique);
+                        self.modified = true;
+                        self.status(format!("Created graph '{unique}' in {}", self.package_label()), true);
+                    }
+                    Err(e) => self.status(e, false),
+                }
             }
-        }
-    }
-
-    fn is_example_pkg(&self, i: usize) -> bool {
-        match self.pkgs.get(i) {
-            Some(Some(p)) => p.example.is_some(),
-            _ => self.example.is_some(),
-        }
-    }
-
-    /// Open a ready-made template as an example in its own tab. It is not part of the project (it is not saved, not
-    /// listed under recent files and disappears when its tab is closed); opening it again just shows the same tab.
-    fn open_template(&mut self, id: &str) {
-        let found = (0..self.pkgs.len()).find(|&i| match &self.pkgs[i] {
-            Some(p) => p.example.as_deref() == Some(id),
-            None => self.example.as_deref() == Some(id),
-        });
-        if let Some(i) = found {
-            self.switch_pkg(i);
-            self.screen = Screen::Editor;
-            return;
-        }
-        let Some((name, g)) = template_graph_for(id) else {
-            return self.status(format!("Template '{id}' not found"), false);
-        };
-        self.add_pkg_active(Pkg { path: None, name: format!("{name} (example)"), g, modified: false, tabs: Vec::new(), example: Some(id.to_string()) });
-        self.screen = Screen::Editor;
-        self.need_fit = true;
-        self.status(format!("Opened the {name} example. It is not part of your project - use File > Package > Add template to copy it in."), true);
-    }
-
-    /// The package a template is copied into: the selected one, else the active one, else the first - never an example.
-    fn template_target(&self) -> Option<usize> {
-        [self.pkg_sel, self.pkg_active].into_iter().chain(0..self.pkgs.len()).find(|&i| i < self.pkgs.len() && !self.is_example_pkg(i))
-    }
-
-    /// File > Package > Add template: copy a template into the project as a new graph.
-    fn add_template_to_project(&mut self, id: &str) {
-        let Some((name, g)) = template_graph_for(id) else {
-            return self.status(format!("Template '{id}' not found"), false);
-        };
-        match self.template_target() {
-            Some(dest) => self.add_graph_to_pkg(dest, g, &name),
             None => {
-                let unsaved = self.unique_unsaved_name();
-                self.add_pkg_active(Pkg { path: None, name: unsaved, g, modified: true, tabs: Vec::new(), example: None });
+                let ident: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' }).collect();
+                let mut g = materialcraft::sbs_native::new_package(&ident, size);
+                materialcraft::sbs_native::template_into(&mut g, t.outs);
+                let unsaved = if self.screen == Screen::Editor { self.unique_unsaved_name() } else { "Unsaved Package".to_string() };
+                let pkg = Pkg { path: None, name: unsaved, g, modified: true, tabs: Vec::new() };
+                // nothing is open yet (the empty start graph): the package takes its place
+                if self.pkgs.is_empty() && self.file.is_none() && self.g.nodes.is_empty() {
+                    self.ws_fresh();
+                    self.load_active(pkg);
+                } else {
+                    self.add_pkg_active(pkg);
+                }
                 self.screen = Screen::Editor;
                 self.need_fit = true;
-                self.status(format!("Created a package with the {name} template"), true);
+                self.status(format!("Created package with '{ident}' from template '{}'", t.name), true);
             }
         }
     }
 
-    /// Drop (or click) a ready-made generator or filter in the library: one node that uses the template. The template's
-    /// graph is embedded once; every further drop of it makes another instance of the same copy.
-    fn add_template_node(&mut self, id: &str, at: Option<Pos2>) {
-        let Some(a) = materialcraft::library::find(id) else { return };
-        let pos = at.unwrap_or_else(|| self.view_center_world());
-        let existing = self.g.subgraphs.iter().find(|(_, s)| s.meta.get("template").map(|t| t == a.id).unwrap_or(false)).map(|(k, _)| k.clone());
-        if let Some(name) = existing {
-            self.add_node_at("subgraph", Some(&name), pos);
-            self.status(format!("Added another '{}' node - right-click it and choose Edit template to change the template", a.name), true);
-            return;
-        }
-        let Some((name, g)) = template_graph_for(id) else { return };
-        if let Some(sub) = self.import_graph_value(g, name, Some(pos), None) {
-            if let Some(sg) = self.g.subgraphs.get_mut(&sub) {
-                sg.meta.insert("template".into(), a.id.to_string());
+    /// An editable copy of shipped material template `i`.
+    fn new_from_material(&mut self, i: usize) {
+        let (ident, text, _) = materialcraft::material_templates::MATERIALS[i];
+        match materialcraft::sbs_native::load(text, None) {
+            Ok((g, _)) => {
+                let name = if self.screen == Screen::Editor { self.unique_unsaved_name() } else { "Unsaved Package".to_string() };
+                let pkg = Pkg { path: None, name, g, modified: true, tabs: Vec::new() };
+                if self.pkgs.is_empty() && self.file.is_none() && !self.modified && self.g.nodes.is_empty() {
+                    self.ws_fresh();
+                    self.load_active(pkg);
+                } else {
+                    self.add_pkg_active(pkg);
+                }
+                self.screen = Screen::Editor;
+                self.need_fit = true;
+                self.status(format!("Opened a copy of the '{}' material template", materialcraft::material_templates::title(ident)), true);
             }
+            Err(e) => self.status(format!("Template '{ident}' failed to load: {e}"), false),
         }
+    }
+
+    /// A new package from template `i` of the New dialog, with the dialog's other settings at their defaults.
+    fn new_from_template(&mut self, i: usize) {
+        self.new_dlg.sel = i.min(TEMPLATES.len() - 1);
+        self.new_dlg.dest = None;
+        self.new_dlg.name = "Graph".into();
+        self.create_from_dialog();
     }
 
     // ------------------------------------------------------------ new graph dialog
@@ -875,7 +782,7 @@ impl App {
                     };
                     let main = root.meta.get("identifier").cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| "Graph".into());
                     let mut v = vec![(main.clone(), root.output_idents(), true)];
-                    v.extend(root.subgraphs.iter().filter(|(_, s)| !s.meta.contains_key("embedded")).map(|(k, s)| (k.clone(), s.output_idents(), false)));
+                    v.extend(root.subgraphs.iter().filter(|(_, s)| materialcraft::sbs_native::listed(s)).map(|(k, s)| (k.clone(), s.output_idents(), false)));
                     (main, v)
                 };
                 let _ = main_name;
@@ -903,19 +810,18 @@ impl App {
                                     self.acts.push(Act::NewGraphIn(i));
                                     ui.close();
                                 }
+                                if ui.button("Function").on_hover_text("A function graph of the package: values call it with an Instance node").clicked() {
+                                    self.acts.push(Act::NewFunctionIn(i));
+                                    ui.close();
+                                }
                             });
                             if ui.button("Save Package").clicked() {
                                 self.acts.push(Act::SavePkg(i));
                                 ui.close();
                             }
-                            if let Some(id) = match self.pkgs.get(i) {
-                                Some(Some(p)) => p.example.clone(),
-                                _ => self.example.clone(),
-                            } {
-                                if ui.button("Add to project").clicked() {
-                                    self.acts.push(Act::AddTemplate(id));
-                                    ui.close();
-                                }
+                            if ui.button("Add Graph File...").on_hover_text("Copy every graph and function of another .sbs package into this one").clicked() {
+                                self.acts.push(Act::AddGraphFile(i));
+                                ui.close();
                             }
                             if ui.button("Close Package").clicked() {
                                 self.acts.push(Act::ClosePkg(i));
@@ -924,15 +830,27 @@ impl App {
                         });
                     })
                     .body(|ui| {
+                        // graphs kept in folders of the package are listed under their folder
+                        let mut last_folder: Option<String> = None;
                         for (name, outs, is_main) in &graphs {
                             let on = is_active && if *is_main { current.is_none() } else { current.as_deref() == Some(name.as_str()) };
-                            let r = graph_row(ui, name, outs, on, ("pkg", format!("{i}/{is_main}/{name}")));
+                            let folder = name.rsplit_once('/').map(|(f, _)| f.to_string());
+                            if folder != last_folder {
+                                if let Some(f) = &folder {
+                                    ui.label(egui::RichText::new(format!("{f}/")).small().color(Color32::from_gray(150)));
+                                }
+                                last_folder = folder.clone();
+                            }
+                            let shown = match name.rsplit_once('/') {
+                                Some((_, short)) => format!("   {short}"),
+                                None => name.clone(),
+                            };
+                            let r = graph_row(ui, &shown, outs, on, ("pkg", format!("{i}/{is_main}/{name}")));
                             let sub = if *is_main { None } else { Some(name.clone()) };
                             if r.dragged() {
                                 if is_active {
-                                    if let Some(s) = &sub {
-                                        r.dnd_set_drag_payload(format!("subgraph: {s}"));
-                                    }
+                                    // a graph of this package becomes a node that runs it (when it may run here)
+                                    r.dnd_set_drag_payload(format!("subgraph: {name}"));
                                 } else {
                                     r.dnd_set_drag_payload(GraphDrag(i, name.clone(), sub.clone()));
                                 }
@@ -950,29 +868,64 @@ impl App {
                                     self.acts.push(Act::EnterSub(s));
                                 }
                             }
-                            r.on_hover_text("Click to open - drag onto the canvas to use it as a node");
-                        }
-                        if is_active {
-                            let root = self.parents.first().map(|p| &p.0).unwrap_or(&self.g);
-                            // listing checks the disk for linked files, so it is refreshed once a second, not every frame
-                            if self.res.cache.as_ref().map(|(t, _)| t.elapsed().as_secs_f32() > 1.0).unwrap_or(true) {
-                                self.res.cache = Some((std::time::Instant::now(), root.resource_entries()));
-                            }
-                            let entries = self.res.cache.as_ref().map(|c| c.1.clone()).unwrap_or_default();
-                            if !entries.is_empty() {
-                                ui.add_space(4.0);
-                                ui.horizontal(|ui| {
-                                    ui.small("Resources");
-                                    if ui.small_button("manage...").clicked() {
-                                        self.acts.push(Act::Resources);
+                            let r = r.on_hover_text("Click to open - drag onto the canvas to use it as a node - right-click for more");
+                            r.context_menu(|ui| {
+                                self.pkg_sel = i;
+                                if ui.button("Open").clicked() {
+                                    if !is_active {
+                                        self.acts.push(Act::SwitchPkg(i));
+                                    } else {
+                                        for _ in 0..self.parents.len() {
+                                            self.acts.push(Act::ExitSub);
+                                        }
                                     }
-                                });
-                                for e in entries {
-                                    let base = e.name.rsplit(['/', '\\']).next().unwrap_or(&e.name).to_string();
-                                    let missing = e.status == materialcraft::resources::Status::Missing;
-                                    let text = egui::RichText::new(format!("      {base}{}", if missing { "  (missing)" } else { "" }));
-                                    ui.label(if missing { text.color(Color32::from_rgb(235, 110, 100)) } else { text });
+                                    if let Some(s) = sub.clone() {
+                                        self.acts.push(Act::EnterSub(s));
+                                    }
+                                    ui.close();
                                 }
+                                ui.separator();
+                                if ui.button("Export maps...").on_hover_text("Write this graph's outputs as image files").clicked() {
+                                    self.acts.push(Act::ExportMaps(i, sub.clone()));
+                                    ui.close();
+                                }
+                                if ui.button("Save as its own package (.sbs)...").on_hover_text("This graph in a package of its own, with the graphs and functions it uses").clicked() {
+                                    self.acts.push(Act::ExportGraphFile(i, sub.clone()));
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if ui.button("Duplicate").clicked() {
+                                    self.acts.push(Act::DuplicateGraph(i, sub.clone()));
+                                    ui.close();
+                                }
+                                // the graph a package opens on can be renamed too
+                                if sub.is_none() && ui.button("Rename...").clicked() {
+                                    self.acts.push(Act::RenameGraph(i, name.clone()));
+                                    ui.close();
+                                }
+                                if let Some(s) = &sub {
+                                    if ui.button("Rename...").clicked() {
+                                        self.acts.push(Act::RenameGraph(i, s.clone()));
+                                        ui.close();
+                                    }
+                                    if ui.button("Delete").on_hover_text("Only when no other graph uses it").clicked() {
+                                        self.acts.push(Act::DeleteGraph(i, s.clone()));
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        }
+                        // the package's resources (bitmaps, fonts, SVG), as the file lists them
+                        let root: &Graph = match self.pkgs.get(i) {
+                            Some(Some(p)) => &p.g,
+                            _ => self.parents.first().map(|p| &p.0).unwrap_or(&self.g),
+                        };
+                        let entries = materialcraft::sbs_native::package_resources(root);
+                        if !entries.is_empty() {
+                            ui.add_space(4.0);
+                            ui.small("Resources");
+                            for (name, how) in entries {
+                                ui.label(egui::RichText::new(format!("      {name}")).color(Color32::from_gray(190))).on_hover_text(how);
                             }
                         }
                     });
@@ -988,16 +941,29 @@ impl App {
             return all.into_iter().filter(|e| e.label.to_lowercase().contains(&s) || e.doc.to_lowercase().contains(&s)).collect();
         }
         let cat = self.lib_cat.clone();
+        // a function or pattern graph takes only its own family of nodes: all of them, whatever the folder
+        if matches!(self.g.graph_kind(), "function" | "fxmap") && cat != "Favorites" {
+            return all;
+        }
+        // the format's atomic nodes, the library graphs by what they make, function and FX-Map nodes
         all.into_iter()
             .filter(|e| {
-                let (m, sub) = lib_group(&e.kind);
+                let k = e.kind.as_str();
+                let structure = matches!(k, "sbs:input" | "sbs:output" | "sbs:graph" | "sbs:passthrough");
                 match cat.as_str() {
                     "Favorites" => self.favorites.contains(&e.label),
-                    "Core nodes" => !matches!(e.kind.as_str(), "subgraph" | "comment" | "frame"),
-                    c => match c.split_once('/') {
-                        Some((cm, cs)) => m == cm && sub == cs,
-                        None => m == c,
-                    },
+                    "Structure" => structure,
+                    "Core nodes" => !k.starts_with("sbs:lib:") && !k.starts_with("sbs:fn:") && !k.starts_with("sbs:fx:") && !structure,
+                    "Logic nodes" => k.starts_with("sbs:fn:"),
+                    "Pattern builders" => k.starts_with("sbs:fx:"),
+                    c if k.starts_with("sbs:lib:") => {
+                        let (m, sub) = sd_lib_group(k);
+                        match c.split_once('/') {
+                            Some((cm, cs)) => m == cm && sub == cs,
+                            None => m == c,
+                        }
+                    }
+                    _ => false,
                 }
             })
             .collect()
@@ -1016,19 +982,6 @@ impl App {
         });
         let (h, w) = (ui.available_height(), ui.available_width());
         let items = self.lib_items(search);
-        // ready-made generators and filters sit next to the nodes of the same kind and drag in as one node
-        use materialcraft::library::AssetKind;
-        let draggable = |a: &&'static materialcraft::library::Asset| matches!(a.kind, AssetKind::Generator | AssetKind::Filter);
-        let assets: Vec<&'static materialcraft::library::Asset> = if !search.is_empty() {
-            materialcraft::library::search(search, None).into_iter().filter(|a| draggable(&a)).collect()
-        } else {
-            match self.lib_cat.as_str() {
-                "Generators/Ready-made" => materialcraft::library::search("", Some(AssetKind::Generator)),
-                "Filters/Ready-made" => materialcraft::library::search("", Some(AssetKind::Filter)),
-                _ => Vec::new(),
-            }
-        };
-        let mut open_example: Option<&'static str> = None;
         let mut fav_toggle: Option<String> = None;
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(vec2(158.0, h), egui::Layout::top_down(egui::Align::LEFT), |ui| {
@@ -1062,47 +1015,17 @@ impl App {
             ui.separator();
             ui.allocate_ui_with_layout(vec2((w - 168.0).max(80.0), h), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 egui::ScrollArea::vertical().id_salt("libgrid").auto_shrink([false, false]).show(ui, |ui| {
-                    if items.is_empty() && assets.is_empty() {
+                    if items.is_empty() {
                         ui.add_space(10.0);
                         ui.label(egui::RichText::new(match self.lib_cat.as_str() {
-                            "Pattern builders" | "Logic nodes" => "Not available in this version.",
+                            "Logic nodes" => "Function nodes: open a function graph (a value's fn button, or Explorer > New > Function) to add them.",
+                            "Pattern builders" => "FX-Map nodes: open an FX-Map's pattern graph to add them.",
                             "Favorites" => "Right-click a node to add it to favorites.",
                             _ => "Nothing here.",
                         }).color(Color32::from_gray(130)));
                     }
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
-                        for a in &assets {
-                            let (rect, resp) = ui.allocate_exact_size(vec2(68.0, 94.0), Sense::click_and_drag());
-                            let p = ui.painter();
-                            if resp.hovered() {
-                                p.rect_filled(rect, 3.0, Color32::from_rgb(58, 58, 58));
-                            }
-                            let tr = Rect::from_min_size(rect.min + vec2(2.0, 2.0), vec2(64.0, 64.0));
-                            match self.lib_thumbs.get(&format!("asset:{}", a.id)) {
-                                Some(t) => {
-                                    p.image(t.id(), tr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-                                }
-                                None => {
-                                    p.rect_filled(tr, 3.0, Color32::from_rgb(52, 52, 52));
-                                }
-                            }
-                            let (l1, l2) = two_lines(a.name);
-                            p.text(pos2(rect.center().x, rect.min.y + 70.0), Align2::CENTER_TOP, l1, FontId::proportional(11.0), Color32::from_gray(225));
-                            if !l2.is_empty() {
-                                p.text(pos2(rect.center().x, rect.min.y + 82.0), Align2::CENTER_TOP, l2, FontId::proportional(11.0), Color32::from_gray(225));
-                            }
-                            if resp.drag_started() {
-                                resp.dnd_set_drag_payload(format!("asset:{}", a.id));
-                            }
-                            let resp = resp.on_hover_text(format!("{} ({}, {})\n{}\nDrag onto the graph to add it as one node", a.name, a.kind.label(), a.category, a.description));
-                            resp.context_menu(|ui| {
-                                if ui.button("Open as example").clicked() {
-                                    open_example = Some(a.id);
-                                    ui.close();
-                                }
-                            });
-                        }
                         for e in &items {
                             let (rect, resp) = ui.allocate_exact_size(vec2(68.0, 94.0), Sense::click_and_drag());
                             let p = ui.painter();
@@ -1111,7 +1034,7 @@ impl App {
                             }
                             let tr = Rect::from_min_size(rect.min + vec2(2.0, 2.0), vec2(64.0, 64.0));
                             match self.lib_thumbs.get(&e.kind) {
-                                Some(t) if e.kind != "subgraph" => {
+                                Some(t) => {
                                     p.image(t.id(), tr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                                 }
                                 _ => {
@@ -1143,9 +1066,6 @@ impl App {
                 });
             });
         });
-        if let Some(id) = open_example {
-            self.acts.push(Act::OpenTemplate(id.to_string()));
-        }
         if let Some(l) = fav_toggle {
             if !self.favorites.remove(&l) {
                 self.favorites.insert(l);
@@ -1157,20 +1077,17 @@ impl App {
     // ------------------------------------------------------------ 2D view
     fn view2d_panel(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing = vec2(6.0, 4.0);
-        let title = match self.active.and_then(|a| self.g.nodes.get(&a).map(|n| (a, n.kind.replace('_', " ")))) {
+        let title = match self.active.and_then(|a| self.g.nodes.get(&a).map(|n| (a, materialcraft::sbs_native::label(n, &self.g)))) {
             Some((id, k)) => format!("{k} #{id} - 2D VIEW"),
             None => "2D VIEW".into(),
         };
         if panel_header(ui, &title, true) {
             self.show[3] = false;
         }
-        self.spl_toolbar(ui);
         let bottom_h = 24.0;
         let avail = vec2(ui.available_width(), (ui.available_height() - bottom_h).max(40.0));
         let (rect, resp) = ui.allocate_exact_size(avail, Sense::click_and_drag());
         self.view2d_rect = rect;
-        let editing = self.spl.is_some();
-        let pan_ok = !editing || ui.input(|i| i.modifiers.alt || i.key_down(Key::Space) || i.pointer.middle_down());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, Color32::from_rgb(34, 34, 34));
         let fit = rect.width().min(rect.height()) - 20.0;
@@ -1180,10 +1097,10 @@ impl App {
                 self.z2d = (self.z2d * (1.0 + sc * 0.0015)).clamp(0.1, 16.0);
             }
         }
-        if resp.dragged() && pan_ok {
+        if resp.dragged() {
             self.pan2d += resp.drag_delta();
         }
-        if resp.double_clicked() && !editing {
+        if resp.double_clicked() {
             self.z2d = 1.0;
             self.pan2d = Vec2::ZERO;
         }
@@ -1203,9 +1120,6 @@ impl App {
             painter.rect_stroke(img, 0.0, Stroke::new(1.0_f32, Color32::from_gray(70)), egui::StrokeKind::Inside);
         } else {
             painter.text(rect.center(), Align2::CENTER_CENTER, "select a node to view its result", FontId::proportional(12.5), Color32::from_gray(120));
-        }
-        if editing {
-            self.spl_canvas(ui, &painter, img, &resp);
         }
         ui.horizontal(|ui| {
             ui.add_space(4.0);
@@ -1328,7 +1242,48 @@ impl App {
                         if ui.checkbox(&mut g.opts.self_shadow, "Height self-shadowing").changed() {
                             ch = true;
                         }
+                        ui.menu_button("Texture sampling", |ui| {
+                            let o = &mut g.opts;
+                            ui.label("Filtering");
+                            for (v, n) in [(0u8, "Nearest (pixelated)"), (1, "Bilinear"), (2, "Trilinear (smooth mip levels)")] {
+                                ch |= ui.radio_value(&mut o.filter, v, n).changed();
+                            }
+                            ui.separator();
+                            ch |= ui.checkbox(&mut o.mipmaps, "Mip maps").on_hover_text("Smaller copies of the texture for far away or slanted surfaces: no shimmering").changed();
+                            ui.separator();
+                            ui.label("Anisotropic filtering");
+                            for (v, n) in [(1.0_f32, "Off"), (2.0, "2x"), (4.0, "4x"), (8.0, "8x"), (16.0, "16x"), (0.0, "Maximum")] {
+                                ch |= ui.radio_value(&mut o.aniso, v, n).changed();
+                            }
+                            ui.separator();
+                            ui.label("Outside the texture (UV tiling)");
+                            for (v, n) in [(0u8, "Repeat"), (1, "Mirrored repeat"), (2, "Clamp to edge")] {
+                                ch |= ui.radio_value(&mut o.wrap, v, n).changed();
+                            }
+                            ui.separator();
+                            ch |= ui.add(egui::Slider::new(&mut o.lod_bias, -2.0..=3.0).text("Mip bias")).on_hover_text("Positive blurs the texture, negative sharpens it (and may shimmer)").changed();
+                            if ui.button("Reset sampling").clicked() {
+                                let d = materialcraft::gpu3d::GpuOpts::default();
+                                (o.filter, o.mipmaps, o.aniso, o.wrap, o.lod_bias) = (d.filter, d.mipmaps, d.aniso, d.wrap, d.lod_bias);
+                                ch = true;
+                            }
+                        });
                     }
+                }
+                {
+                    let out = self.target_3d_auto();
+                    let label = if self.mesh_tex_px == 0 { format!("3D texture size: output ({out} px)") } else { format!("3D texture size: {} px", self.mesh_tex_px) };
+                    ui.menu_button(label, |ui| {
+                        let b = self.mesh_tex_px;
+                        ui.selectable_value(&mut self.mesh_tex_px, 0, format!("Output resolution ({out} px)")).on_hover_text("The size of your output nodes");
+                        for s in [256usize, 512, 1024, 2048, 4096] {
+                            ui.selectable_value(&mut self.mesh_tex_px, s, format!("{s} px"));
+                        }
+                        if b != self.mesh_tex_px {
+                            self.dirty = true;
+                            ui.close();
+                        }
+                    });
                 }
                 self.render_extras(ui, &mut ch);
                 if !self.gpu_on || self.v3.pt_on {
@@ -1416,116 +1371,7 @@ impl App {
 
     // ------------------------------------------------------------ graph properties
     fn graph_props(&mut self, ui: &mut egui::Ui) {
-        let mut meta = self.g.meta.clone();
-        let mut size = self.g.size;
-        let mut height = self.g.height;
-        let mut seed = self.g.seed_offset;
-        egui::CollapsingHeader::new(egui::RichText::new("GRAPH SETTINGS").strong()).default_open(true).show(ui, |ui| {
-            ui.strong("Output Size");
-            let mut e = (size as f32).log2().round() as i32;
-            ui.horizontal(|ui| {
-                ui.label("Width");
-                ui.add(egui::Slider::new(&mut e, 4..=12).custom_formatter(|v, _| format!("{} px", 1u32 << (v as u32))).show_value(true));
-            });
-            let mut linked = height == 0;
-            let mut eh = if linked { e } else { (height as f32).log2().round() as i32 };
-            ui.horizontal(|ui| {
-                ui.label("Height");
-                ui.add_enabled(!linked, egui::Slider::new(&mut eh, 4..=12).custom_formatter(|v, _| format!("{} px", 1u32 << (v as u32))));
-                let (r, resp) = ui.allocate_exact_size(vec2(22.0, 20.0), Sense::click());
-                draw_icon(ui.painter(), r.center(), Ic::Link, if linked { Color32::WHITE } else { Color32::from_gray(110) });
-                if resp.on_hover_text(if linked { "Linked: height follows width (click to unlink)" } else { "Unlinked: click to make the graph square again" }).clicked() {
-                    linked = !linked;
-                    if !linked {
-                        eh = e;
-                    }
-                }
-            });
-            size = 1usize << e.clamp(4, 12);
-            height = if linked { 0 } else { 1usize << eh.clamp(4, 12) };
-            ui.add_space(6.0);
-            ui.strong("Output Format");
-            let cur = meta.get("output_format").cloned().unwrap_or_else(|| "8".into());
-            egui::ComboBox::from_id_salt("ofmt").width(220.0).selected_text(if cur == "16" { "16 Bits per Channel" } else { "8 Bits per Channel" }).show_ui(ui, |ui| {
-                if ui.selectable_label(cur != "16", "8 Bits per Channel").clicked() {
-                    meta.insert("output_format".into(), "8".into());
-                }
-                if ui.selectable_label(cur == "16", "16 Bits per Channel").clicked() {
-                    meta.insert("output_format".into(), "16".into());
-                }
-            });
-            ui.add_space(6.0);
-            ui.strong("Node Precision");
-            let prec = meta.get("ofmt").and_then(|s| s.parse::<usize>().ok()).unwrap_or(0).min(3);
-            let pnames = ["32 bits float", "8 bits integer", "16 bits integer", "16 bits float"];
-            egui::ComboBox::from_id_salt("nodeprec").width(220.0).selected_text(pnames[prec]).show_ui(ui, |ui| {
-                for (i, n) in pnames.iter().enumerate() {
-                    if ui.selectable_label(prec == i, *n).on_hover_text("Every node is rounded to this precision unless it sets its own Output Format").clicked() {
-                        if i == 0 { meta.remove("ofmt"); } else { meta.insert("ofmt".into(), i.to_string()); }
-                    }
-                }
-            });
-            ui.add_space(6.0);
-            ui.strong("Tiling Mode");
-            ui.add_enabled(false, egui::Button::new("H and V Tiling").min_size(vec2(220.0, 20.0)));
-            ui.add_space(6.0);
-            ui.strong("Random Seed");
-            ui.add(egui::Slider::new(&mut seed, 0..=9999));
-        });
-        egui::CollapsingHeader::new(egui::RichText::new("DETAILS").strong()).default_open(true).show(ui, |ui| {
-            meta_field(ui, &mut meta, "Identifier", "identifier", false);
-            meta_field(ui, &mut meta, "Label", "label", false);
-            ui.strong("Type");
-            let ty = meta.get("type").cloned().unwrap_or_else(|| "Standard material".into());
-            egui::ComboBox::from_id_salt("gtype").width(f32::INFINITY.min(300.0)).selected_text(&ty).show_ui(ui, |ui| {
-                for t in ["Standard material", "Filter", "Generator", "Other"] {
-                    if ui.selectable_label(ty == t, t).clicked() {
-                        meta.insert("type".into(), t.to_string());
-                    }
-                }
-            });
-            ui.add_space(4.0);
-            ui.strong("Physical size (cm)");
-            for (axis, key) in [("x", "phys_x"), ("y", "phys_y"), ("z", "phys_z")] {
-                let mut v: f32 = meta.get(key).and_then(|s| s.parse().ok()).unwrap_or(0.0);
-                ui.horizontal(|ui| {
-                    ui.label(axis);
-                    if ui.add(egui::Slider::new(&mut v, 0.0..=1000.0)).changed() {
-                        meta.insert(key.to_string(), format!("{v}"));
-                    }
-                });
-            }
-            ui.add_space(4.0);
-            ui.strong("Package");
-            ui.add_enabled(false, egui::TextEdit::singleline(&mut self.file.as_ref().map(|p| p.display().to_string()).unwrap_or_default()).desired_width(f32::INFINITY));
-            ui.add_space(4.0);
-            for (label, key) in [("Exposed in package", "exposed"), ("Show in library", "show_in_library")] {
-                ui.strong(label);
-                let on = meta.get(key).map(|s| s != "no").unwrap_or(true);
-                if ui.add(egui::Button::new(if on { "Yes" } else { "No" }).min_size(vec2(ui.available_width(), 20.0))).clicked() {
-                    meta.insert(key.to_string(), if on { "no" } else { "yes" }.to_string());
-                }
-                ui.add_space(4.0);
-            }
-            meta_field(ui, &mut meta, "Description", "description", true);
-            meta_field(ui, &mut meta, "Category", "category", false);
-            meta_field(ui, &mut meta, "Author", "author", false);
-            meta_field(ui, &mut meta, "Author URL", "author_url", false);
-            meta_field(ui, &mut meta, "Tags", "tags", false);
-        });
-        if meta != self.g.meta || size != self.g.size || height != self.g.height || seed != self.g.seed_offset {
-            if !self.edit_open {
-                self.snap();
-                self.edit_open = true;
-            }
-            if size != self.g.size || height != self.g.height || seed != self.g.seed_offset {
-                self.dirty = true;
-            }
-            self.g.meta = meta;
-            self.g.size = size;
-            self.g.height = height;
-            self.g.seed_offset = seed;
-        }
+        self.sd_graph_props(ui);
     }
 
     // ------------------------------------------------------------ editor layout
@@ -1549,22 +1395,29 @@ impl App {
                             ui.close();
                         }
                     });
-                    for (label, a) in [("Open package(s)...   Ctrl+O", Act::Open), ("Save   Ctrl+S", Act::Save), ("Save as...", Act::SaveAs)] {
+                    for (label, a) in [("Open package(s)...   Ctrl+O", Act::Open), ("Save   Ctrl+S", Act::Save), ("Save package as...", Act::SaveAs)] {
                         if ui.button(label).clicked() {
                             acts.push(a);
                             ui.close();
                         }
                     }
                     ui.separator();
-                    ui.menu_button("Templates and examples", |ui| {
-                        template_menu(ui, &mut acts, Act::OpenTemplate, true);
+                    ui.menu_button("New from template", |ui| {
+                        for (ti, t) in TEMPLATES.iter().enumerate() {
+                            if ui.button(t.name).on_hover_text(t.desc).clicked() {
+                                acts.push(Act::NewFromTemplate(ti));
+                                ui.close();
+                            }
+                        }
                     });
                     ui.menu_button("Package", |ui| {
-                        ui.menu_button("Add template", |ui| {
-                            template_menu(ui, &mut acts, Act::AddTemplate, false);
-                        });
-                        ui.separator();
-                        for (label, a) in [("Link package as node...", Act::LinkPackage), ("Refresh linked packages", Act::RefreshLinks), ("Dependencies...", Act::ToggleDeps), ("Publish package (.mca)...", Act::Publish)] {
+                        let (pi, cur) = (self.pkg_active, self.parents.last().map(|(_, n)| n.clone()));
+                        let items: Vec<(&str, Act)> = vec![
+                            ("Save this graph as its own .sbs...", Act::ExportGraphFile(pi, cur.clone())),
+                            ("Add the graphs of another .sbs...", Act::AddGraphFile(pi)),
+                            ("Dependencies...", Act::ToggleDeps),
+                        ];
+                        for (label, a) in items {
                             if ui.button(label).clicked() {
                                 acts.push(a);
                                 ui.close();
@@ -1572,7 +1425,7 @@ impl App {
                         }
                     });
                     ui.separator();
-                    for (label, a) in [("Import bitmap...", Act::ImportBitmap), ("Export textures...", Act::Export)] {
+                    for (label, a) in [("Export textures...", Act::Export)] {
                         if ui.button(label).clicked() {
                             acts.push(a);
                             ui.close();
@@ -1591,6 +1444,11 @@ impl App {
                     }
                     if ui.add_enabled(can_redo, egui::Button::new("Redo   Ctrl+Y")).clicked() {
                         acts.push(Act::Redo);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.add_enabled(self.g.sd.is_some(), egui::Button::new("New spline shape...")).on_hover_text("An SVG node with a drawable spline: connect it to Bevel, Distance, Blur ...").clicked() {
+                        acts.push(Act::NewSpline);
                         ui.close();
                     }
                     ui.separator();
@@ -1616,18 +1474,32 @@ impl App {
                         acts.push(Act::Comment);
                         ui.close();
                     }
-                    if ui.add_enabled(has_sel, egui::Button::new("Create subgraph from selection")).clicked() {
-                        acts.push(Act::Subgraph);
-                        ui.close();
+                    ui.separator();
+                    let mut snap_changed = ui.checkbox(&mut self.snap_nodes, "Snap nodes to grid").on_hover_text("Dragged nodes land on the grid below").changed();
+                    ui.menu_button(format!("Grid size: {}", self.snap_grid.round() as u32), |ui| {
+                        for g in [4.0_f32, 8.0, 16.0, 32.0, 64.0, 128.0] {
+                            if ui.radio(self.snap_grid == g, format!("{} units", g as u32)).clicked() {
+                                self.snap_grid = g;
+                                snap_changed = true;
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label("Custom");
+                            if ui.add(egui::DragValue::new(&mut self.snap_grid).range(2.0..=256.0).speed(0.5).max_decimals(0)).changed() {
+                                self.snap_grid = self.snap_grid.round().max(2.0);
+                                snap_changed = true;
+                            }
+                        });
+                    });
+                    if snap_changed {
+                        self.save_settings();
                     }
                 });
                 ui.menu_button("Tools", |ui| {
                     if ui.button("Mesh map baker...").clicked() {
                         acts.push(Act::Bake);
-                        ui.close();
-                    }
-                    if ui.button("Resources...").on_hover_text("Bitmaps, vector art, fonts, lookup tables and splines used by the graph").clicked() {
-                        acts.push(Act::Resources);
                         ui.close();
                     }
                     if ui.button("Frame all   F").clicked() {
@@ -1749,16 +1621,6 @@ impl App {
                 if icon_btn(ui, Ic::Redo, "Redo (Ctrl+Y)", can_redo).clicked() {
                     acts.push(Act::Redo);
                 }
-                if let Some(id) = self.example.clone() {
-                    ui.separator();
-                    ui.label(egui::RichText::new("Example - not part of your project").color(ACCENT));
-                    if ui.button("Add to project").on_hover_text("Copy this example into the selected package as a new graph").clicked() {
-                        acts.push(Act::AddTemplate(id));
-                    }
-                    if ui.button("Save as...").on_hover_text("Save this example as your own package").clicked() {
-                        acts.push(Act::SaveAs);
-                    }
-                }
             });
         });
         egui::Panel::bottom("status").frame(egui::Frame::NONE.fill(Color32::from_rgb(30, 30, 30)).inner_margin(egui::Margin::symmetric(8, 2))).show(root, |ui| {
@@ -1832,7 +1694,7 @@ impl App {
                     Pn::View3d => self.view3d_panel(ui),
                     Pn::View2d => self.view2d_panel(ui),
                     Pn::Props => {
-                let title = match self.active.filter(|a| self.sel.contains(a)).and_then(|a| self.g.nodes.get(&a).map(|n| n.kind.replace('_', " "))) {
+                let title = match self.active.filter(|a| self.sel.contains(a)).and_then(|a| self.g.nodes.get(&a).map(|n| materialcraft::sbs_native::label(n, &self.g))) {
                     Some(k) => format!("{} - PROPERTIES", k.to_uppercase()),
                     None => format!("{} - PROPERTIES", self.gname()),
                 };
@@ -1850,7 +1712,6 @@ impl App {
                     (Ic::Frame, "Frame all (F)", Act::FrameAll, true),
                     (Ic::Layout, "Auto-layout", Act::AutoLayout, true),
                     (Ic::Comment, "Comment frame (C)", Act::Comment, true),
-                    (Ic::Subgraph, "Create subgraph from selection", Act::Subgraph, has_sel),
                 ] {
                     if icon_btn(ui, ic, tip, en).clicked() {
                         acts.push(a);
@@ -1950,10 +1811,7 @@ impl App {
         if let Some(p) = egui::DragAndDrop::payload::<String>(ctx) {
             if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
                 let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::new("dnd_ghost")));
-                let shown = match p.strip_prefix("asset:").and_then(materialcraft::library::find) {
-                    Some(a) => a.name.to_string(),
-                    None => (*p).clone(),
-                };
+                let shown = p.strip_prefix("subgraph: ").map(|g| format!("{g} (graph)")).unwrap_or_else(|| (*p).clone());
                 let r = painter.text(pos + vec2(14.0, 14.0), Align2::LEFT_TOP, shown.clone(), FontId::proportional(12.0), Color32::WHITE);
                 painter.rect_filled(r.expand(4.0), 3.0, Color32::from_rgba_unmultiplied(20, 20, 20, 200));
                 painter.text(pos + vec2(14.0, 14.0), Align2::LEFT_TOP, shown, FontId::proportional(12.0), Color32::WHITE);
@@ -1965,47 +1823,11 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = &root.ctx().clone();
-        // coming back to the window: pick up edits made to linked package files in the meantime
-        let focused = ctx.input(|i| i.focused);
-        if focused && !self.was_focused && self.screen == Screen::Editor && self.parents.is_empty() && !self.g.links.is_empty() {
-            self.acts.push(Act::RefreshLinks);
-        }
-        self.was_focused = focused;
         self.sync_search_dirs();
-        // graph files dropped from the OS onto the window: import as a node (editor) or open (home screen)
+        // packages dropped from the OS onto the window open in the workspace
         let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
         for p in dropped {
-            let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-            if self.screen == Screen::Editor {
-                let kind = if ext == "svg" {
-                    Some("svg")
-                } else if ext == "cube" || ext == "3dl" {
-                    Some("color_lut")
-                } else if materialcraft::imgio::has_image_extension(&format!("x.{ext}")) {
-                    Some("bitmap")
-                } else {
-                    None
-                };
-                if let Some(kind) = kind {
-                    let at = ctx.input(|i| i.pointer.latest_pos()).filter(|q| self.canvas_rect.contains(*q));
-                    let pos = at.map(|q| self.screen_to_world(q)).unwrap_or_else(|| self.view_center_world());
-                    let id = self.add_node_at(kind, None, pos);
-                    if let Some(n) = self.g.nodes.get_mut(&id) {
-                        n.strs.insert("file".into(), p.to_string_lossy().to_string());
-                    }
-                    self.dirty = true;
-                    continue;
-                }
-            }
-            if !matches!(ext.as_str(), "mcg" | "mca") {
-                continue;
-            }
-            if self.screen == Screen::Editor {
-                let at = ctx.input(|i| i.pointer.latest_pos()).filter(|q| self.canvas_rect.contains(*q));
-                self.acts.push(Act::ImportGraph(p, at, None));
-            } else {
-                self.open_path(p);
-            }
+            self.open_path(p);
         }
         // background asset results
         if let Some(rx) = &self.banner_rx {
@@ -2017,15 +1839,20 @@ impl eframe::App for App {
             }
         }
         if let Some(rx) = &self.lib_rx {
-            if let Ok(m) = rx.try_recv() {
-                // template previews are large and also drawn small in the library: mipmaps keep them clean when shrunk
-                let mut mip = egui::TextureOptions::LINEAR;
-                mip.mipmap_mode = Some(egui::TextureFilter::Linear);
-                for (k, img) in m {
-                    let o = if k.starts_with("asset:") { mip } else { egui::TextureOptions::LINEAR };
-                    self.lib_thumbs.insert(k.clone(), ctx.load_texture(format!("lib_{k}"), img, o));
+            // the library's pictures arrive in batches until the worker is done
+            loop {
+                match rx.try_recv() {
+                    Ok(m) => {
+                        for (k, img) in m {
+                            self.lib_thumbs.insert(k.clone(), ctx.load_texture(format!("lib_{k}"), img, egui::TextureOptions::LINEAR));
+                        }
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        self.lib_rx = None;
+                        break;
+                    }
                 }
-                self.lib_rx = None;
             }
         }
         if self.banner_rx.is_some() || self.lib_rx.is_some() {
@@ -2043,6 +1870,8 @@ impl eframe::App for App {
         }
         self.poll_control(ctx);
         self.ai_window(ctx);
+        self.import_window(ctx);
+        self.spline_editor(ctx);
         if self.screen == Screen::Home {
             if !self.text_focus && !self.new_dlg.open {
                 let (newg, open) = ctx.input_mut(|i| (i.consume_key(Modifiers::COMMAND, Key::N), i.consume_key(Modifiers::COMMAND, Key::O)));
@@ -2128,7 +1957,7 @@ impl eframe::App for App {
                 (k.6, Act::SelectAll),
                 (k.7, Act::Save),
                 (k.8, Act::Open),
-                (k.9, if self.spl.is_some() && pointer.map(|p| self.view2d_rect.contains(p)).unwrap_or(false) { Act::SplDelete } else { Act::Delete }),
+                (k.9, Act::Delete),
                 (k.10, Act::FrameAll),
                 (k.11, Act::Comment),
                 (k.12, Act::NewGraph),
@@ -2142,6 +1971,7 @@ impl eframe::App for App {
         self.editor_ui(root);
         self.new_dialog(ctx);
         self.confirm_close_ui(ctx);
+        self.rename_graph_ui(ctx);
         if let Some(t) = self.copy_out.take() {
             ctx.copy_text(t);
         }
@@ -2153,27 +1983,39 @@ impl eframe::App for App {
         let now = std::time::Instant::now();
         const SETTLE: std::time::Duration = std::time::Duration::from_millis(110);
         if self.dirty {
-            // a value changed this frame: show it at once with a cheap pass over just the on-screen subgraph, and
-            // (re)arm the settle timer so the full-resolution pass runs only once the input stops moving
+            // a value changed this frame: show it at once with a cheap pass over just the on-screen nodes, and
+            // (re)arm the settle timer so the passes over the whole graph run only once the input stops moving
             self.dirty = false;
             self.refine = false;
-            self.settled = false;
+            self.thumbs_due = true;
+            self.final_due = true;
             self.settle_at = Some(now + SETTLE);
             let first = self.first_tier();
-            self.spawn_eval(first, false);
-        } else if self.refine && self.job.is_none() {
-            // progressively sharpen the 2D preview while the user holds still
-            self.refine = false;
-            if let Some(sz) = self.refine_size {
-                self.spawn_eval(sz, false);
+            self.spawn_eval(first, Pass::Interactive);
+        } else if self.job.is_none() {
+            let settled = self.settle_at.map_or(true, |t| now >= t);
+            if settled && self.thumbs_due {
+                // input has settled: every node once at a small size, so every card shows its picture right away
+                // (newly added nodes and freshly opened or imported graphs included) and the 3D view gets first maps
+                self.thumbs_due = false;
+                self.spawn_eval(self.first_tier(), Pass::Thumbs);
+            } else if self.refine {
+                // progressively sharpen the 2D preview while the user holds still
+                self.refine = false;
+                if let Some(sz) = self.refine_size {
+                    self.spawn_eval(sz, Pass::Interactive);
+                }
+            } else if settled && self.final_due {
+                // the outputs at the full preview size: the final 3D maps
+                self.final_due = false;
+                self.settle_at = None;
+                let size = self.target_3d().max(self.preview_full());
+                if size > self.first_tier() {
+                    self.spawn_eval(size, Pass::Final);
+                }
             }
-        } else if !self.settled && self.job.is_none() && self.settle_at.map_or(false, |t| now >= t) {
-            // input has settled: one full pass rebuilds every thumbnail and the 3D view
-            self.settled = true;
-            self.settle_at = None;
-            self.spawn_eval(self.preview_full(), true);
         }
-        if self.job.is_some() || self.settle_at.is_some() {
+        if self.job.is_some() || self.settle_at.is_some() || self.thumbs_due || self.final_due || self.refine {
             ctx.request_repaint_after(std::time::Duration::from_millis(30));
         }
         self.text_focus = ctx.egui_wants_keyboard_input();
@@ -2293,43 +2135,54 @@ fn window_icon() -> egui::IconData {
     egui::IconData { rgba, width: n as u32, height: n as u32 }
 }
 
-/// Developer helper: `materialcraft-gui --dump-ux kind...` prints node entries in the UX map format.
+/// Developer helper: `materialcraft-gui --dump-ux kind...` prints library nodes (`sbs:blend` ...) in the UX map format.
 fn dump_ux(kinds: &[String]) {
-    fn num(v: f32) -> String {
-        let t = format!("{v:.4}");
-        t.trim_end_matches('0').trim_end_matches('.').to_string()
-    }
     for kind in kinds {
-        let Some(sp) = materialcraft::graph::spec(kind) else { continue };
-        let (m, sub) = lib_group(kind);
-        let ins: Vec<&str> = sp.req.iter().chain(sp.opt.iter()).copied().collect();
-        let outs = materialcraft::graph::node_outputs(kind);
-        println!("- {} (`{kind}`)", materialcraft::graph::label(kind));
-        println!("  - Library: {}", if sub.is_empty() { m.to_string() } else { format!("{m} > {sub}") });
-        println!("  - Tooltip: {}", sp.doc.split(':').next().unwrap_or(""));
-        if ins.is_empty() {
+        let Some(d) = materialcraft::sbs_defs::def(kind) else { continue };
+        // the Library folder that lists it (as `lib_items` sorts them)
+        let folder = match kind.as_str() {
+            "sbs:input" | "sbs:output" | "sbs:graph" | "sbs:passthrough" => "Structure".to_string(),
+            k if k.starts_with("sbs:fn:") => "Logic nodes".to_string(),
+            k if k.starts_with("sbs:fx:") => "Pattern builders".to_string(),
+            k if k.starts_with("sbs:lib:") => match sd_lib_group(k) {
+                (m, "") => m.to_string(),
+                (m, sub) => format!("{m} > {sub}"),
+            },
+            _ => "Core nodes".to_string(),
+        };
+        println!("- {} (`{kind}`)", d.label);
+        println!("  - Library: {folder}");
+        if d.inputs.is_empty() {
             println!("  - Inputs: none");
         } else {
-            println!("  - Inputs: {}", ins.join(", "));
-            for i in &ins {
-                println!("    - {i}\n      - Left-edge socket");
+            println!("  - Inputs: {}", d.inputs.iter().map(|i| i.id).collect::<Vec<_>>().join(", "));
+            for i in &d.inputs {
+                println!("    - {}\n      - Left-edge socket", i.id);
             }
         }
-        let outs: Vec<&str> = if outs.is_empty() { vec!["output"] } else { outs.to_vec() };
-        println!("  - Outputs: {}", outs.join(", "));
+        let outs: Vec<&str> = if d.outputs.is_empty() && kind != "sbs:output" { vec!["output"] } else { d.outputs.clone() };
+        println!("  - Outputs: {}", if outs.is_empty() { "none".to_string() } else { outs.join(", ") });
         if outs.len() > 1 {
             for o in &outs {
                 println!("    - {o}\n      - Right-edge socket");
             }
         }
         println!("  - Properties:");
-        for d in pdefs(kind) {
-            println!("    - {}", d.label);
-            match d.k {
-                PK::F { def, lo, hi } => println!("      - Control: slider\n      - Default: {}\n      - Range: {}..{}", num(def), num(lo), num(hi)),
-                PK::I { def, lo, hi } => println!("      - Control: int\n      - Default: {def}\n      - Range: {lo}..{hi}"),
-                PK::E { def, opts } => println!("      - Control: dropdown\n      - Default: {}\n      - Choices: {}", opts.get(def as usize).copied().unwrap_or(""), opts.join(" / ")),
-                PK::B { def } => println!("      - Control: checkbox\n      - Default: {}", if def { "on" } else { "off" }),
+        for p in &d.params {
+            println!("    - {}", materialcraft::sbs_defs::label_of(p.id));
+            if !p.choices.is_empty() {
+                let def = p.def.trim().parse::<usize>().ok().and_then(|i| p.choices.get(i).copied()).map(str::to_string).unwrap_or_else(|| p.def.clone());
+                let unused = materialcraft::sbs_lib::UNUSED_CHOICE;
+                let list: Vec<String> = if p.choices.contains(&unused) {
+                    p.choices.iter().enumerate().filter(|(_, c)| **c != unused).map(|(i, c)| format!("{i} {c}")).collect()
+                } else {
+                    p.choices.iter().map(|c| c.to_string()).collect()
+                };
+                println!("      - Control: dropdown\n      - Default: {def}\n      - Choices: {}", list.join(" / "));
+            } else if let Some((lo, hi)) = p.range {
+                println!("      - Control: slider\n      - Default: {}\n      - Range: {lo}..{hi}", p.def);
+            } else {
+                println!("      - Default: {}", p.def);
             }
         }
     }

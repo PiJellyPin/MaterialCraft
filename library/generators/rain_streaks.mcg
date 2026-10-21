@@ -1,7 +1,0 @@
-# Vertical weathering streaks fading towards the bottom
-size 1024
-node 1 grunge_map map=16 seed=4 contrast=0.7 invert=1
-node 2 grunge_map map=24 seed=2 contrast=0.4 invert=1
-node 3 blend fg=@2 bg=@1 mode=1 opacity=0.4
-output output 3
-expose "Amount" 1 balance 0 1

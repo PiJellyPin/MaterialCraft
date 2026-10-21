@@ -1,7 +1,0 @@
-# Fine speckle and dust
-size 1024
-node 1 grunge_map map=23 seed=3 contrast=0.9 invert=1
-node 2 grunge_map map=18 seed=5 contrast=0.4 invert=1
-node 3 blend fg=@2 bg=@1 mode=1 opacity=0.25
-output output 3
-expose "Speckle amount" 1 balance 0 1

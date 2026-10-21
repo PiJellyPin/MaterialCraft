@@ -1,6 +1,0 @@
-# Turn a photo into a tile (input: colour image)
-size 1024
-node 1 input idx=0
-node 2 make_it_tile_photo in=@1 width=0.6
-output output 2
-expose "Blend width" 2 width 0.1 0.9

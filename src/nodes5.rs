@@ -87,11 +87,20 @@ struct Strands {
     taper: f32,
     vary: f32,
     seed: u32,
+    /// overlapping strands add up (scaled by `gain`) instead of keeping the brighter one
+    add: bool,
+    gain: f32,
+    /// soft strands: a bell-shaped profile across instead of a hard edge
+    soft: bool,
 }
 
-/// Draw `count` thin curved strands with wrap-around; lengths and thickness are in pixels. Overlaps keep the brighter one.
+/// Draw `count` thin curved strands with wrap-around; lengths and thickness are in pixels. Overlaps keep the brighter
+/// one, or add up (each strand counted once per pixel).
 fn strands(w: usize, h: usize, p: &Strands) -> Tex {
     let mut buf = vec![0.0f32; w * h];
+    // for adding: which strand last wrote a pixel and how much it put there
+    let mut owner = if p.add { vec![u32::MAX; w * h] } else { Vec::new() };
+    let mut own = if p.add { vec![0.0f32; w * h] } else { Vec::new() };
     let r = |i: usize, k: u32| noise::rnd(i as i32, k as i32, p.seed.wrapping_add(0x51ed));
     for i in 0..p.count {
         let (mut x, mut y) = (r(i, 1) * w as f32, r(i, 2) * h as f32);
@@ -106,16 +115,26 @@ fn strands(w: usize, h: usize, p: &Strands) -> Tex {
             // thickness profile: 1 in the middle, thinning to the tips as `taper` grows
             let prof = (1.0 - (2.0 * t - 1.0).abs().powf(1.0 + 2.0 * (1.0 - p.taper.clamp(0.0, 1.0)) * 4.0)).max(0.0);
             let rad = (p.thick * 0.5 * lerp(1.0, prof, p.taper.clamp(0.0, 1.0))).max(0.0);
-            let reach = rad.ceil() as i32 + 1;
+            let reach = if p.soft { (rad * 2.0).ceil() as i32 + 1 } else { rad.ceil() as i32 + 1 };
             let (cx, cy) = (x.floor() as i32, y.floor() as i32);
             for oy in -reach..=reach {
                 for ox in -reach..=reach {
                     let (px, py) = (cx + ox, cy + oy);
                     let d = ((px as f32 + 0.5 - x).powi(2) + (py as f32 + 0.5 - y).powi(2)).sqrt();
-                    let cover = (rad + 0.5 - d).clamp(0.0, 1.0) * bright;
+                    let cover = if p.soft { (-2.0 * (d / rad.max(0.5)).powi(2)).exp() } else { (rad + 0.5 - d).clamp(0.0, 1.0) } * bright;
                     if cover > 0.0 {
                         let idx = (py.rem_euclid(h as i32) as usize) * w + px.rem_euclid(w as i32) as usize;
-                        if cover > buf[idx] {
+                        if p.add {
+                            let c = cover * p.gain;
+                            if owner[idx] != i as u32 {
+                                owner[idx] = i as u32;
+                                own[idx] = c;
+                                buf[idx] += c;
+                            } else if c > own[idx] {
+                                buf[idx] += c - own[idx];
+                                own[idx] = c;
+                            }
+                        } else if cover > buf[idx] {
                             buf[idx] = cover;
                         }
                     }
@@ -128,7 +147,7 @@ fn strands(w: usize, h: usize, p: &Strands) -> Tex {
             y = y.rem_euclid(h as f32);
         }
     }
-    Tex { w, h, px: buf.into_iter().map(grey).collect() }
+    Tex { w, h, px: buf.into_iter().map(|v| grey(v.min(1.0))).collect() }
 }
 
 // ---------------------------------------------------------------- reaction diffusion
@@ -213,7 +232,10 @@ pub fn compute(kind: &str, id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, s
                 curl: f("curl", if fib { 0.6 } else { 0.0 }).clamp(-8.0, 8.0),
                 taper: f("taper", if fib { 0.4 } else { 1.0 }),
                 vary: f("brightness_variation", 0.5).clamp(0.0, 1.0),
-                seed: seed,
+                seed,
+                add: f("blend", 0.0) > 0.5,
+                gain: f("gain", 1.0).clamp(0.0, 4.0),
+                soft: f("soft", 0.0) > 0.5,
             };
             fin(strands(s, hs, &p))
         }

@@ -185,7 +185,7 @@ fn shortcut(key: char) -> String {
 impl App {
     /// Start screen: a top bar with the pages, a centred column of content and a footer with the startup option.
     fn home_ui(&mut self, root: &mut egui::Ui) {
-        let template_count = materialcraft::library::assets().len() + 1;
+        let template_count = TEMPLATES.len();
         egui::Panel::top("home_top").exact_size(50.0).frame(egui::Frame::NONE.fill(L_BAR).inner_margin(egui::Margin::symmetric(18, 0))).show(root, |ui| {
             launcher_style(ui);
             bar_edge(ui, 18.0, true);
@@ -282,7 +282,7 @@ impl App {
         // ---- actions: one outlined strip divided into cells
         let actions: [(&str, &str, Ic, Option<char>); 3] = [
             ("New graph", "Start from an empty graph or a workflow template", Ic::New, Some('N')),
-            ("Open package", "Load a .mcg or .mca file from disk", Ic::Open, Some('O')),
+            ("Open package", "Load a Substance package (.sbs)", Ic::Open, Some('O')),
             ("Mesh map baker", "Bake normal, AO and curvature maps from meshes", Ic::Sphere, None),
         ];
         let per_row = if col_w >= 640.0 { 3 } else { 1 };
@@ -436,95 +436,112 @@ impl App {
     }
 
     fn templates_page(&mut self, ui: &mut egui::Ui, col_w: f32, total: usize) {
-        use materialcraft::library::{search, AssetKind};
-        Self::page_heading(ui, "Templates", "Start from a finished graph", "Click one to open it as an example in its own tab. Examples are not part of your project - use File > Package > Add template to copy one in.");
-        let count = |k: AssetKind| search("", Some(k)).len();
-        ui.horizontal(|ui| {
-            let labels = [("All", Some(total)), ("Materials", Some(count(AssetKind::Material) + 1)), ("Generators", Some(count(AssetKind::Generator))), ("Filters", Some(count(AssetKind::Filter)))];
-            if let Some(i) = l_tabs(ui, "tpl_filter", &labels, self.home_tpl as usize, true) {
-                self.home_tpl = i as u8;
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                l_search(ui, &mut self.home_tpl_filter, "Search templates", 240.0);
-            });
-        });
-        ui.add_space(16.0);
-        let kind_filter = match self.home_tpl {
-            1 => Some(AssetKind::Material),
-            2 => Some(AssetKind::Generator),
-            3 => Some(AssetKind::Filter),
-            _ => None,
-        };
-        // (id, name, kind / category, description)
-        let mut cards: Vec<(String, String, String, String)> = Vec::new();
-        let filter = self.home_tpl_filter.trim().to_lowercase();
-        if matches!(self.home_tpl, 0 | 1) && (filter.is_empty() || "brick wall example".contains(&filter)) {
-            cards.push(("brick_wall".into(), "Brick wall".into(), "Example".into(), "A finished brick wall material built from tiles, noise and height blending.".into()));
-        }
-        for a in search(&self.home_tpl_filter, kind_filter) {
-            cards.push((a.id.to_string(), a.name.to_string(), format!("{} · {}", a.kind.label(), a.category), a.description.to_string()));
-        }
-        if cards.is_empty() {
-            ui.label(egui::RichText::new("No templates match.").color(L_FAINT));
-            return;
-        }
+        Self::page_heading(ui, "Templates", "Start a new package", "Each template starts an .sbs package with the outputs of a workflow, ready for your nodes.");
+        let _ = total;
         // square tiles that fill the column
         let cols = (((col_w + L_GAP) / (150.0 + L_GAP)).floor() as usize).max(2);
         let t = ((col_w - L_GAP * (cols as f32 - 1.0)) / cols as f32).floor();
-        let mut open_tpl: Option<String> = None;
+        let mut chosen: Option<usize> = None;
+        let cards: Vec<(usize, &Template)> = TEMPLATES.iter().enumerate().collect();
         for chunk in cards.chunks(cols) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = L_GAP;
-                for (id, name, sub, desc) in chunk {
+                for (i, tpl) in chunk {
                     let (cell, resp) = ui.allocate_exact_size(vec2(t, t + 42.0), Sense::click());
                     let hot = resp.hovered();
                     let tile = Rect::from_min_size(cell.min, vec2(t, t));
                     let p = ui.painter();
                     p.rect_filled(tile, L_R, L_SURF);
                     let img = tile.shrink(1.0);
-                    match self.lib_thumbs.get(&format!("asset:{id}")) {
-                        Some(tex) => {
-                            p.image(tex.id(), img, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                    // one band per output, in the colour it starts with
+                    let n = tpl.outs.len();
+                    if n == 0 {
+                        swatch(&p.with_clip_rect(img), img, tpl.name, true);
+                    } else {
+                        for (k, (_, c)) in tpl.outs.iter().enumerate() {
+                            let x0 = img.left() + img.width() * k as f32 / n as f32;
+                            let x1 = img.left() + img.width() * (k + 1) as f32 / n as f32;
+                            let to8 = |v: f32| (v.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+                            p.rect_filled(Rect::from_min_max(pos2(x0, img.top()), pos2(x1 + 0.5, img.bottom())), 0.0, Color32::from_rgb(to8(c[0]), to8(c[1]), to8(c[2])));
                         }
-                        None => swatch(&p.with_clip_rect(img), img, name, true),
                     }
                     p.rect_stroke(tile, L_R, Stroke::new(1.0_f32, if hot { ACCENT } else { L_LINE }), egui::StrokeKind::Inside);
-                    if id == "brick_wall" {
-                        let g = p.layout_job(mono_job("Example", None, 9.0, L_INK));
-                        let at = tile.left_top() + vec2(9.0, 9.0);
-                        p.rect_filled(Rect::from_min_size(at, g.size() + vec2(10.0, 4.0)), L_R, ACCENT);
-                        p.galley(at + vec2(5.0, 2.0), g, L_INK);
-                    }
                     let clip = p.with_clip_rect(Rect::from_min_max(pos2(cell.min.x, tile.max.y), cell.max));
-                    clip.text(pos2(cell.min.x + 1.0, tile.max.y + 8.0), Align2::LEFT_TOP, name, FontId::proportional(13.0), if hot { Color32::WHITE } else { L_TEXT });
-                    paint_mono_w(&clip, pos2(cell.min.x + 1.0, tile.max.y + 27.0), Align2::LEFT_TOP, sub, 9.0, L_FAINT, t - 2.0);
-                    if resp.has_focus() {
-                        p.rect_stroke(tile.shrink(2.0), L_R, Stroke::new(1.0_f32, ACCENT), egui::StrokeKind::Inside);
-                    }
-                    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(format!("{name}\n{desc}\nClick to open it as an example"));
+                    clip.text(pos2(cell.min.x + 1.0, tile.max.y + 8.0), Align2::LEFT_TOP, tpl.name, FontId::proportional(13.0), if hot { Color32::WHITE } else { L_TEXT });
+                    paint_mono_w(&clip, pos2(cell.min.x + 1.0, tile.max.y + 27.0), Align2::LEFT_TOP, &format!("{} output(s)", n), 9.0, L_FAINT, t - 2.0);
+                    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(format!("{}\n{}\nClick to start a package from it", tpl.name, tpl.desc));
                     if resp.clicked() {
-                        open_tpl = Some(id.clone());
+                        chosen = Some(*i);
                     }
                 }
             });
             ui.add_space(L_GAP + 4.0);
         }
-        if let Some(id) = open_tpl {
-            self.open_template(&id);
+        if let Some(i) = chosen {
+            self.new_from_template(i);
+        }
+        // ---- the shipped material templates: stylized PBR materials, each a complete package
+        let mats = materialcraft::material_templates::MATERIALS;
+        ui.label(egui::RichText::new(format!("MATERIAL TEMPLATES  {}", mats.len())).monospace().size(11.0).extra_letter_spacing(1.4).color(L_TEXT));
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new("Stylized PBR materials built from nodes. Click one to open an editable copy.").size(12.0).color(L_DIM));
+        ui.add_space(12.0);
+        let mut pick: Option<usize> = None;
+        let cards: Vec<usize> = (0..mats.len()).collect();
+        for chunk in cards.chunks(cols) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = L_GAP;
+                for &i in chunk {
+                    let (ident, _, png) = mats[i];
+                    let (cell, resp) = ui.allocate_exact_size(vec2(t, t + 42.0), Sense::click());
+                    let hot = resp.hovered();
+                    let tile = Rect::from_min_size(cell.min, vec2(t, t));
+                    let id = egui::Id::new(("material_template_preview", i));
+                    let tex: Option<egui::TextureHandle> = ui.ctx().data_mut(|d| d.get_temp(id));
+                    let tex = match tex {
+                        Some(x) => Some(x),
+                        None => materialcraft::png::decode(png).ok().map(|img| {
+                            let px: Vec<Color32> = img.px.iter().map(|c| {
+                                let to8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+                                Color32::from_rgb(to8(c[0]), to8(c[1]), to8(c[2]))
+                            }).collect();
+                            let h = ui.ctx().load_texture(format!("mt_{ident}"), egui::ColorImage { size: [img.w, img.h], source_size: vec2(img.w as f32, img.h as f32), pixels: px }, egui::TextureOptions::LINEAR);
+                            ui.ctx().data_mut(|d| d.insert_temp(id, h.clone()));
+                            h
+                        }),
+                    };
+                    let p = ui.painter();
+                    p.rect_filled(tile, L_R, L_SURF);
+                    if let Some(h) = &tex {
+                        p.image(h.id(), tile.shrink(1.0), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                    }
+                    p.rect_stroke(tile, L_R, Stroke::new(1.0_f32, if hot { ACCENT } else { L_LINE }), egui::StrokeKind::Inside);
+                    let clip = p.with_clip_rect(Rect::from_min_max(pos2(cell.min.x, tile.max.y), cell.max));
+                    clip.text(pos2(cell.min.x + 1.0, tile.max.y + 8.0), Align2::LEFT_TOP, materialcraft::material_templates::title(ident), FontId::proportional(13.0), if hot { Color32::WHITE } else { L_TEXT });
+                    paint_mono_w(&clip, pos2(cell.min.x + 1.0, tile.max.y + 27.0), Align2::LEFT_TOP, "6 PBR outputs", 9.0, L_FAINT, t - 2.0);
+                    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(format!("{}\nClick to open an editable copy", materialcraft::material_templates::title(ident)));
+                    if resp.clicked() {
+                        pick = Some(i);
+                    }
+                }
+            });
+            ui.add_space(L_GAP + 4.0);
+        }
+        if let Some(i) = pick {
+            self.new_from_material(i);
         }
     }
 
     fn learn_page(&mut self, ui: &mut egui::Ui) {
         Self::page_heading(ui, "Learn", "Getting started", "The few things worth knowing before your first graph.");
         let steps = [
-            "Create a graph with New graph and pick a template (Metallic Roughness gives you all PBR outputs).",
+            "Create a package with New graph and pick a template (Metallic Roughness gives you all PBR outputs). Packages are .sbs files.",
             "Press Tab over the graph to add a node at the cursor, or drag a link into empty space to add one and connect it.",
-            "Drag nodes from the Library onto the graph. Right-click a library item to favorite it. Ready-made generators and filters drag in as one node; right-click that node and choose Edit template to change it.",
-            "Templates on this screen open as examples in their own tab. They are not part of your project until you use File > Package > Add template.",
-            "Select nodes and use Edit > Create subgraph to build reusable pieces. Double-click a subgraph to edit it.",
-            "Click the 'P' button next to a parameter to publish it, then use File > Publish package to produce a .mca asset.",
-            "Tools > Mesh map baker bakes maps from OBJ, glTF, PLY and STL meshes into the package. Baked Map nodes read them.",
-            "Tools > AI control lets an assistant such as Claude build and edit the open graph while you watch.",
+            "Drag nodes from the Library onto the graph. Right-click a library item to favorite it.",
+            "A package holds several graphs and functions: the Explorer lists them. Drag a graph onto the canvas to use it as a node; double-click that node to open it.",
+            "The 'fn' button next to a value computes it with a function graph; the 'P' button makes it a parameter of the graph.",
+            "Tools > Mesh map baker bakes maps from OBJ, glTF, PLY and STL meshes into image files.",
+            "Tools > AI control lets an assistant such as Claude build and edit the open package while you watch.",
         ];
         egui::Frame::NONE.stroke(Stroke::new(1.0_f32, L_LINE)).corner_radius(L_R).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -544,8 +561,8 @@ impl App {
         });
         ui.add_space(18.0);
         ui.horizontal(|ui| {
-            if l_button(ui, "Open the brick wall example", true).clicked() {
-                self.open_template("brick_wall");
+            if l_button(ui, "New package", true).clicked() {
+                self.new_from_template(1);
             }
             ui.add_space(8.0);
             if l_button(ui, "Keyboard shortcuts", false).clicked() {

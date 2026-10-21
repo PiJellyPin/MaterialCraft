@@ -149,23 +149,6 @@ fn example_material_outputs_are_seamless() {
     assert!(bad.is_empty(), "{bad:?}");
 }
 
-/// Every ready-made graph of the library (materials, generators, filters): every output map must tile.
-#[test]
-fn library_outputs_are_seamless() {
-    let mut bad = Vec::new();
-    for a in materialcraft::library::assets() {
-        let g = a.graph().unwrap();
-        let out = g.evaluate(Some(256)).unwrap();
-        for (name, t) in &out {
-            let (s, i) = seam(t);
-            if s > i * 1.5 + 0.01 {
-                bad.push(format!("{}:{name}: seam {s:.4} inner {i:.4}", a.id));
-            }
-        }
-    }
-    assert!(bad.is_empty(), "{bad:?}");
-}
-
 /// Wrap-equivariance: rolling the input by whole pixels must roll the output by the same amount. This is the exact
 /// definition of "the filter wraps around the borders", so a filter that clamps or mirrors at the edge fails it.
 #[test]

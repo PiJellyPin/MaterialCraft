@@ -112,7 +112,8 @@ impl Blend {
             Blend::Max => acc.max(a * col),
             Blend::Add => acc + a * col,
             Blend::Over => acc + (col - acc) * a,
-            Blend::AddSub => acc + a * (col * 2.0 - 1.0),
+            // the colour is added; a negative colour subtracts (the colours of the patterns are 0..1, so they add)
+            Blend::AddSub => acc + a * col,
         }
     }
 }
@@ -140,6 +141,8 @@ pub struct TileP {
     pub rot: f32,
     pub rot_rand: f32,
     pub pattern_rot90: u32,
+    /// share of the instances that get a random quarter turn of the pattern
+    pub pattern_rot_rand: f32,
     pub symmetry_random: u32,
     pub pos_rand: f32,
     pub pos_rand_x: f32,
@@ -190,6 +193,7 @@ impl TileP {
             rot: 0.0,
             rot_rand: 0.0,
             pattern_rot90: 0,
+            pattern_rot_rand: 0.0,
             symmetry_random: 0,
             pos_rand: 0.0,
             pos_rand_x: 1.0,
@@ -325,6 +329,9 @@ pub fn tile_grid(w: usize, h: usize, pats: &Patterns, maps: &TileMaps, p: &TileP
             }
             let s = s.max(0.01);
             let mut turns = p.rot + (r4 - 0.5) * 2.0 * p.rot_rand + 0.25 * p.pattern_rot90 as f32;
+            if p.pattern_rot_rand > 0.0 && rnd(i, j, sd.wrapping_add(71)) < p.pattern_rot_rand {
+                turns += 0.25 * (rnd(i, j, sd.wrapping_add(72)) * 4.0).floor();
+            }
             if let Some(m) = samp(maps.rotation, cx0, cy0) {
                 turns += m * p.rotation_map_mult;
             }

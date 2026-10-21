@@ -210,7 +210,15 @@ impl View {
                 }
             }
             "tiling" => self.tiling = f()?.clamp(0.1, 64.0),
-            "relief" => self.relief = (f()? as u32).min(3),
+            "relief" => {
+                self.relief = match val.trim().to_ascii_lowercase().as_str() {
+                    "off" | "none" | "normal" => RELIEF_NONE,
+                    "bump" => RELIEF_BUMP,
+                    "parallax" => RELIEF_PARALLAX,
+                    "displace" | "displacement" => RELIEF_DISPLACE,
+                    _ => (f()? as u32).min(3),
+                }
+            }
             "height_scale" => self.height_scale = f()?.clamp(0.0, 1.0),
             "bump" => self.bump = f()?.clamp(0.0, 20.0),
             "height_level" => self.height_level = f()?.clamp(0.0, 1.0),

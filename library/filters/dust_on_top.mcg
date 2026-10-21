@@ -1,8 +1,0 @@
-# Dust that settles on flat upward surfaces and in cavities (input: height)
-size 1024
-node 1 input idx=0 gray=1
-node 2 fbm scale=18 octaves=5 seed=4
-node 3 settled_dust in=@1 noise=@2 amount=0.7 slope=0.3 cavity=0.5
-output output 3
-expose "Amount" 3 amount 0 1
-expose "Slope tolerance" 3 slope 0 1

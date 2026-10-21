@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Resources and import: fonts (TrueType, OpenType/CFF, WOFF, collections), lookup tables, text wrapping, and the
-//! resource manager operations.
+//! Resources: fonts (TrueType, OpenType/CFF, WOFF, collections), lookup tables, text wrapping, and finding linked
+//! files.
 use materialcraft::font::Font;
 use materialcraft::graph::Graph;
 use materialcraft::lut::Lut;
-use materialcraft::resources::{self, ResKind, Status};
+use materialcraft::resources;
 use materialcraft::tex::Tex;
 use materialcraft::vector::{fill, Xf};
 use std::path::{Path, PathBuf};
@@ -250,144 +250,23 @@ fn bitmap_node_reads_every_format() {
     }
 }
 
-// ------------------------------------------------------------------------------------------------ resource manager
-fn graph_with_files(dir: &Path) -> Graph {
-    std::fs::write(dir.join("pic one.webp"), data("lossless.webp")).unwrap();
-    std::fs::write(dir.join("art.svg"), "<svg viewBox='0 0 10 10'><circle cx='5' cy='5' r='4'/></svg>").unwrap();
-    std::fs::write(dir.join("face.ttf"), data("tiny.ttf")).unwrap();
-    let cube = Lut::identity(2).to_cube("id");
-    std::fs::write(dir.join("id.cube"), cube).unwrap();
-    let p = |n: &str| dir.join(n).to_string_lossy().replace('\\', "/");
-    let text = format!(
-        "size 32\nnode 1 bitmap file=\"{}\"\nnode 2 svg file=\"{}\"\nnode 3 text text=\"A\" font=\"{}\"\nnode 4 color_lut in=@1 file=\"{}\"\nnode 5 bitmap file=\"{}/missing.png\"\noutput o 4\n",
-        p("pic one.webp"),
-        p("art.svg"),
-        p("face.ttf"),
-        p("id.cube"),
-        dir.display().to_string().replace('\\', "/")
-    );
-    Graph::parse_unchecked(&text).unwrap()
-}
-
+// ------------------------------------------------------------------------------------------------ linked files
 #[test]
-fn report_lists_status_kind_and_users() {
+fn linked_files_are_found_in_the_search_folders() {
     let _g = SERIAL.lock().unwrap();
-    let dir = tmp("report");
-    let g = graph_with_files(&dir);
-    let es = g.resource_entries();
-    assert_eq!(es.len(), 5);
-    let find = |k: ResKind| es.iter().find(|e| e.kind == k).unwrap();
-    assert_eq!(find(ResKind::Vector).status, Status::Linked);
-    assert_eq!(find(ResKind::Font).uses[0].node_kind, "text");
-    assert_eq!(find(ResKind::Lut).uses[0].node, 4);
-    assert_eq!(g.missing_files().len(), 1);
-    assert!(g.missing_files()[0].name.ends_with("missing.png"));
-    let img = es.iter().find(|e| e.name.contains("pic one")).unwrap();
-    let info = g.resource_info(img);
-    assert!(info.summary.contains("WebP") && info.thumb.is_some());
-    let lut = g.resource_info(find(ResKind::Lut));
-    assert!(lut.summary.contains("3D LUT") && lut.thumb.is_some());
-    let font = g.resource_info(find(ResKind::Font));
-    assert!(font.summary.contains("MCTest") && font.thumb.is_some());
-    assert!(g.resource_info(find(ResKind::Vector)).thumb.is_some());
-}
-
-#[test]
-fn embed_extract_and_publish() {
-    let _g = SERIAL.lock().unwrap();
-    let dir = tmp("embed");
-    let mut g = graph_with_files(&dir);
-    let (n, problems) = g.embed_all();
-    assert_eq!(n, 4);
-    assert_eq!(problems.len(), 1);
-    // names with spaces were made safe, so the text format round-trips
-    assert!(g.resources.keys().all(|k| !k.contains(' ')));
-    let text = g.to_text();
-    let back = Graph::parse_unchecked(&text).unwrap();
-    assert_eq!(back.resources.len(), 4);
-    assert!(back.meta.keys().any(|k| k.starts_with("origin:")));
-    assert!(back.resource_entries().iter().filter(|e| e.status == Status::Embedded).count() == 4);
-    // the package drops source paths
-    let mut g2 = g.clone();
-    g2.nodes.remove(&5);
-    let published = g2.publish().unwrap();
-    assert!(!published.contains("origin:") && !published.contains(&dir.display().to_string().replace('\\', "/")));
-    // extract one resource back to a file
-    let out = tmp("extract");
-    let name = g.resources.keys().find(|k| k.ends_with(".svg")).unwrap().clone();
-    let path = g.extract(&name, &out).unwrap();
-    assert!(path.is_file());
-    assert!(!g.resources.contains_key(&name));
-    assert_eq!(g.resource_entries().iter().find(|e| e.kind == ResKind::Vector).unwrap().status, Status::Linked);
-}
-
-#[test]
-fn publish_embeds_svg_font_and_lut() {
-    let _g = SERIAL.lock().unwrap();
-    let dir = tmp("publish");
-    let mut g = graph_with_files(&dir);
-    g.nodes.remove(&5);
-    let packed = g.publish().unwrap();
-    let back = Graph::parse(&packed).unwrap();
-    assert_eq!(back.resources.len(), 4);
-    assert!(back.missing_files().is_empty());
-    std::fs::remove_dir_all(&dir).unwrap();
-    // the package still renders without the original files
-    back.evaluate(None).unwrap();
-}
-
-#[test]
-fn relink_replace_update_rename_prune() {
-    let _g = SERIAL.lock().unwrap();
-    let dir = tmp("ops");
-    let mut g = graph_with_files(&dir);
-    // relink the missing bitmap
-    let missing = g.missing_files()[0].name.clone();
-    let other = dir.join("pic one.webp").to_string_lossy().to_string();
-    assert_eq!(g.relink_file(&missing, &other).unwrap(), 1);
-    assert!(g.missing_files().is_empty());
-    assert!(g.relink_file(&other, "/nonexistent/x.png").is_err());
-    // embed, change the source, see the change, update
-    g.embed_all();
-    let key = g.resources.keys().find(|k| k.ends_with(".webp")).unwrap().clone();
-    assert_eq!(g.source_changed(&key), Some(false));
-    std::fs::write(dir.join("pic one.webp"), data("lossy90.webp")).unwrap();
-    assert_eq!(g.source_changed(&key), Some(true));
-    assert_eq!(g.update_all(), vec![key.clone()]);
-    assert_eq!(g.source_changed(&key), Some(false));
-    // replace contents from another file
-    std::fs::write(dir.join("other.webp"), data("pal.webp")).unwrap();
-    g.replace_resource(&key, &dir.join("other.webp").to_string_lossy()).unwrap();
-    assert_eq!(g.resources[&key].as_slice(), data("pal.webp").as_slice());
-    // rename updates the nodes
-    g.rename_resource(&key, "renamed pic.webp").unwrap();
-    assert!(g.resources.contains_key("renamed_pic.webp"));
-    assert!(g.resource_entries().iter().any(|e| e.name == "renamed_pic.webp" && e.uses.len() == 2));
-    assert!(g.rename_resource("renamed_pic.webp", "id.cube").is_err());
-    // unused embedded data is found and removed
-    g.resources.insert("junk.png".into(), std::sync::Arc::new(vec![1, 2, 3]));
-    assert_eq!(g.remove_unused(), vec!["junk.png".to_string()]);
-    assert!(g.resources.contains_key("renamed_pic.webp"));
-}
-
-#[test]
-fn collect_into_project_folder_and_search_dirs() {
-    let _g = SERIAL.lock().unwrap();
-    let src = tmp("collect_src");
-    let proj = tmp("collect_proj");
-    let mut g = graph_with_files(&src);
-    g.nodes.remove(&5);
-    let (n, problems) = g.collect_files(&proj, "resources");
-    assert_eq!((n, problems.len()), (4, 0));
-    assert!(proj.join("resources/pic_one.webp").is_file());
-    // links are now relative
-    assert!(g.resource_entries().iter().all(|e| !e.name.starts_with('/') && !e.name.contains(':')));
-    // relative links resolve through the search folders, wherever the process runs
-    assert_eq!(g.missing_files().len(), 4);
-    resources::set_search_dirs(vec![proj.clone()]);
-    assert!(g.missing_files().is_empty());
+    let proj = tmp("search_dirs");
+    std::fs::create_dir_all(proj.join("resources")).unwrap();
+    std::fs::write(proj.join("resources/pic one.webp"), data("lossless.webp")).unwrap();
+    std::fs::write(proj.join("art.svg"), "<svg viewBox='0 0 10 10'><circle cx='5' cy='5' r='4'/></svg>").unwrap();
+    resources::set_search_dirs(vec![proj.clone(), proj.join("resources")]);
+    // relative to a search folder, by file name when the stored path no longer exists, and with backslashes
+    assert!(resources::resolve("art.svg").is_some());
+    assert!(resources::resolve("/old/place/pic one.webp").is_some());
+    assert!(resources::resolve("resources\\pic one.webp").is_some());
+    assert!(resources::resolve("nope.png").is_none());
+    assert!(resources::read_file("nope.png").unwrap_err().contains("not found"));
+    let g = Graph::parse_unchecked("size 32\nnode 1 bitmap file=\"pic one.webp\"\nnode 2 svg file=\"art.svg\"\nnode 3 blend fg=@2 bg=@1\noutput o 3\n").unwrap();
     g.evaluate(None).unwrap();
-    // an absolute path that moved is found by file name in a search folder
-    assert!(resources::resolve("/old/place/resources/art.svg").is_some() || resources::resolve("/old/place/art.svg").is_none());
     resources::set_search_dirs(vec![]);
+    assert!(resources::resolve("art.svg").is_none() || std::path::Path::new("art.svg").is_file());
 }

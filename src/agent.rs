@@ -179,13 +179,16 @@ fn read_line<R: BufRead>(r: &mut R) -> std::io::Result<Option<String>> {
 
 // ------------------------------------------------------------------------------------------ MCP server
 
-const INSTRUCTIONS: &str = "MaterialCraft builds procedural PBR materials as a graph of nodes. Work like this:\n\
-1. node_types (search by words) and node_describe show what a node does, its inputs, outputs and every parameter with default, range and choices. Check before setting parameters.\n\
+const INSTRUCTIONS: &str = "MaterialCraft builds procedural PBR materials as graphs of nodes in a Substance package (.sbs). Work like this:\n\
+1. node_types (search by words) and node_describe show what a node does, its inputs, outputs and every parameter with default, range, choices (numbered settings: set them by number or by name, e.g. \"pattern\": \"Bell\") and units (angles are turns: 0.25 = 90 degrees). Ranges are slider ranges: larger values are accepted.\n\
 2. Build with `batch`: one call, all-or-nothing, one undo step. Give nodes a `name` in node_add and use that name instead of the numeric id in later steps. Connect with node_add `inputs` ({slot: node}) or node_connect.\n\
 3. A material needs outputs: output_add with usage basecolor, normal, roughness, metallic, height, ambient_occlusion, opacity, emissive. Opacity and emissive are supported.\n\
-4. Look at your work often: render_node (picture + statistics; tile=2 checks seams; `flat: true` means the node produced a constant), render_outputs (all maps at once), render_3d (lit object), graph_validate (problems).\n\
-5. Textures must tile: render_node reports tiles_seamlessly; values near 1 for seam_horizontal / seam_vertical are good.\n\
-6. library_search / library_load start from a ready-made material. graph_save / graph_open use .mcg files. edit_undo undoes the last change.\n\
+4. Look at your work often: render_review is the main check (one picture: lit 3D preview, every map, the node graph with a thumbnail per node; data: the graph as text, statistics, problems; with reference=<image> it compares brightness, colour, contrast, detail and feature size and says what to change). Then render_node for one step (picture + statistics; tile=2 checks seams; Flood Fill nodes report their region count), render_3d (lit object; list=true shows every view option: environments, light rigs, tiling, displacement ...), graph_outline (the graph as text), graph_validate (problems, and warnings such as nodes whose result is not used).\n\
+5. Textures must tile: render_node reports tiles_seamlessly; seam_horizontal / seam_vertical at or below about 1 are good (above 1.5 is a visible seam). Zoom patterns by whole numbers (macro_add tile_scale).\n\
+6. Math as text: node_expression turns an expression into a function graph, for any parameter or a Pixel Processor (param perpixel; sample($pos) reads its input), e.g. \"p = $pos - 0.5; length(p) < 0.3 ? 1 : 0\".\n\
+7. macro_add inserts tested groups of standard nodes: grow / shrink / outline a mask, star (any number of points), polygon, tile_shape (your shape repeated as tiles), strokes (directional strokes per cell), tile_scale. macro=list shows their options.\n\
+8. Several graphs: graph_list shows the package's graphs; every graph and node command takes graph=<name> (or graph_focus picks one for the following commands). graph_create makes a new graph (kind texture, material or function); graph_extract moves chosen nodes into a new graph and puts one node running it in their place (a subgraph); node_add kind=sbs:graph params={\"graph\": <name>} runs a graph inside another.\n\
+9. graph_new starts a package (template=material gives the usual outputs); graph_save / graph_open read and write .sbs packages. edit_undo undoes the last change.\n\
 Node ids are numbers; names you chose also work. Parameters are exact: a wrong name is rejected with suggestions.";
 
 fn rpc_error(id: &Json, code: i32, msg: &str) -> Json {

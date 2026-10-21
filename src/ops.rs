@@ -345,6 +345,11 @@ pub fn roll(t: &Tex, fx: f32, fy: f32) -> Tex {
     Tex { w, h, px: (0..w * h).map(|i| t.px[((i / w + sy) % h) * w + (i % w + sx) % w]).collect() }
 }
 
+/// Flip the green channel (a normal map between the DirectX and OpenGL conventions).
+pub fn flip_green(t: &Tex) -> Tex {
+    t.map(|p| [p[0], 1.0 - p[1], p[2], p[3]])
+}
+
 pub fn invert(t: &Tex) -> Tex {
     t.map(|p| [1.0 - p[0], 1.0 - p[1], 1.0 - p[2], p[3]])
 }
@@ -652,12 +657,14 @@ fn samp(t: &Tex, mode: u32, u: f32, v: f32) -> [f32; 4] {
     }
 }
 
+/// The slope of `w` is measured per 1/256 of the image, so the displacement is the same at every resolution.
 pub fn warp_ex(t: &Tex, w: &Tex, intensity: f32, filtering: u32) -> Tex {
+    let (kx, ky) = (w.w as f32 / 256.0, w.h as f32 / 256.0);
     Tex::from_fn(t.w, t.h, |u, v| {
         let x = (u * w.w as f32) as i64;
         let y = (v * w.h as f32) as i64;
-        let dx = w.gray_at(x + 1, y) - w.gray_at(x - 1, y);
-        let dy = w.gray_at(x, y + 1) - w.gray_at(x, y - 1);
+        let dx = (w.gray_at(x + 1, y) - w.gray_at(x - 1, y)) * kx;
+        let dy = (w.gray_at(x, y + 1) - w.gray_at(x, y - 1)) * ky;
         samp(t, filtering, u + dx * intensity, v + dy * intensity)
     })
 }
@@ -673,11 +680,12 @@ pub fn directional_warp_ex(t: &Tex, w: &Tex, angle: f32, intensity: f32, offset:
 
 /// Displace by the gradient of `w` (slope warp).
 pub fn warp(t: &Tex, w: &Tex, intensity: f32) -> Tex {
+    let (kx, ky) = (w.w as f32 / 256.0, w.h as f32 / 256.0);
     Tex::from_fn(t.w, t.h, |u, v| {
         let x = (u * w.w as f32) as i64;
         let y = (v * w.h as f32) as i64;
-        let dx = w.gray_at(x + 1, y) - w.gray_at(x - 1, y);
-        let dy = w.gray_at(x, y + 1) - w.gray_at(x, y - 1);
+        let dx = (w.gray_at(x + 1, y) - w.gray_at(x - 1, y)) * kx;
+        let dy = (w.gray_at(x, y + 1) - w.gray_at(x, y - 1)) * ky;
         t.sample_cubic(u + dx * intensity, v + dy * intensity)
     })
 }
@@ -1116,9 +1124,11 @@ pub fn contrast_invert(t: &Tex, contrast: f32, invert: bool) -> Tex {
     })
 }
 
-/// Procedural shape. kind: 0 square, 1 disc, 2 paraboloid, 3 gaussian, 4 diamond, 5 pyramid, 6 half sphere, 7 cone.
+/// Procedural shape. kind: 0 square, 1 disc, 2 paraboloid, 3 gaussian, 4 diamond, 5 pyramid, 6 half sphere, 7 cone;
+/// 100 + n draws pattern n of the scatter nodes' list (`scatter::PATTERN_NAMES`), with `spec` as its Pattern
+/// Specific setting. Returns the value at uv (u, v).
 #[allow(clippy::too_many_arguments)]
-pub fn shape_value(kind: u32, u: f32, v: f32, px: f32, py: f32, sx: f32, sy: f32, rot: f32, tiling: f32, soft: f32) -> f32 {
+pub fn shape_value(kind: u32, u: f32, v: f32, px: f32, py: f32, sx: f32, sy: f32, rot: f32, tiling: f32, soft: f32, spec: f32) -> f32 {
     let t = tiling.round().clamp(1.0, 32.0);
     let x = ((u - 0.5 - px) * t + 0.5).rem_euclid(1.0) - 0.5;
     let y = ((v - 0.5 - py) * t + 0.5).rem_euclid(1.0) - 0.5;
@@ -1128,6 +1138,13 @@ pub fn shape_value(kind: u32, u: f32, v: f32, px: f32, py: f32, sx: f32, sy: f32
     let ny = ry / (sy.max(1e-3) * 0.5);
     let r = (nx * nx + ny * ny).sqrt();
     let so = soft.clamp(0.0, 1.0).max(1e-3);
+    if kind >= 100 {
+        let (lx, ly) = (nx * 0.5 + 0.5, ny * 0.5 + 0.5);
+        if !(0.0..=1.0).contains(&lx) || !(0.0..=1.0).contains(&ly) {
+            return 0.0;
+        }
+        return crate::scatter::builtin(kind - 100, lx, ly, spec.clamp(0.0, 1.0));
+    }
     match kind {
         0 => 1.0 - sm(1.0 - so, 1.0, nx.abs().max(ny.abs())),
         1 => 1.0 - sm(1.0 - so, 1.0, r),
@@ -1358,11 +1375,13 @@ pub fn flood_fill_to_geometry(t: &Tex, size: bool) -> Tex {
     }
 }
 
-pub fn flood_fill_random(t: &Tex, seed: u32, lo: f32, hi: f32) -> Tex {
+pub fn flood_fill_random(t: &Tex, seed: u32, lo: f32, hi: f32, contrast: f32) -> Tex {
+    let k = 1.0 + contrast * 4.0;
     t.map(|p| match region_id(p) {
         None => [0.0, 0.0, 0.0, 1.0],
         Some(id) => {
-            let g = lo + (hi - lo) * rnd(id, 5, seed);
+            let r = (0.5 + (rnd(id, 5, seed) - 0.5) * k).clamp(0.0, 1.0);
+            let g = lo + (hi - lo) * r;
             [g, g, g, 1.0]
         }
     })
@@ -1388,31 +1407,91 @@ pub fn flood_fill_gradient(t: &Tex, angle: f32, variation: f32, seed: u32) -> Te
 }
 
 // ---------------- distance / bevel ----------------
-/// Approximate Euclidean distance (pixels) from each `true` pixel to the nearest `false` pixel. Wraps (tileable).
-pub fn distance_field(mask: &[bool], w: usize, h: usize) -> Vec<f32> {
-    let mut d: Vec<f32> = mask.iter().map(|&m| if m { 1e9 } else { 0.0 }).collect();
-    let idx = |x: i64, y: i64| (y.rem_euclid(h as i64) as usize) * w + x.rem_euclid(w as i64) as usize;
+/// Signed distance in pixels from every pixel centre to the edge of the shape `lum > thr`: positive inside, negative
+/// outside. The edge is placed between pixels by the grey levels (where the values cross `thr`), so slanted and curved
+/// edges give smooth distances instead of stair steps; distances are Euclidean and wrap around the tile border.
+/// Without any edge (all inside or all outside) every pixel gets +/-1e9.
+pub fn signed_distance(t: &Tex, thr: f32) -> Vec<f32> {
+    let (w, h) = (t.w, t.h);
+    let n = w * h;
+    let g: Vec<f32> = t.px.iter().map(|p| lum(*p)).collect();
+    let inside: Vec<bool> = g.iter().map(|v| *v > thr).collect();
+    let at = |x: i64, y: i64| y.rem_euclid(h as i64) as usize * w + x.rem_euclid(w as i64) as usize;
+    // offset from each pixel centre to the nearest edge point found so far
+    let far = [1e9f32, 1e9f32];
+    let mut off = vec![far; n];
+    let len = |o: [f32; 2]| o[0] * o[0] + o[1] * o[1];
+    let mut any = false;
+    for y in 0..h as i64 {
+        for x in 0..w as i64 {
+            let i = at(x, y);
+            for (dx, dy) in [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)] {
+                let j = at(x + dx, y + dy);
+                if inside[j] == inside[i] {
+                    continue;
+                }
+                // where the values cross the threshold on the way to the neighbour
+                let d = g[j] - g[i];
+                let f = if d.abs() < 1e-6 { 0.5 } else { ((thr - g[i]) / d).clamp(0.0, 1.0) };
+                let o = [dx as f32 * f, dy as f32 * f];
+                if len(o) < len(off[i]) {
+                    off[i] = o;
+                }
+                any = true;
+            }
+        }
+    }
+    if !any {
+        return inside.iter().map(|&m| if m { 1e9 } else { -1e9 }).collect();
+    }
+    // propagate the nearest edge points (two sweeps each way, 8 neighbours)
+    let fwd = [(-1i64, 0i64), (0, -1), (-1, -1), (1, -1)];
+    let bwd = [(1i64, 0i64), (0, 1), (1, 1), (-1, 1)];
     for _ in 0..2 {
         for y in 0..h as i64 {
             for x in 0..w as i64 {
-                let i = idx(x, y);
-                for (dx, dy, c) in [(-1i64, 0i64, 1.0f32), (0, -1, 1.0), (-1, -1, 1.414), (1, -1, 1.414)] {
-                    let j = idx(x + dx, y + dy);
-                    d[i] = d[i].min(d[j] + c);
+                let i = at(x, y);
+                for (dx, dy) in fwd {
+                    let o = off[at(x + dx, y + dy)];
+                    let c = [o[0] + dx as f32, o[1] + dy as f32];
+                    if len(c) < len(off[i]) {
+                        off[i] = c;
+                    }
+                }
+            }
+            for x in (0..w as i64).rev() {
+                let i = at(x, y);
+                let (dx, dy) = (1i64, 0i64);
+                let o = off[at(x + dx, y + dy)];
+                let c = [o[0] + dx as f32, o[1] + dy as f32];
+                if len(c) < len(off[i]) {
+                    off[i] = c;
                 }
             }
         }
         for y in (0..h as i64).rev() {
             for x in (0..w as i64).rev() {
-                let i = idx(x, y);
-                for (dx, dy, c) in [(1i64, 0i64, 1.0f32), (0, 1, 1.0), (1, 1, 1.414), (-1, 1, 1.414)] {
-                    let j = idx(x + dx, y + dy);
-                    d[i] = d[i].min(d[j] + c);
+                let i = at(x, y);
+                for (dx, dy) in bwd {
+                    let o = off[at(x + dx, y + dy)];
+                    let c = [o[0] + dx as f32, o[1] + dy as f32];
+                    if len(c) < len(off[i]) {
+                        off[i] = c;
+                    }
+                }
+            }
+            for x in 0..w as i64 {
+                let i = at(x, y);
+                let (dx, dy) = (-1i64, 0i64);
+                let o = off[at(x + dx, y + dy)];
+                let c = [o[0] + dx as f32, o[1] + dy as f32];
+                if len(c) < len(off[i]) {
+                    off[i] = c;
                 }
             }
         }
     }
-    d
+    off.iter().zip(&inside).map(|(o, &m)| if m { len(*o).sqrt() } else { -len(*o).sqrt() }).collect()
 }
 
 pub fn bevel(t: &Tex, dist_px: f32, smoothing: f32, thr: f32) -> Tex {
@@ -1420,17 +1499,26 @@ pub fn bevel(t: &Tex, dist_px: f32, smoothing: f32, thr: f32) -> Tex {
 }
 
 /// `round` = circular (quarter-circle) profile, otherwise the linear ramp of an angular bevel.
+/// Bevel of the shape `lum > thr`: 0 outside, rising to 1 at `dist_px` inside. A negative distance grows the bevel
+/// outwards instead (1 on the shape, falling to 0 at `-dist_px` outside it).
 pub fn bevel_ex(t: &Tex, dist_px: f32, smoothing: f32, thr: f32, round: bool) -> Tex {
-    let mask: Vec<bool> = t.px.iter().map(|p| lum(*p) > thr).collect();
-    let d = distance_field(&mask, t.w, t.h);
-    let px = d
+    let sd = signed_distance(t, thr);
+    let outward = dist_px < 0.0;
+    let reach = dist_px.abs().max(1.0);
+    let px = sd
         .iter()
-        .zip(&mask)
-        .map(|(d, m)| {
-            if !*m {
+        .map(|d| {
+            let tt = if outward {
+                if *d > 0.0 {
+                    1.0
+                } else {
+                    1.0 - (-d / reach).clamp(0.0, 1.0)
+                }
+            } else if *d <= 0.0 {
                 return [0.0, 0.0, 0.0, 1.0];
-            }
-            let tt = (d / dist_px.max(1.0)).clamp(0.0, 1.0);
+            } else {
+                (d / reach).clamp(0.0, 1.0)
+            };
             let tt = if round { (1.0 - (1.0 - tt) * (1.0 - tt)).sqrt() } else { tt };
             let g = tt + (tt * tt * (3.0 - 2.0 * tt) - tt) * smoothing.clamp(0.0, 1.0);
             [g, g, g, 1.0]
@@ -1439,20 +1527,18 @@ pub fn bevel_ex(t: &Tex, dist_px: f32, smoothing: f32, thr: f32, round: bool) ->
     Tex { w: t.w, h: t.h, px }
 }
 
-/// mode: 0 inside, 1 outside, 2 both (0.5 = edge).
+/// mode: 0 inside (0 at the edge, 1 at `range_px` inside), 1 the format's Distance (1 on the shape, falling to 0 at
+/// `range_px` outside it), 2 both (0.5 = edge).
 pub fn distance(t: &Tex, range_px: f32, thr: f32, mode: u32) -> Tex {
-    let mask: Vec<bool> = t.px.iter().map(|p| lum(*p) > thr).collect();
-    let inside = distance_field(&mask, t.w, t.h);
-    let inv: Vec<bool> = mask.iter().map(|m| !m).collect();
-    let outside = distance_field(&inv, t.w, t.h);
-    let r = range_px.max(1.0);
-    let px = (0..mask.len())
-        .map(|i| {
-            let (a, b) = ((inside[i] / r).clamp(0.0, 1.0), (outside[i] / r).clamp(0.0, 1.0));
+    let sd = signed_distance(t, thr);
+    let r = range_px.max(1e-3);
+    let px = sd
+        .iter()
+        .map(|d| {
             let g = match mode {
-                0 => a,
-                1 => b,
-                _ => 0.5 + (a - b) * 0.5,
+                0 => (d / r).clamp(0.0, 1.0),
+                1 => 1.0 - (-d / r).clamp(0.0, 1.0),
+                _ => (0.5 + d / r * 0.5).clamp(0.0, 1.0),
             };
             [g, g, g, 1.0]
         })

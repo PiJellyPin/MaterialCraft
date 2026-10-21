@@ -928,6 +928,15 @@ impl Prog {
         self.eval(self.out, env, pos, &mut st)
     }
 
+    /// Like [`Prog::run`], with variables that live across runs: `vars` is what `f_get` reads before anything is
+    /// set, and holds every variable the run set afterwards (pattern programs share variables down a branch).
+    pub fn run_vars(&self, env: &FnEnv, pos: [f64; 2], vars: &mut Vec<(String, Value)>) -> Result<Value, String> {
+        let mut st = State { memo: vec![None; self.nodes.len()], epoch: 0, vars: std::mem::take(vars), rng: 0 };
+        let r = self.eval(self.out, env, pos, &mut st);
+        *vars = st.vars;
+        r
+    }
+
     fn eval(&self, i: usize, env: &FnEnv, pos: [f64; 2], st: &mut State) -> Result<Value, String> {
         if let Some((v, e)) = &st.memo[i] {
             if *e == st.epoch {

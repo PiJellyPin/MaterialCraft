@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use materialcraft::bake::{self, BakeSettings};
-use materialcraft::graph::{Graph, EXAMPLE, SPECS};
+use materialcraft::graph::Graph;
 use materialcraft::export::{self, Format};
 use materialcraft::render3d::{self, Maps, View};
 use materialcraft::{ops, png, tex::Tex};
@@ -12,23 +12,26 @@ use std::process::ExitCode;
 const HELP: &str = "materialcraft - procedural material authoring (pure Rust)
 
 USAGE:
-  materialcraft render <graph.mcg|.mca> <outdir> [--size N | --sizes 256,512] [--depth 8|16|32]
-                  [--param \"Label=value\"]... [--variations N] [--preview] [--render3d]\n                  [--format png|jpg|tiff|exr|hdr] [--quality 1-100] [--only basecolor,normal]\n                  [--colorspace srgb|p3|wide|romm|rec2020|linear]
-  materialcraft render3d <graph.mcg|.mca> <out.png> [options]       3D picture / turntable (raster or path traced), see: materialcraft render3d --help
-  materialcraft publish <graph.mcg> <out.mca>       embed bitmaps + flatten into a distributable package
-  materialcraft params  <graph.mcg|.mca>            list exposed parameters
-  materialcraft resources <graph.mcg> [--embed] [--update] [--collect] [--prune] [--extract <dir>] [--relink <old> <new>] [--out <file.mcg>]
-                  list the files the graph uses (embedded, linked, missing); the options change them and save the graph
-  materialcraft check   <graph.mcg>
+Files: MaterialCraft works on Substance packages (.sbs): one file holds every graph and function of a project, and
+it is saved with only what was changed rewritten. Wherever a graph is read, `package.sbs#name` picks one graph of a
+package (the first graph without it).
+
+  materialcraft render <package.sbs[#name]> <outdir> [--size N | --sizes 256,512] [--depth 8|16|32]
+                  [--param \"name=value\"]... [--variations N] [--preview] [--render3d]
+                  [--format png|jpg|tiff|exr|hdr] [--quality 1-100] [--only basecolor,normal]
+                  [--colorspace srgb|p3|wide|romm|rec2020|linear]
+  materialcraft render3d <package.sbs[#name]> <out.png> [options]   3D picture / turntable (raster or path traced), see: materialcraft render3d --help
+  materialcraft review  <package.sbs[#name]> <out.png> [--reference image] [--json out.json]   review sheet: 3D preview, maps,
+                  node graph with thumbnails, comparison with a reference picture (numbers and hints), the graph as text
+  materialcraft params  <package.sbs[#name]>   list the graph's parameters (render --param \"name=value\" sets them)
+  materialcraft graphs  <package.sbs> [--export <graph> <out.sbs>]   list the graphs of a package, or save one (with what it uses) as a package
+  materialcraft check   <package.sbs>
+  materialcraft nodes [words]                       list the nodes graphs can use
   materialcraft bake    --low <mesh>... --high <mesh>... --out <dir> [options]    mesh map baker, see: materialcraft bake --help
-  materialcraft trace   <graph.mcg> <node id> <out.spl> [--size N] [--threshold T] [--tolerance X]   outline the light areas of a node as a spline
+  materialcraft example <outdir>                    write a small example package (brick_wall.sbs)
   materialcraft testmesh <outdir>                   write a demo low/high-poly OBJ pair
-  materialcraft example <outdir>
-  materialcraft library [words...] [--kind material|generator|filter]   list or search the built-in ready-made graphs
-  materialcraft library --export <id> <file.mcg>                          write one of them out to edit
-  materialcraft nodes
-  materialcraft mcp [--graph f.mcg] [--bridge]      MCP server for AI assistants (standard input / output); --bridge drives the open editor
-  materialcraft serve [--graph f.mcg] [--port N]    keep a graph in memory and accept commands on a local port (token protected)
+  materialcraft mcp [--graph f.sbs] [--bridge]      MCP server for AI assistants (standard input / output); --bridge drives the open editor
+  materialcraft serve [--graph f.sbs] [--port N]    keep a package in memory and accept commands on a local port (token protected)
   materialcraft exec [options] <command> [name=value ...]   run one command (render_node, node_add, batch, ...); see: materialcraft exec --help
   materialcraft commands [words]                    list all commands with their parameters
 
@@ -40,15 +43,28 @@ fn write_png(path: &Path, t: &Tex, depth: u8) -> Result<(), String> {
 }
 
 fn load(path: &str) -> Result<Graph, String> {
-    // live links are read relative to the file; a link that cannot be read is reported and the graph still loads
-    if let Some(dir) = std::path::Path::new(path).parent().filter(|p| !p.as_os_str().is_empty()) {
+    // `package.sbs#graph` picks one graph of a package (its first graph without it)
+    if !Path::new(path).exists() {
+        if let Some((file, name)) = path.rsplit_once('#').filter(|(f, n)| !n.is_empty() && Path::new(f).is_file()) {
+            let pkg = load(file)?;
+            if materialcraft::sbs_native::graph_name(&pkg) == name {
+                return Ok(pkg);
+            }
+            return pkg.graph_view(Some(name)).map_err(|e| format!("{file}: {e}"));
+        }
+    }
+    if !path.to_ascii_lowercase().ends_with(".sbs") {
+        return Err(format!("{path}: only Substance packages (.sbs) can be read"));
+    }
+    // linked files are looked for next to the package too
+    if let Some(dir) = Path::new(path).parent().filter(|p| !p.as_os_str().is_empty()) {
         materialcraft::resources::set_search_dirs(vec![dir.to_path_buf(), dir.join("resources")]);
     }
-    let (g, issues) = Graph::load_file(std::path::Path::new(path)).map_err(|e| format!("{path}: {e}"))?;
-    for i in &issues {
-        eprintln!("warning: {i}");
+    // the package is read as it is; it renders through the same nodes the editor shows
+    let (g, warnings) = materialcraft::sbs_native::open(Path::new(path))?;
+    for w in &warnings {
+        eprintln!("warning: {w}");
     }
-    g.validate().map_err(|e| e.to_string())?;
     Ok(g)
 }
 
@@ -199,106 +215,78 @@ fn bake_cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn resources_cli(args: &[String]) -> Result<(), String> {
-    use materialcraft::resources::{human_size, ResKind, Status};
-    let path = args.first().ok_or("usage: materialcraft resources <graph.mcg> [--embed] [--update] [--collect] [--prune] [--extract <dir>] [--relink <old> <new>] [--out <file.mcg>]")?;
-    let mut g = load(path)?;
-    let (mut embed, mut update, mut collect, mut prune) = (false, false, false, false);
-    let mut extract: Option<String> = None;
-    let mut relinks: Vec<(String, String)> = Vec::new();
-    let mut out: Option<String> = None;
-    let mut i = 1;
+/// A small brick wall material as an .sbs package (`materialcraft example`), built with the package commands.
+fn example_package() -> Result<String, String> {
+    use materialcraft::json::Json;
+    let mut s = materialcraft::session::Session::from_graph(materialcraft::sbs_native::new_package("brick_wall", 512), None);
+    let steps = Json::parse(
+        r#"[
+        {"command":"node_add","params":{"kind":"sbs:lib:pattern_tile_generator/tile_generator","name":"bricks","params":{"x_amount":4,"y_amount":8,"position_offset":0.5,"luminance_random":0.25}}},
+        {"command":"node_add","params":{"kind":"sbs:lib:noise_perlin_noise/perlin_noise","name":"grain","params":{"scale":16}}},
+        {"command":"node_add","params":{"kind":"sbs:blend","name":"height","params":{"blendingmode":"Multiply","opacitymult":0.35},"inputs":{"source":"grain","destination":"bricks"}}},
+        {"command":"node_add","params":{"kind":"sbs:uniform","name":"clay","params":{"outputcolor":[0.55,0.22,0.14,1]}}},
+        {"command":"node_add","params":{"kind":"sbs:blend","name":"color","params":{"blendingmode":"Multiply"},"inputs":{"source":"height","destination":"clay"}}},
+        {"command":"node_add","params":{"kind":"sbs:normal","name":"nrm","inputs":{"input1":"height"}}},
+        {"command":"output_add","params":{"node":"color","usage":"basecolor"}},
+        {"command":"output_add","params":{"node":"nrm","usage":"normal"}},
+        {"command":"output_add","params":{"node":"height","usage":"height"}},
+        {"command":"graph_layout","params":{}}
+    ]"#,
+    )
+    .map_err(|e| e.to_string())?;
+    s.execute("batch", &Json::obj().with("steps", steps))?;
+    let text = s.execute("graph.text", &Json::obj())?;
+    text.data.get("text").and_then(Json::as_str).map(str::to_string).ok_or_else(|| "the example has no text".into())
+}
+
+/// `materialcraft review`: the review sheet of a graph (3D preview, maps, node graph, optional reference) as a PNG,
+/// and its numbers and outline as JSON.
+fn review_cli(args: &[String]) -> Result<(), String> {
+    use materialcraft::json::Json;
+    let usage = "usage: materialcraft review <package.sbs[#graph]> <out.png> [--reference image] [--compare auto|render|basecolor] [--size N] [--tex N] [--json out.json] [--set key=value]...";
+    let (gp, out) = (args.first().ok_or(usage)?, args.get(1).ok_or(usage)?);
+    let g = load(gp)?;
+    let mut p = Json::obj();
+    let mut settings = Json::obj();
+    let mut json_out: Option<String> = None;
+    let mut i = 2;
     while i < args.len() {
+        let next = |i: usize| args.get(i + 1).cloned().ok_or_else(|| format!("{} needs a value", args[i]));
         match args[i].as_str() {
-            "--embed" => embed = true,
-            "--update" => update = true,
-            "--collect" => collect = true,
-            "--prune" => prune = true,
-            "--extract" => {
+            "--reference" => p.set("reference", next(i)?),
+            "--compare" => p.set("compare", next(i)?),
+            "--size" => p.set("size", next(i)?.parse::<f64>().map_err(|_| "--size needs a number")?),
+            "--tex" => p.set("tex", next(i)?.parse::<f64>().map_err(|_| "--tex needs a number")?),
+            "--json" => json_out = Some(next(i)?),
+            "--set" => {
+                let kv = next(i)?;
+                let (k, v) = kv.split_once('=').ok_or("--set must look like key=value")?;
+                settings.set(k, v);
+            }
+            "--no-thumbnails" => {
+                p.set("thumbnails", false);
                 i += 1;
-                extract = Some(args.get(i).ok_or("--extract needs a folder")?.clone());
+                continue;
             }
-            "--relink" => {
-                let (a, b) = (args.get(i + 1).ok_or("--relink needs <old> <new>")?, args.get(i + 2).ok_or("--relink needs <old> <new>")?);
-                relinks.push((a.clone(), b.clone()));
-                i += 2;
-            }
-            "--out" => {
-                i += 1;
-                out = Some(args.get(i).ok_or("--out needs a file")?.clone());
-            }
-            o => return Err(format!("unknown option '{o}'")),
+            o => return Err(format!("unknown option '{o}'\n{usage}")),
         }
-        i += 1;
+        i += 2;
     }
-    let mut changed = false;
-    for (a, b) in &relinks {
-        let n = g.relink_file(a, b)?;
-        println!("relinked {n} reference(s): {a} -> {b}");
-        changed = true;
-    }
-    if update {
-        let done = g.update_all();
-        println!("updated {} resource(s) from their source files{}", done.len(), if done.is_empty() { String::new() } else { format!(": {}", done.join(", ")) });
-        changed |= !done.is_empty();
-    }
-    if embed {
-        let (n, problems) = g.embed_all();
-        println!("embedded {n} file(s)");
-        for p in &problems {
-            eprintln!("warning: {p}");
+    p.set("settings", settings);
+    let mut s = materialcraft::session::Session::from_graph(g, Some(std::path::PathBuf::from(gp.split('#').next().unwrap_or(gp))));
+    let o = s.execute("render.review", &p)?;
+    let png = o.images.first().map(|im| im.png.clone()).ok_or("the review made no picture")?;
+    materialcraft::safeio::write_file(Path::new(out), &png).map_err(|e| format!("{out}: {e}"))?;
+    let text = o.data.to_text();
+    match json_out {
+        Some(j) => {
+            materialcraft::safeio::write_file(Path::new(&j), text.as_bytes()).map_err(|e| format!("{j}: {e}"))?;
+            println!("wrote {out} and {j}");
         }
-        changed |= n > 0;
-    }
-    if let Some(dir) = &extract {
-        let names: Vec<String> = g.resources.keys().filter(|k| !k.starts_with("bake/")).cloned().collect();
-        for n in names {
-            let p = g.extract(&n, Path::new(dir))?;
-            println!("extracted {}", p.display());
-            changed = true;
+        None => {
+            println!("{text}");
+            eprintln!("wrote {out}");
         }
-    }
-    if collect {
-        let base = Path::new(path).parent().filter(|p| !p.as_os_str().is_empty()).map(|p| p.to_path_buf()).unwrap_or_else(|| std::path::PathBuf::from("."));
-        let (n, problems) = g.collect_files(&base, "resources");
-        println!("copied {n} file(s) into {}", base.join("resources").display());
-        for p in &problems {
-            eprintln!("warning: {p}");
-        }
-        changed |= n > 0;
-    }
-    if prune {
-        let gone = g.remove_unused();
-        println!("removed {} unused resource(s){}", gone.len(), if gone.is_empty() { String::new() } else { format!(": {}", gone.join(", ")) });
-        changed |= !gone.is_empty();
-    }
-    if changed {
-        let dest = out.clone().unwrap_or_else(|| path.clone());
-        materialcraft::safeio::write_file(Path::new(&dest), g.to_text().as_bytes()).map_err(|e| format!("{dest}: {e}"))?;
-        println!("saved {dest}");
-    }
-    let es = g.resource_entries();
-    if es.is_empty() {
-        println!("no resources");
-    }
-    let mut bad = 0;
-    for e in &es {
-        let st = match e.status {
-            Status::Embedded => "embedded",
-            Status::Linked => "linked  ",
-            Status::Missing => {
-                bad += 1;
-                "MISSING "
-            }
-        };
-        let info = g.resource_info(e).summary;
-        println!("{st} {:<12} {:>9}  {}  [{}]  used by {} node(s)", e.kind.label(), e.size.map(human_size).unwrap_or_default(), e.name, info, e.uses.len());
-        if e.kind == ResKind::Baked {
-            continue;
-        }
-    }
-    if bad > 0 {
-        return Err(format!("{bad} file(s) missing"));
     }
     Ok(())
 }
@@ -306,103 +294,68 @@ fn resources_cli(args: &[String]) -> Result<(), String> {
 fn run(args: &[String]) -> Result<(), String> {
     match args.first().map(|s| s.as_str()) {
         Some("nodes") => {
+            use materialcraft::sbs_defs::{palette, Fam};
             use std::io::Write as _;
+            let words: Vec<String> = args[1..].iter().map(|w| w.to_lowercase()).collect();
             let mut out = std::io::stdout().lock();
-            for s in SPECS.iter().chain(materialcraft::func::FUNC_SPECS).chain(materialcraft::fxmap::FXM_SPECS) {
-                // a closed pipe (`| head`) ends the listing quietly
-                if writeln!(out, "{:<18} {:<11} inputs: {:<22} {}", s.kind, materialcraft::graph::category(s.kind), [s.req, s.opt].concat().join(","), s.doc).is_err() {
-                    break;
+            for (fam, name) in [(Fam::Texture, "graph"), (Fam::Function, "function"), (Fam::Pattern, "fx-map")] {
+                for d in palette(fam) {
+                    let text = format!("{} {} {}", d.kind, d.label, d.category).to_lowercase();
+                    if !words.iter().all(|w| text.contains(w.as_str())) {
+                        continue;
+                    }
+                    // a closed pipe (`| head`) ends the listing quietly
+                    if writeln!(out, "{:<56} {:<9} {:<28} {}", d.kind, name, d.category, d.label).is_err() {
+                        return Ok(());
+                    }
                 }
             }
             Ok(())
         }
         Some("check") => {
-            let g = load(args.get(1).ok_or("usage: materialcraft check <graph.mcg>")?)?;
-            println!("OK: {} nodes, {} subgraphs, {} outputs, {}x{}", g.nodes.len(), g.subgraphs.len(), g.outputs.len(), g.size, if g.is_square() { g.size } else { g.height });
-            Ok(())
-        }
-        Some("trace") => {
-            if args.len() < 4 {
-                return Err("usage: materialcraft trace <graph.mcg> <node id> <out.spl> [--size N] [--threshold T] [--tolerance X]".into());
-            }
-            let g = load(&args[1])?;
-            let id: u32 = args[2].trim_start_matches('@').parse().map_err(|_| "the node id must be a number")?;
-            let (mut size, mut thr, mut tol) = (256usize, 0.5f32, 0.002f32);
-            let mut i = 4;
-            while i < args.len() {
-                let v = args.get(i + 1).ok_or_else(|| format!("{} needs a value", args[i]))?;
-                match args[i].as_str() {
-                    "--size" => size = v.parse().map_err(|_| "bad --size")?,
-                    "--threshold" => thr = v.parse().map_err(|_| "bad --threshold")?,
-                    "--tolerance" => tol = v.parse().map_err(|_| "bad --tolerance")?,
-                    o => return Err(format!("unknown option '{o}'")),
-                }
-                i += 2;
-            }
-            let t = g.evaluate_node(id, size).map_err(|e| e.to_string())?;
-            let sp = materialcraft::spline::Spline::from_mask(&t, thr, tol)?;
-            materialcraft::safeio::write_file(Path::new(&args[3]), sp.to_text().as_bytes()).map_err(|e| format!("{}: {e}", args[3]))?;
-            println!("wrote {} paths with {} points to {}", sp.paths.len(), sp.point_count(), args[3]);
+            let g = load(args.get(1).ok_or("usage: materialcraft check <package.sbs>")?)?;
+            let graphs = materialcraft::sbs_native::all_graphs(&g).values().filter(|x| materialcraft::sbs_native::listed(x)).count();
+            let low = materialcraft::sbs_native::lower(&g)?;
+            println!("OK: {graphs} graph(s), {} nodes, {} outputs, {}x{}; rendering: {}", g.nodes.len(), g.output_nodes().len(), g.size, if g.is_square() { g.size } else { g.height }, low.report.summary());
             Ok(())
         }
         Some("params") => {
-            let g = load(args.get(1).ok_or("usage: materialcraft params <graph>")?)?;
-            for e in &g.exposed {
-                println!("\"{}\"  node {} . {}  range {}..{}", e.label, e.node, e.param, e.min, e.max);
+            let g = load(args.get(1).ok_or("usage: materialcraft params <package.sbs[#name]>")?)?;
+            for (id, label, ty, def) in materialcraft::sbs_native::value_inputs(&g) {
+                println!("\"{label}\"  input {id}  {}  default {def}", ty.code());
             }
             Ok(())
         }
-        Some("resources") => resources_cli(&args[1..]),
-        Some("publish") => {
-            let (i, o) = (args.get(1).ok_or("usage: materialcraft publish <in.mcg> <out.mca>")?, args.get(2).ok_or("missing <out.mca>")?);
-            let g = load(i)?;
-            let text = g.publish().map_err(|e| e.to_string())?;
-            materialcraft::safeio::write_file(Path::new(o), text.as_bytes()).map_err(|e| e.to_string())?;
-            println!("published {o} ({} bytes, {} exposed parameters)", text.len(), g.exposed.len());
-            Ok(())
-        }
-        Some("library") => {
-            let mut words: Vec<&str> = Vec::new();
-            let (mut kind, mut export): (Option<materialcraft::library::AssetKind>, Option<(&str, &str)>) = (None, None);
-            let mut i = 1;
-            while i < args.len() {
-                match args[i].as_str() {
-                    "--kind" => {
-                        let v = args.get(i + 1).ok_or("--kind needs a value")?;
-                        kind = Some(materialcraft::library::AssetKind::parse(v).ok_or("unknown kind (use material, generator or filter)")?);
-                        i += 2;
-                    }
-                    "--export" => {
-                        let (id, file) = (args.get(i + 1).ok_or("--export needs an id and a file")?, args.get(i + 2).ok_or("--export needs a file")?);
-                        export = Some((id.as_str(), file.as_str()));
-                        i += 3;
-                    }
-                    w => {
-                        words.push(w);
-                        i += 1;
-                    }
-                }
-            }
-            if let Some((id, file)) = export {
-                let a = materialcraft::library::find(id).ok_or_else(|| format!("no library entry '{id}' (try: materialcraft library)"))?;
-                materialcraft::safeio::write_file(Path::new(file), a.source.as_bytes()).map_err(|e| format!("{file}: {e}"))?;
-                println!("wrote {file} ({})", a.name);
+        Some("graphs") => {
+            let usage = "usage: materialcraft graphs <package.sbs> [--export <graph> <out.sbs>]";
+            let path = args.get(1).ok_or(usage)?;
+            let (pkg, _) = materialcraft::sbs_native::open(Path::new(path))?;
+            if let Some(i) = args.iter().position(|a| a == "--export") {
+                let (name, out) = (args.get(i + 1).ok_or(usage)?, args.get(i + 2).ok_or(usage)?);
+                let g = materialcraft::sbs_native::extract_package(&pkg, name)?;
+                let n = g.subgraphs.values().filter(|x| materialcraft::sbs_native::listed(x)).count();
+                materialcraft::safeio::write_file(Path::new(out), materialcraft::sbs_native::save_text(&g)?.as_bytes()).map_err(|e| format!("{out}: {e}"))?;
+                println!("wrote {out} ({n} graph(s) and function(s) it uses)");
                 return Ok(());
             }
-            let hits = materialcraft::library::search(&words.join(" "), kind);
-            if hits.is_empty() {
-                println!("nothing found");
-            }
-            for a in hits {
-                println!("{:<24} {:<10} {:<20} {}", a.id, a.kind.label(), a.category, a.tags.join(", "));
+            for (k, g) in materialcraft::sbs_native::all_graphs(&pkg) {
+                let Some(sd) = g.sd.as_ref() else { continue };
+                let kind = match sd.role {
+                    materialcraft::sbs_native::Role::Graph => "graph",
+                    materialcraft::sbs_native::Role::Function => "function",
+                    _ => continue,
+                };
+                let outs: Vec<String> = sd.outputs.iter().filter_map(|o| o.v("identifier")).collect();
+                let users = materialcraft::sbs_native::graph_users(&pkg, &k);
+                println!("{k:<32} {kind:<8} outputs: {}{}", outs.join(", "), if users.is_empty() { String::new() } else { format!("   used by: {}", users.join(", ")) });
             }
             Ok(())
         }
         Some("example") => {
             let dir = args.get(1).ok_or("usage: materialcraft example <outdir>")?;
             fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-            let p = Path::new(dir).join("brick_wall.mcg");
-            materialcraft::safeio::write_file(&p, EXAMPLE.as_bytes()).map_err(|e| e.to_string())?;
+            let p = Path::new(dir).join("brick_wall.sbs");
+            materialcraft::safeio::write_file(&p, example_package()?.as_bytes()).map_err(|e| format!("{}: {e}", p.display()))?;
             println!("wrote {}", p.display());
             Ok(())
         }
@@ -417,6 +370,7 @@ fn run(args: &[String]) -> Result<(), String> {
         Some(c @ ("mcp" | "serve" | "exec" | "commands")) => materialcraft::agent_cli::run(c, &args[1..]),
         Some("bake") => bake_cli(&args[1..]),
         Some("render3d") => materialcraft::cli3d::run(&args[1..], &load),
+        Some("review") => review_cli(&args[1..]),
         Some("render") => {
             let gp = args.get(1).ok_or("usage: materialcraft render <graph> <outdir> [options]")?;
             let dir = args.get(2).ok_or("missing <outdir>")?;
@@ -488,7 +442,10 @@ fn run(args: &[String]) -> Result<(), String> {
                 }
                 i += 1;
             }
-            g.apply_params(&params)?;
+            // the graph's inputs (by identifier or label) start at the given values
+            for (k, v) in &params {
+                materialcraft::sbs_native::set_input(&mut g, k, Some(&[*v]), None, None)?;
+            }
             let base_seed = g.seed_offset;
             let multi = sizes.len() > 1;
             for var in 0..variations {
@@ -524,9 +481,11 @@ fn run(args: &[String]) -> Result<(), String> {
                     let one = Tex::solid(s, s, [1.0; 4]);
                     let zero = Tex::solid(s, s, [0.0, 0.0, 0.0, 1.0]);
                     let half = Tex::solid(s, s, [0.5, 0.5, 0.5, 1.0]);
+                    // DirectX normal maps are lit the right way up in the previews
+                    let normal_gl = out.get("normal").and_then(|t| g.normal_for_view(t));
                     let (b, n, r, m, a) = (
                         out.get("basecolor").unwrap_or(&half),
-                        out.get("normal").unwrap_or(&flat),
+                        normal_gl.as_ref().or_else(|| out.get("normal")).unwrap_or(&flat),
                         out.get("roughness").unwrap_or(&half),
                         out.get("metallic").unwrap_or(&zero),
                         out.get("ambient_occlusion").unwrap_or(&one),

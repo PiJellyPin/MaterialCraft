@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Regression snapshot: evaluates every node type's demo graph and every library graph and writes the raw pixels,
-//! or compares them with a snapshot written before.
+//! Regression snapshot: evaluates every node type's demo graph and every library node's preview and writes the raw
+//! pixels, or compares them with a snapshot written before.
 //! usage: snapshot write <dir> [size]   |   snapshot check <dir> [size]
 use materialcraft::graph::{demo_graph_for, Graph, SPECS};
-use materialcraft::library;
 use std::path::Path;
 
 fn pixels(g: &Graph, size: usize) -> Vec<(String, Vec<f32>)> {
@@ -23,11 +22,6 @@ fn main() {
             if let Ok(g) = Graph::parse(&t) {
                 graphs.push((format!("node_{}", sp.kind), g));
             }
-        }
-    }
-    for asset in library::assets() {
-        if let Ok(g) = asset.graph() {
-            graphs.push((format!("lib_{}", asset.id), g));
         }
     }
     std::fs::create_dir_all(dir).unwrap();

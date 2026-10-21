@@ -27,17 +27,25 @@ pub fn new_shared() -> Shared {
 }
 
 /// Extra viewer options that live next to (not inside) the CPU renderer's `View`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GpuOpts {
     /// Contact shadows computed by marching the height field towards the light.
     pub self_shadow: bool,
     /// Anisotropic filtering level (1..16). 0 = use the maximum the GPU offers.
     pub aniso: f32,
+    /// Texture filtering: 0 nearest (pixelated), 1 bilinear, 2 trilinear (smooth between mip levels).
+    pub filter: u8,
+    /// Mip maps (smaller copies of the texture for surfaces far away or at a slant).
+    pub mipmaps: bool,
+    /// Outside 0..1: 0 repeat, 1 mirrored repeat, 2 clamp to the edge.
+    pub wrap: u8,
+    /// Added to the mip level the GPU picks: positive blurs, negative sharpens (and may shimmer).
+    pub lod_bias: f32,
 }
 
 impl Default for GpuOpts {
     fn default() -> Self {
-        GpuOpts { self_shadow: true, aniso: 0.0 }
+        GpuOpts { self_shadow: true, aniso: 0.0, filter: 2, mipmaps: true, wrap: 0, lod_bias: 0.0 }
     }
 }
 
@@ -283,6 +291,8 @@ pub struct Gpu {
     /// Why the chosen environment file could not be used (the studio is shown instead).
     pub env_error: Option<String>,
     res: Option<Res>,
+    /// The sampling options the uploaded textures carry (they are set again when the options change).
+    applied: Option<GpuOpts>,
     pub frames: u64,
 }
 
@@ -399,6 +409,33 @@ unsafe fn make_tex(gl: &glow::Context, internal: u32, fmt: u32, ty: u32, w: usiz
         gl.tex_parameter_f32(glow::TEXTURE_2D, ANISO_PARAM, aniso);
     }
     Ok(Tx { id, w, h })
+}
+
+/// Sampling state of one texture: filtering, mip maps, wrapping, LOD bias and anisotropy.
+unsafe fn sample_params(gl: &glow::Context, id: glow::Texture, o: &GpuOpts, max_aniso: f32) {
+    const LOD_BIAS: u32 = 0x8501;
+    gl.bind_texture(glow::TEXTURE_2D, Some(id));
+    let (min, mag) = match (o.filter, o.mipmaps) {
+        (0, false) => (glow::NEAREST, glow::NEAREST),
+        (0, true) => (glow::NEAREST_MIPMAP_NEAREST, glow::NEAREST),
+        (1, false) | (2, false) => (glow::LINEAR, glow::LINEAR),
+        (1, true) => (glow::LINEAR_MIPMAP_NEAREST, glow::LINEAR),
+        _ => (glow::LINEAR_MIPMAP_LINEAR, glow::LINEAR),
+    };
+    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, min as i32);
+    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, mag as i32);
+    let wrap = match o.wrap {
+        1 => glow::MIRRORED_REPEAT,
+        2 => glow::CLAMP_TO_EDGE,
+        _ => glow::REPEAT,
+    };
+    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, wrap as i32);
+    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, wrap as i32);
+    gl.tex_parameter_f32(glow::TEXTURE_2D, LOD_BIAS, o.lod_bias);
+    let a = if o.aniso <= 0.0 { max_aniso } else { o.aniso.min(max_aniso) };
+    if max_aniso > 1.0 {
+        gl.tex_parameter_f32(glow::TEXTURE_2D, ANISO_PARAM, if o.filter == 0 || !o.mipmaps { 1.0 } else { a.max(1.0) });
+    }
 }
 
 fn bytes_of<T>(v: &[T]) -> &[u8] {
@@ -804,6 +841,7 @@ pub fn paint(shared: &Shared, info: &PaintCallbackInfo, painter: &egui_glow::Pai
             Ok(r) => {
                 g.renderer = unsafe { gl.get_parameter_string(glow::RENDERER) };
                 g.res = Some(r);
+                g.applied = None;
             }
             Err(e) => {
                 g.error = Some(e);
@@ -814,10 +852,23 @@ pub fn paint(shared: &Shared, info: &PaintCallbackInfo, painter: &egui_glow::Pai
         let mut r = g.res.take().unwrap();
         let res = unsafe { upload_maps(gl, &mut r, &maps, aniso_req) };
         g.res = Some(r);
+        g.applied = None;
         if let Err(e) = res {
             g.error = Some(e);
             return;
         }
+    }
+    // texture sampling options (filtering, wrapping, mip maps, bias, anisotropy) follow the settings
+    if g.applied.as_ref() != Some(&g.opts) {
+        let o = g.opts.clone();
+        if let Some(r) = g.res.as_ref() {
+            unsafe {
+                for t in [Some(&r.base), Some(&r.normal), Some(&r.rma), r.emis.as_ref(), r.height.as_ref()].into_iter().flatten() {
+                    sample_params(gl, t.id, &o, r.max_aniso);
+                }
+            }
+        }
+        g.applied = Some(o);
     }
     // the lighting environment
     let want_key = view.env.image_key();

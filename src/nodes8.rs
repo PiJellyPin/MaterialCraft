@@ -514,7 +514,7 @@ pub fn compute(kind: &str, id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, s
                 }
             })
         }
-        _ => return Ok(None),
+        _ => return crate::nodes9::compute(kind, id, n, ins, s, hs, seed),
     };
     // quiet an unused import when a build has no nodes using it
     let _ = noise::rnd;

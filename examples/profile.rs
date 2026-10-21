@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Editor-style profile of every library graph (and the shipped example):
+//! Editor-style profile of the built-in example graph and of the .sbs packages named on the command line:
 //!   cold   full pass with an empty node cache (what opening a graph costs)
 //!   warm   full pass again with nothing changed (pure overhead: hashing, cache lookups, thumbnails)
 //!   edit   one parameter changed on a node in the middle of the graph, interactive pass (what a drag costs)
 //!   settle the full pass that follows the edit
-//! usage: profile [size] [filter]
+//! usage: profile [size] [filter] [package.sbs ...]
 use materialcraft::graph::{Graph, NodeCache, EXAMPLE};
-use materialcraft::library;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -23,9 +22,10 @@ fn main() {
     let size: usize = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(1024);
     let filter = std::env::args().nth(2).unwrap_or_default();
     let mut graphs: Vec<(String, Graph)> = vec![("example".into(), Graph::parse(EXAMPLE).unwrap())];
-    for a in library::assets() {
-        if let Ok(g) = a.graph() {
-            graphs.push((a.id.to_string(), g));
+    for p in std::env::args().skip(3) {
+        match materialcraft::sbs_native::open(std::path::Path::new(&p)) {
+            Ok((g, _)) => graphs.push((p.clone(), g)),
+            Err(e) => eprintln!("{p}: {e}"),
         }
     }
     let (mut tc, mut tw, mut te, mut ts) = (0.0, 0.0, 0.0, 0.0);

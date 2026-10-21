@@ -1,543 +1,666 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // ======================================================================= Spline editor (included into gui.rs)
-// The spline lives in the package as an embedded text resource (`*.spl`). While it is being edited the 2D view shows
-// its points and handles over the picture of the selected path node; every change is written back to the resource, so
-// the picture updates at once and undo / redo and saving work like for any other edit.
+//
+// Draw splines and custom shapes with bezier curves. A spline lives in the package as an SVG resource that an SVG
+// node shows (white shapes on black), so everything that takes a picture takes it: Bevel, Distance, Blur, Tile
+// Sampler and the rest. The editable spline travels inside the SVG, so it opens again exactly as drawn.
+//
+//   Pen tool    click to add a point, drag to pull its handles; click the first point of an open path to close it
+//   Edit tool   drag points and handles; double-click a curve to add a point; right-click a point to delete it
+//   Both        Delete removes the selected point
 
-use materialcraft::spline::{SPath, SPoint, Spline};
+use materialcraft::spline::{SPath, SPoint, ShapeStyle, Spline};
 
-struct SplEdit {
+/// The package resource an SVG node reads (`pkg:///name?dependency=uid` gives `name`).
+fn svg_node_res(n: &Node) -> Option<String> {
+    match native::values(n).get("vectorresourcepath")? {
+        PVal::Const { raw, .. } => {
+            let r = raw.strip_prefix("pkg:///")?;
+            Some(r.split('?').next().unwrap_or(r).to_string())
+        }
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum SplTool {
+    Pen,
+    Edit,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum SplDrag {
+    None,
+    Point,
+    HandleIn,
+    HandleOut,
+    /// a point just placed with the pen: dragging pulls its handles out
+    Pen,
+}
+
+struct SplineEd {
     node: u32,
-    file: String,
+    /// resource name inside the package
+    res: String,
     sp: Spline,
-    /// the resource text last written or read, to notice undo / redo and other outside changes
-    last: String,
+    styles: Vec<ShapeStyle>,
     path: usize,
-    sel: Option<usize>,
-    /// what is being dragged: (0 point / 1 handle towards the previous point / 2 handle towards the next, point, moved yet)
-    drag: Option<(u8, usize, bool)>,
-    /// point under the pointer when the context menu was opened
-    menu_pt: Option<(usize, usize)>,
-    snap: bool,
+    pt: Option<usize>,
+    tool: SplTool,
+    drag: SplDrag,
+    undo: Vec<(Spline, Vec<ShapeStyle>)>,
+    redo: Vec<(Spline, Vec<ShapeStyle>)>,
+    /// snap points to a grid of this many cells across (0 = off)
+    snap: u32,
+    /// the spline changed and the node's picture is out of date
+    changed: bool,
+    preview: Option<egui::TextureHandle>,
+    preview_stale: bool,
+    note: String,
 }
 
-const SPL_HIT: f32 = 9.0;
+fn spl_state(sp: &Spline, styles: &[ShapeStyle]) -> (Spline, Vec<ShapeStyle>) {
+    (sp.clone(), styles.to_vec())
+}
 
-fn spl_default_preset(kind: &str) -> i32 {
-    if kind == "path_fill" || kind == "path_border" {
-        3
-    } else {
-        2
+impl SplineEd {
+    fn push_undo(&mut self) {
+        self.undo.push(spl_state(&self.sp, &self.styles));
+        if self.undo.len() > 100 {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
     }
-}
 
-fn is_path_node(kind: &str) -> bool {
-    kind.starts_with("path_")
-}
-
-/// Switch the tangent mode of point `si`: Auto drops the handles, Mirrored and Free freeze the current ones,
-/// Corner removes them.
-fn spl_set_tangent(path: &mut materialcraft::spline::SPath, si: usize, mode: u8) {
-    if si >= path.pts.len() {
-        return;
+    fn fix_styles(&mut self) {
+        while self.styles.len() < self.sp.paths.len() {
+            self.styles.push(ShapeStyle::default());
+        }
+        self.styles.truncate(self.sp.paths.len());
+        if self.path >= self.sp.paths.len() {
+            self.path = self.sp.paths.len().saturating_sub(1);
+        }
     }
-    let (hi, ho) = path.handles(si);
-    let pt = &mut path.pts[si];
-    pt.tan = mode;
-    match mode {
-        0 => {
-            pt.hin = None;
-            pt.hout = None;
+
+    fn edited(&mut self) {
+        self.changed = true;
+        self.preview_stale = true;
+    }
+
+    /// Set the tangent mode of point `i` of the active path.
+    fn set_tangent(&mut self, i: usize, mode: u8) {
+        let Some(path) = self.sp.paths.get_mut(self.path) else { return };
+        if i >= path.pts.len() || path.pts.len() < 2 {
+            return;
         }
-        1 => {
-            pt.hin = Some(hi);
-            pt.hout = Some([-hi[0], -hi[1]]);
-        }
-        2 => {
-            pt.hin = Some(hi);
-            pt.hout = Some(ho);
-        }
-        _ => {
-            pt.hin = Some([0.0, 0.0]);
-            pt.hout = Some([0.0, 0.0]);
+        let (hi, ho) = path.handles(i);
+        let q = &mut path.pts[i];
+        q.tan = mode;
+        match mode {
+            0 => {
+                q.hin = None;
+                q.hout = None;
+            }
+            1 => {
+                q.hout = Some(ho);
+                q.hin = Some([-ho[0], -ho[1]]);
+            }
+            2 => {
+                q.hin = Some(hi);
+                q.hout = Some(ho);
+            }
+            _ => {
+                q.hin = Some([0.0, 0.0]);
+                q.hout = Some([0.0, 0.0]);
+            }
         }
     }
 }
 
 impl App {
-    /// Outline the light areas of node `node` as a new spline resource and show it with a new Path Stroke node.
-    fn spl_trace(&mut self, node: u32) {
-        let t = match self.g.evaluate_node(node, 256) {
-            Ok(t) => t,
-            Err(e) => return self.status(format!("Cannot trace: {e}"), false),
-        };
-        match Spline::from_mask(&t, 0.5, 0.002) {
-            Ok(sp) => {
-                let file = self.spl_unique_name("traced");
-                let at = self.g.nodes.get(&node).map(|n| pos2(n.pos[0] + CARD + 90.0, n.pos[1])).unwrap_or(pos2(0.0, 0.0));
-                self.snap();
-                self.g.resources.insert(file.clone(), std::sync::Arc::new(sp.to_text().into_bytes()));
-                let id = self.add_node_at("path_stroke", None, at);
-                if let Some(n) = self.g.nodes.get_mut(&id) {
-                    n.strs.insert("file".into(), file.clone());
-                    n.nums.insert("width".into(), 4.0);
-                }
-                self.status(format!("Traced {} outlines ({} points) into {file} and drew them with a new Path Stroke node", sp.paths.len(), sp.point_count()), true);
-            }
-            Err(e) => self.status(format!("Cannot trace: {e}"), false),
+    /// Open the spline editor on SVG node `id`.
+    fn open_spline_editor(&mut self, id: u32) {
+        let Some(n) = self.g.nodes.get(&id) else { return };
+        if n.kind != "sbs:svg" {
+            return;
         }
+        let res = svg_node_res(n).unwrap_or_else(|| "spline".into());
+        let key_prefix = format!("{res}.");
+        let svg = self.g.resources.iter().find(|(k, _)| k.starts_with(&key_prefix)).map(|(_, v)| String::from_utf8_lossy(v).to_string());
+        let mut note = String::new();
+        let (sp, styles) = match svg {
+            Some(s) => match Spline::from_svg_meta(&s) {
+                Some(x) => x,
+                None => match Spline::from_svg(&s) {
+                    Ok(sp) => {
+                        note = "Converted from the SVG: curves became short straight segments.".into();
+                        let n = sp.paths.len();
+                        (sp, vec![ShapeStyle::default(); n])
+                    }
+                    Err(e) => {
+                        note = format!("The SVG could not be read as a spline ({e}); drawing a new shape.");
+                        (Spline::default(), Vec::new())
+                    }
+                },
+            },
+            None => (Spline::default(), Vec::new()),
+        };
+        let mut ed = SplineEd { node: id, res, sp, styles, path: 0, pt: None, tool: SplTool::Pen, drag: SplDrag::None, undo: Vec::new(), redo: Vec::new(), snap: 0, changed: false, preview: None, preview_stale: true, note };
+        ed.fix_styles();
+        if !ed.sp.paths.is_empty() {
+            ed.tool = SplTool::Edit;
+        }
+        self.spl = Some(ed);
     }
 
-    fn spl_unique_name(&self, base: &str) -> String {
-        let mut name = format!("{base}.spl");
+    /// A new SVG node showing a spline shape (a circle to start from), with the editor open on it.
+    fn new_spline_node(&mut self) {
+        let c = self.view_center_world();
+        let mut name = "spline".to_string();
+        let taken: Vec<String> = native::package_resources(&self.g).into_iter().map(|(n, _)| n).collect();
         let mut k = 2;
-        while self.g.resources.contains_key(&name) {
-            name = format!("{base}_{k}.spl");
+        while taken.iter().any(|t| t == &name) {
+            name = format!("spline_{k}");
             k += 1;
         }
-        name
+        let sp = materialcraft::session::spline_preset("circle").unwrap_or_default();
+        let styles = vec![ShapeStyle::default(); sp.paths.len()];
+        match native::set_resource(&mut self.g, &name, "svg", "svg", sp.to_svg(&styles).into_bytes()) {
+            Ok(path) => {
+                for (parent, _) in self.parents.iter_mut() {
+                    native::adopt_package(parent, &self.g);
+                }
+                let id = self.sd_add_node("sbs:svg", None, c, false);
+                if let Some(n) = self.g.nodes.get_mut(&id) {
+                    native::set_value(n, "colorswitch", Some(PVal::Const { ty: PTy::B, raw: "0".into(), rel: None }));
+                    native::set_value(n, "vectorresourcepath", Some(PVal::Const { ty: PTy::Path, raw: path, rel: None }));
+                }
+                self.open_spline_editor(id);
+            }
+            Err(e) => self.status(e, false),
+        }
     }
 
-    /// Start editing the spline of path node `node`. A node that uses a built-in shape gets a copy of it as a new resource.
-    fn spl_start(&mut self, node: u32) {
-        let Some(n) = self.g.nodes.get(&node) else { return };
-        if !is_path_node(&n.kind) {
+    /// Write the spline into the package and refresh what shows it.
+    fn apply_spline(&mut self) {
+        let Some(ed) = self.spl.as_mut() else { return };
+        if !ed.changed {
             return;
         }
-        let existing = n.strs.get("file").cloned().filter(|f| !f.is_empty());
-        let (file, sp, created) = match existing {
-            Some(f) => match self.g.resources.get(&f).map(|b| Spline::from_bytes(b)) {
-                Some(Ok(sp)) => (f, sp, false),
-                Some(Err(e)) => return self.status(format!("{f}: {e}"), false),
-                None => return self.status(format!("'{f}' is not embedded in this package. Use Import SVG paths or pick an embedded spline."), false),
-            },
-            None => {
-                let k = &n.kind;
-                let preset = n.nums.get("preset").copied().unwrap_or(spl_default_preset(k) as f32).round().clamp(0.0, 6.0) as u32 + 1;
-                let sp = Spline::preset(preset, n.nums.get("amplitude").copied().unwrap_or(0.12), n.nums.get("frequency").copied().unwrap_or(2.0));
-                (self.spl_unique_name("spline"), sp, true)
-            }
-        };
-        if created {
-            self.snap();
-            self.g.resources.insert(file.clone(), std::sync::Arc::new(sp.to_text().into_bytes()));
-            if let Some(n) = self.g.nodes.get_mut(&node) {
-                n.strs.insert("file".into(), file.clone());
-            }
-            self.dirty = true;
+        ed.changed = false;
+        let (node, res, svg) = (ed.node, ed.res.clone(), ed.sp.to_svg(&ed.styles));
+        if self.g.nodes.get(&node).is_none() {
+            return;
         }
-        let last = sp.to_text();
-        self.active = Some(node);
-        self.sel.clear();
-        self.sel.insert(node);
-        self.spl = Some(SplEdit { node, file, sp, last, path: 0, sel: None, drag: None, menu_pt: None, snap: false });
-        self.status("Editing a spline in the 2D view: click to add points, drag to move, right-click for more. Alt or middle button pans.", true);
-    }
-
-    fn spl_import_svg(&mut self, node: u32) {
-        let Some(p) = rfd::FileDialog::new().add_filter("SVG image", &["svg"]).pick_file() else { return };
-        let text = match std::fs::read_to_string(&p) {
-            Ok(t) => t,
-            Err(e) => return self.status(format!("{}: {e}", p.display()), false),
-        };
-        match Spline::from_svg(&text) {
-            Ok(sp) => {
-                let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "spline".into());
-                let stem: String = stem.chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' }).collect();
-                let file = self.spl_unique_name(&stem);
-                self.snap();
-                self.g.resources.insert(file.clone(), std::sync::Arc::new(sp.to_text().into_bytes()));
+        self.snap();
+        match native::set_resource(&mut self.g, &res, "svg", "svg", svg.into_bytes()) {
+            Ok(path) => {
+                for (parent, _) in self.parents.iter_mut() {
+                    native::adopt_package(parent, &self.g);
+                }
                 if let Some(n) = self.g.nodes.get_mut(&node) {
-                    n.strs.insert("file".into(), file.clone());
+                    native::set_value(n, "vectorresourcepath", Some(PVal::Const { ty: PTy::Path, raw: path, rel: None }));
                 }
                 self.dirty = true;
-                self.status(format!("Imported {} paths ({} points) as {file}", sp.paths.len(), sp.point_count()), true);
             }
-            Err(e) => self.status(format!("{}: {e}", p.display()), false),
+            Err(e) => self.status(e, false),
         }
     }
 
-    fn spl_write(&mut self, e: &mut SplEdit) {
-        let t = e.sp.to_text();
-        self.g.resources.insert(e.file.clone(), std::sync::Arc::new(t.clone().into_bytes()));
-        e.last = t;
-        self.dirty = true;
-        self.modified = true;
-    }
-
-    /// Re-read the resource when something else (undo, redo) changed it; false when the editor must close.
-    fn spl_sync(&mut self, e: &mut SplEdit) -> bool {
-        if !self.g.nodes.get(&e.node).map(|n| is_path_node(&n.kind) && n.strs.get("file") == Some(&e.file)).unwrap_or(false) {
-            return false;
+    fn spline_editor(&mut self, ctx: &egui::Context) {
+        let Some(mut ed) = self.spl.take() else { return };
+        let mut open = true;
+        let mut apply = false;
+        egui::Window::new("Spline editor").id(Id::new("spline_editor")).open(&mut open).default_size(vec2(760.0, 640.0)).resizable(true).show(ctx, |ui| {
+            self.spline_ui(ui, &mut ed, &mut apply);
+        });
+        if apply {
+            self.spl = Some(ed);
+            self.apply_spline();
+            return self.spline_after_apply(open);
         }
-        match self.g.resources.get(&e.file) {
-            None => false,
-            Some(b) => {
-                if b.as_slice() != e.last.as_bytes() {
-                    if let Ok(sp) = Spline::from_bytes(b) {
-                        e.last = sp.to_text();
-                        e.sp = sp;
-                        e.path = e.path.min(e.sp.paths.len().saturating_sub(1));
-                        e.sel = None;
-                        e.drag = None;
-                    }
-                }
-                true
-            }
+        if open {
+            self.spl = Some(ed);
         }
     }
 
-    fn spl_toolbar(&mut self, ui: &mut egui::Ui) {
-        let Some(mut e) = self.spl.take() else { return };
-        if !self.spl_sync(&mut e) {
-            return;
+    fn spline_after_apply(&mut self, open: bool) {
+        if !open {
+            self.spl = None;
         }
-        let mut done = false;
-        let mut changed = false;
-        let mut snap_first = false;
+    }
+
+    fn spline_ui(&mut self, ui: &mut egui::Ui, ed: &mut SplineEd, apply: &mut bool) {
+        ed.fix_styles();
+        // ---- toolbar
         ui.horizontal_wrapped(|ui| {
-            ui.add_space(4.0);
-            ui.strong(format!("Spline {}", e.file));
-            if ui.button("Done").clicked() {
-                done = true;
+            ui.selectable_value(&mut ed.tool, SplTool::Pen, "Pen").on_hover_text("Click to add points, drag to pull handles, click the first point to close the path");
+            ui.selectable_value(&mut ed.tool, SplTool::Edit, "Edit").on_hover_text("Drag points and handles, double-click a curve to add a point, right-click a point to delete it");
+            ui.separator();
+            if ui.add_enabled(!ed.undo.is_empty(), egui::Button::new("Undo")).clicked() {
+                if let Some(prev) = ed.undo.pop() {
+                    ed.redo.push(spl_state(&ed.sp, &ed.styles));
+                    (ed.sp, ed.styles) = prev;
+                    ed.pt = None;
+                    ed.fix_styles();
+                    ed.edited();
+                    *apply = true;
+                }
+            }
+            if ui.add_enabled(!ed.redo.is_empty(), egui::Button::new("Redo")).clicked() {
+                if let Some(next) = ed.redo.pop() {
+                    ed.undo.push(spl_state(&ed.sp, &ed.styles));
+                    (ed.sp, ed.styles) = next;
+                    ed.pt = None;
+                    ed.fix_styles();
+                    ed.edited();
+                    *apply = true;
+                }
             }
             ui.separator();
-            if ui.button("New path").on_hover_text("Start another path; the next click adds its first point").clicked() {
-                snap_first = true;
-                e.sp.paths.push(SPath::default());
-                e.path = e.sp.paths.len() - 1;
-                e.sel = None;
-                changed = true;
-            }
-            if !e.sp.paths.is_empty() {
-                if ui.small_button("<").clicked() {
-                    e.path = (e.path + e.sp.paths.len() - 1) % e.sp.paths.len();
-                    e.sel = None;
-                }
-                ui.label(format!("path {} of {}", e.path + 1, e.sp.paths.len()));
-                if ui.small_button(">").clicked() {
-                    e.path = (e.path + 1) % e.sp.paths.len();
-                    e.sel = None;
-                }
-                let pi = e.path.min(e.sp.paths.len() - 1);
-                let (mut closed, mut smooth) = (e.sp.paths[pi].closed, e.sp.paths[pi].smooth);
-                if ui.checkbox(&mut closed, "Closed").changed() {
-                    snap_first = true;
-                    e.sp.paths[pi].closed = closed;
-                    changed = true;
-                }
-                if ui.checkbox(&mut smooth, "Smooth").on_hover_text("Points without handles get automatic smooth handles").changed() {
-                    snap_first = true;
-                    e.sp.paths[pi].smooth = smooth;
-                    changed = true;
-                }
-                if ui.button("Delete path").clicked() {
-                    snap_first = true;
-                    e.sp.paths.remove(pi);
-                    e.path = e.path.min(e.sp.paths.len().saturating_sub(1));
-                    e.sel = None;
-                    changed = true;
-                }
-            }
-            ui.checkbox(&mut e.snap, "Snap").on_hover_text("Snap points to a 1/32 grid (hold Shift to toggle while dragging)");
-            if let Some(si) = e.sel {
-                if let Some(pt) = e.sp.paths.get_mut(e.path).and_then(|p| p.pts.get_mut(si)) {
-                    ui.separator();
-                    let mut w = pt.w;
-                    ui.label("Width");
-                    if ui.add(egui::DragValue::new(&mut w).speed(0.02).range(0.0..=16.0)).changed() {
-                        pt.w = w;
-                        changed = true;
-                    }
-                    let mut z = pt.z;
-                    ui.label("Height");
-                    if ui.add(egui::DragValue::new(&mut z).speed(0.01).range(0.0..=1.0)).on_hover_text("Height value of the path at this point (read by the Path Sample node)").changed() {
-                        pt.z = z;
-                        changed = true;
-                    }
-                    let modes = ["Auto", "Mirrored", "Free", "Corner"];
-                    let mut tan = pt.tan.min(3);
-                    egui::ComboBox::from_id_salt("spl_tangent").selected_text(format!("Tangent: {}", modes[tan as usize])).show_ui(ui, |ui| {
-                        for (i, m) in modes.iter().enumerate() {
-                            ui.selectable_value(&mut tan, i as u8, *m);
+            ui.menu_button("Shapes", |ui| {
+                ui.label("Replace the spline with:");
+                for (id, label) in [("circle", "Circle"), ("square", "Square"), ("rounded_square", "Rounded square"), ("triangle", "Triangle"), ("star", "Star"), ("gear", "Gear"), ("heart", "Heart"), ("arrow", "Arrow"), ("cross", "Cross"), ("wave", "Wave line"), ("spiral", "Spiral")] {
+                    if ui.button(label).clicked() {
+                        if let Some(sp) = materialcraft::session::spline_preset(id) {
+                            ed.push_undo();
+                            ed.sp = sp;
+                            ed.styles = vec![ShapeStyle::default(); ed.sp.paths.len()];
+                            ed.path = 0;
+                            ed.pt = None;
+                            ed.edited();
+                            *apply = true;
                         }
-                    }).response.on_hover_text("Auto: smooth handles from the neighbours. Mirrored: both handles move together. Free: each handle moves alone. Corner: sharp point.");
-                    if tan != pt.tan.min(3) {
-                        snap_first = true;
-                        spl_set_tangent(&mut e.sp.paths[e.path], si, tan);
-                        changed = true;
+                        ui.close();
                     }
-                    if ui.button("Delete point").clicked() {
-                        snap_first = true;
-                        e.sp.paths[e.path].pts.remove(si);
-                        e.sel = None;
-                        changed = true;
+                }
+                ui.separator();
+                ui.label("Add to the spline:");
+                for (id, label) in [("circle", "Circle"), ("square", "Square"), ("star", "Star"), ("heart", "Heart")] {
+                    if ui.button(label).clicked() {
+                        if let Some(sp) = materialcraft::session::spline_preset(id) {
+                            ed.push_undo();
+                            ed.sp.merge(sp);
+                            ed.fix_styles();
+                            ed.path = ed.sp.paths.len() - 1;
+                            ed.pt = None;
+                            ed.edited();
+                            *apply = true;
+                        }
+                        ui.close();
                     }
+                }
+            });
+            if ui.button("New path").on_hover_text("Start another path (the Pen tool then adds its points)").clicked() {
+                ed.push_undo();
+                ed.sp.paths.push(SPath::default());
+                ed.styles.push(ShapeStyle::default());
+                ed.path = ed.sp.paths.len() - 1;
+                ed.pt = None;
+                ed.tool = SplTool::Pen;
+            }
+            if ui.add_enabled(!ed.sp.paths.is_empty(), egui::Button::new("Delete path")).clicked() {
+                ed.push_undo();
+                ed.sp.paths.remove(ed.path);
+                ed.styles.remove(ed.path);
+                ed.pt = None;
+                ed.fix_styles();
+                ed.edited();
+                *apply = true;
+            }
+            ui.separator();
+            egui::ComboBox::from_id_salt("spl_snap").width(96.0).selected_text(if ed.snap == 0 { "Snap: off".to_string() } else { format!("Snap: {}", ed.snap) }).show_ui(ui, |ui| {
+                ui.selectable_value(&mut ed.snap, 0, "Off");
+                for g in [8u32, 16, 32, 64] {
+                    ui.selectable_value(&mut ed.snap, g, format!("{g} cells"));
+                }
+            });
+        });
+        ui.horizontal_wrapped(|ui| {
+            if !ed.sp.paths.is_empty() {
+                ui.label(format!("Path {} of {}", ed.path + 1, ed.sp.paths.len()));
+                let mut ch = false;
+                let i = ed.path;
+                {
+                    let p = &mut ed.sp.paths[i];
+                    ch |= ui.checkbox(&mut p.closed, "Closed").changed();
+                    ch |= ui.checkbox(&mut p.smooth, "Smooth").on_hover_text("Smooth curves through the points; off gives straight corners where a point has no handles").changed();
+                }
+                let can_fill = ed.sp.paths[i].closed;
+                ch |= ui.add_enabled(can_fill, egui::Checkbox::new(&mut ed.styles[i].fill, "Fill")).changed();
+                ch |= ui.add(egui::Slider::new(&mut ed.styles[i].stroke, 0.0..=0.2).text("Stroke width")).on_hover_text("0 = no stroke (an open path then uses a thin line)").changed();
+                if ch {
+                    ed.edited();
+                    *apply = true;
+                }
+                if ui.button("Previous").clicked() && ed.path > 0 {
+                    ed.path -= 1;
+                    ed.pt = None;
+                }
+                if ui.button("Next").clicked() && ed.path + 1 < ed.sp.paths.len() {
+                    ed.path += 1;
+                    ed.pt = None;
                 }
             }
         });
-        if snap_first {
-            self.snap();
-        }
-        if changed {
-            self.spl_write(&mut e);
-        }
-        if !done {
-            self.spl = Some(e);
-        }
-    }
-
-    /// Delete the selected point (Delete key in the 2D view while editing).
-    fn spl_delete_point(&mut self) {
-        let Some(mut e) = self.spl.take() else { return };
-        if let Some(si) = e.sel {
-            if e.sp.paths.get(e.path).map(|p| si < p.pts.len()).unwrap_or(false) {
-                self.snap();
-                e.sp.paths[e.path].pts.remove(si);
-                e.sel = None;
-                self.spl_write(&mut e);
+        if let (Some(i), true) = (ed.pt, !ed.sp.paths.is_empty()) {
+            if i < ed.sp.paths[ed.path].pts.len() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(format!("Point {}", i + 1));
+                    let cur = ed.sp.paths[ed.path].pts[i].tan;
+                    for (m, n) in [(0u8, "Auto"), (1, "Mirrored"), (2, "Free"), (3, "Corner")] {
+                        if ui.selectable_label(cur == m, n).clicked() && cur != m {
+                            ed.push_undo();
+                            ed.set_tangent(i, m);
+                            ed.edited();
+                            *apply = true;
+                        }
+                    }
+                    let mut w = ed.sp.paths[ed.path].pts[i].w;
+                    if ui.add(egui::Slider::new(&mut w, 0.1..=3.0).text("Width")).on_hover_text("Scales the path's width at this point (read by the Path nodes' width)").changed() {
+                        ed.sp.paths[ed.path].pts[i].w = w;
+                        ed.edited();
+                    }
+                    if ui.button("Delete point").clicked() {
+                        ed.push_undo();
+                        ed.sp.paths[ed.path].pts.remove(i);
+                        ed.pt = None;
+                        ed.edited();
+                        *apply = true;
+                    }
+                });
             }
         }
-        self.spl = Some(e);
-    }
-
-    /// Draw the spline over the picture and handle the pointer. `img` is where the texture is drawn.
-    fn spl_canvas(&mut self, ui: &mut egui::Ui, painter: &egui::Painter, img: Rect, resp: &egui::Response) {
-        let Some(mut e) = self.spl.take() else { return };
-        let to_screen = |p: [f32; 2]| pos2(img.min.x + p[0] * img.width(), img.min.y + p[1] * img.height());
-        let to_uv = |q: Pos2| [(q.x - img.min.x) / img.width().max(1.0), (q.y - img.min.y) / img.height().max(1.0)];
-        let (iw, ih) = (img.width().max(1.0), img.height().max(1.0));
-        let (shift, alt, space) = ui.input(|i| (i.modifiers.shift, i.modifiers.alt, i.key_down(Key::Space)));
-        let hover = ui.input(|i| i.pointer.hover_pos()).filter(|p| resp.rect.contains(*p));
-        let snapped = |uv: [f32; 2], on: bool| -> [f32; 2] {
-            let uv = [uv[0].clamp(-0.5, 1.5), uv[1].clamp(-0.5, 1.5)];
-            if on != shift {
-                [(uv[0] * 32.0).round() / 32.0, (uv[1] * 32.0).round() / 32.0]
-            } else {
-                uv
-            }
-        };
-        let mut changed = false;
-        let mut want_snap = false;
-        // what is under a screen position: (kind 0 point / 1 handle in / 2 handle out, path, point)
-        let hit_at = |e: &SplEdit, q: Pos2| -> Option<(u8, usize, usize)> {
-            if let Some(si) = e.sel {
-                if let Some(p) = e.sp.paths.get(e.path).filter(|p| si < p.pts.len()) {
-                    let (hi, ho) = p.handles(si);
-                    let c = p.pts[si].p;
-                    for (k, h) in [(1u8, hi), (2u8, ho)] {
-                        if h[0].abs() + h[1].abs() > 1e-6 && to_screen([c[0] + h[0], c[1] + h[1]]).distance(q) <= SPL_HIT {
-                            return Some((k, e.path, si));
+        if !ed.note.is_empty() {
+            ui.colored_label(Color32::from_rgb(230, 190, 110), ed.note.clone());
+        }
+        ui.separator();
+        // ---- canvas and preview side by side
+        let side = (ui.available_width() - 210.0).min(ui.available_height() - 6.0).clamp(240.0, 900.0);
+        ui.horizontal_top(|ui| {
+            let (rect, resp) = ui.allocate_exact_size(vec2(side, side), Sense::click_and_drag());
+            self.spline_canvas(ui, ed, rect, &resp, apply);
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new("RESULT").monospace().size(10.0));
+                if ed.preview_stale || ed.preview.is_none() {
+                    ed.preview_stale = false;
+                    let svg = ed.sp.to_svg(&ed.styles);
+                    if let Ok(t) = materialcraft::vector::render_svg(&svg, 192, 192, 1, 1.0, 0.0, 0.0) {
+                        let px: Vec<Color32> = t.px.iter().map(|c| {
+                            // white shapes on black
+                            let v = (c[0].max(c[1]).max(c[2]) * c[3]).clamp(0.0, 1.0);
+                            let g = (v * 255.0).round() as u8;
+                            Color32::from_gray(g)
+                        }).collect();
+                        let img = egui::ColorImage { size: [t.w, t.h], source_size: vec2(t.w as f32, t.h as f32), pixels: px };
+                        match &mut ed.preview {
+                            Some(h) => h.set(img, egui::TextureOptions::LINEAR),
+                            None => ed.preview = Some(ui.ctx().load_texture("spline_preview", img, egui::TextureOptions::LINEAR)),
                         }
                     }
                 }
+                if let Some(h) = &ed.preview {
+                    ui.image((h.id(), vec2(192.0, 192.0)));
+                }
+                ui.small("What the SVG node outputs.\nConnect it to Bevel, Distance,\nBlur ... like any picture.");
+                ui.add_space(8.0);
+                ui.small(format!("{} path(s), {} point(s)", ed.sp.paths.len(), ed.sp.point_count()));
+                ui.small(format!("Resource: {}", ed.res));
+            });
+        });
+    }
+
+    fn spline_canvas(&mut self, ui: &mut egui::Ui, ed: &mut SplineEd, rect: Rect, resp: &egui::Response, apply: &mut bool) {
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 2.0, Color32::from_rgb(24, 24, 24));
+        let to_s = |p: [f32; 2]| pos2(rect.left() + p[0] * rect.width(), rect.top() + p[1] * rect.height());
+        let to_t = |s: Pos2| [(s.x - rect.left()) / rect.width(), (s.y - rect.top()) / rect.height()];
+        // grid
+        for k in 1..8 {
+            let t = k as f32 / 8.0;
+            let c = if k == 4 { Color32::from_rgb(70, 70, 70) } else { Color32::from_rgb(44, 44, 44) };
+            painter.line_segment([to_s([t, 0.0]), to_s([t, 1.0])], Stroke::new(1.0_f32, c));
+            painter.line_segment([to_s([0.0, t]), to_s([1.0, t])], Stroke::new(1.0_f32, c));
+        }
+        painter.rect_stroke(rect, 2.0, Stroke::new(1.0_f32, Color32::from_gray(110)), egui::StrokeKind::Inside);
+        // curves of every path (the active one brighter)
+        let (fw, fh) = (rect.width(), rect.height());
+        for (pi, path) in ed.sp.paths.iter().enumerate() {
+            if path.pts.len() < 2 {
+                continue;
             }
-            let order: Vec<usize> = std::iter::once(e.path).chain((0..e.sp.paths.len()).filter(|i| *i != e.path)).collect();
+            let poly = Spline { paths: vec![path.clone()] }.flatten(fw, fh);
+            let col = if pi == ed.path { Color32::from_rgb(110, 225, 200) } else { Color32::from_gray(150) };
+            for pl in &poly {
+                let mut pts: Vec<Pos2> = pl.pts.iter().map(|p| pos2(rect.left() + p[0], rect.top() + p[1])).collect();
+                if pl.closed && pts.len() > 2 {
+                    pts.push(pts[0]);
+                }
+                painter.add(egui::Shape::line(pts, Stroke::new(if pi == ed.path { 2.0 } else { 1.2 }, col)));
+            }
+        }
+        // points and the handles of the selected one
+        let hit_r = 8.0;
+        let ptr = resp.hover_pos().or_else(|| ui.input(|i| i.pointer.interact_pos()));
+        if let Some(path) = ed.sp.paths.get(ed.path) {
+            if let Some(i) = ed.pt.filter(|&i| i < path.pts.len()) {
+                if path.pts.len() >= 2 {
+                    let (hi, ho) = path.handles(i);
+                    let c = to_s(path.pts[i].p);
+                    for h in [hi, ho] {
+                        let hp = to_s([path.pts[i].p[0] + h[0], path.pts[i].p[1] + h[1]]);
+                        painter.line_segment([c, hp], Stroke::new(1.0_f32, Color32::from_rgb(255, 190, 90)));
+                        painter.circle(hp, 4.5, Color32::from_rgb(255, 190, 90), Stroke::new(1.0_f32, Color32::BLACK));
+                    }
+                }
+            }
+        }
+        for (pi, path) in ed.sp.paths.iter().enumerate() {
+            for (i, q) in path.pts.iter().enumerate() {
+                let c = to_s(q.p);
+                let sel = pi == ed.path && ed.pt == Some(i);
+                let r = Rect::from_center_size(c, Vec2::splat(if sel { 10.0 } else { 7.0 }));
+                let fill = if sel { Color32::WHITE } else if i == 0 { Color32::from_rgb(110, 225, 200) } else if pi == ed.path { Color32::from_gray(210) } else { Color32::from_gray(120) };
+                painter.rect(r, 1.0, fill, Stroke::new(1.0_f32, Color32::BLACK), egui::StrokeKind::Inside);
+            }
+        }
+        // a ghost of the next point under the Pen
+        if ed.tool == SplTool::Pen && ed.drag == SplDrag::None {
+            if let Some(p) = ptr.filter(|p| rect.contains(*p)) {
+                painter.circle_stroke(p, 5.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(110, 225, 200, 160)));
+            }
+        }
+        let snap = |mut t: [f32; 2], on: u32| -> [f32; 2] {
+            if on > 0 {
+                let g = on as f32;
+                t = [(t[0] * g).round() / g, (t[1] * g).round() / g];
+            }
+            t
+        };
+        let _ = &snap;
+        // ---- hit tests
+        let find_point = |ed: &SplineEd, at: Pos2| -> Option<(usize, usize)> {
+            // the active path first, then the others
+            let order: Vec<usize> = std::iter::once(ed.path).chain((0..ed.sp.paths.len()).filter(|&k| k != ed.path)).collect();
             for pi in order {
-                if let Some(p) = e.sp.paths.get(pi) {
-                    for (i, pt) in p.pts.iter().enumerate().rev() {
-                        if to_screen(pt.p).distance(q) <= SPL_HIT {
-                            return Some((0, pi, i));
-                        }
+                let Some(path) = ed.sp.paths.get(pi) else { continue };
+                for (i, q) in path.pts.iter().enumerate().rev() {
+                    if (to_s(q.p) - at).length() <= hit_r {
+                        return Some((pi, i));
                     }
                 }
             }
             None
         };
-        // ---- pointer
-        let pan_mode = alt || space || ui.input(|i| i.pointer.middle_down());
-        if let Some(q) = hover {
-            if ui.input(|i| i.pointer.secondary_pressed()) {
-                e.menu_pt = hit_at(&e, q).filter(|h| h.0 == 0).map(|h| (h.1, h.2));
+        let find_handle = |ed: &SplineEd, at: Pos2| -> Option<SplDrag> {
+            let i = ed.pt?;
+            let path = ed.sp.paths.get(ed.path)?;
+            if i >= path.pts.len() || path.pts.len() < 2 {
+                return None;
             }
-            if !pan_mode && ui.input(|i| i.pointer.primary_pressed()) {
-                match hit_at(&e, q) {
-                    Some((k, pi, si)) => {
-                        e.path = pi;
-                        e.sel = Some(si);
-                        e.drag = Some((k, si, false));
-                    }
-                    None => {
-                        let uv = snapped(to_uv(q), e.snap);
-                        // on the curve: add a point there; elsewhere: append one to the current path
-                        let near = e.sp.paths.get(e.path).and_then(|p| p.nearest(to_uv(q), iw, ih)).filter(|n| n.2 <= SPL_HIT * 0.8);
-                        want_snap = true;
-                        if e.sp.paths.is_empty() {
-                            e.sp.paths.push(SPath::default());
-                            e.path = 0;
-                        }
-                        let pi = e.path.min(e.sp.paths.len() - 1);
-                        let idx = match near {
-                            Some((seg, t, _)) => e.sp.paths[pi].split(seg, t),
-                            None => {
-                                e.sp.paths[pi].pts.push(SPoint::new(uv[0], uv[1]));
-                                e.sp.paths[pi].pts.len() - 1
-                            }
-                        };
-                        e.sel = Some(idx);
-                        e.drag = Some((0, idx, near.is_none()));
-                        changed = true;
-                    }
-                }
+            let (hi, ho) = path.handles(i);
+            let p = path.pts[i].p;
+            let sp = |h: [f32; 2]| to_s([p[0] + h[0], p[1] + h[1]]);
+            if (sp(ho) - at).length() <= hit_r && (hi != [0.0, 0.0] || ho != [0.0, 0.0] || true) {
+                return Some(SplDrag::HandleOut);
             }
-            if resp.double_clicked() && !pan_mode {
-                if let Some((0, pi, si)) = hit_at(&e, q) {
-                    want_snap = true;
-                    let corner = e.sp.paths[pi].pts[si].tan != 3;
-                    spl_set_tangent(&mut e.sp.paths[pi], si, if corner { 3 } else { 0 });
-                    changed = true;
+            if (sp(hi) - at).length() <= hit_r {
+                return Some(SplDrag::HandleIn);
+            }
+            None
+        };
+        // ---- interaction
+        if resp.drag_started_by(PointerButton::Primary) {
+            if let Some(at) = resp.interact_pointer_pos() {
+                if let Some(h) = find_handle(ed, at) {
+                    ed.push_undo();
+                    ed.drag = h;
+                } else if let Some((pi, i)) = find_point(ed, at) {
+                    // the first point of an open path with the Pen closes it
+                    let first_close = ed.tool == SplTool::Pen && pi == ed.path && i == 0 && !ed.sp.paths[pi].closed && ed.sp.paths[pi].pts.len() >= 3;
+                    ed.push_undo();
+                    if first_close {
+                        ed.sp.paths[pi].closed = true;
+                        ed.edited();
+                        *apply = true;
+                    } else {
+                        ed.path = pi;
+                        ed.pt = Some(i);
+                        ed.drag = SplDrag::Point;
+                    }
+                } else if ed.tool == SplTool::Pen && rect.contains(at) {
+                    ed.push_undo();
+                    // a closed (or no) active path: the point starts a new one
+                    if ed.sp.paths.is_empty() || ed.sp.paths[ed.path].closed {
+                        ed.sp.paths.push(SPath::default());
+                        ed.styles.push(ShapeStyle::default());
+                        ed.path = ed.sp.paths.len() - 1;
+                    }
+                    let t = snap(to_t(at), ed.snap);
+                    let path = &mut ed.sp.paths[ed.path];
+                    path.pts.push(SPoint::new(t[0], t[1]));
+                    ed.pt = Some(path.pts.len() - 1);
+                    ed.drag = SplDrag::Pen;
+                    ed.edited();
                 }
             }
         }
-        if let Some((k, si, moved)) = e.drag {
-            if ui.input(|i| i.pointer.primary_down()) {
-                if let Some(q) = ui.input(|i| i.pointer.latest_pos()) {
-                    let uv = snapped(to_uv(q), e.snap);
-                    let pi = e.path.min(e.sp.paths.len().saturating_sub(1));
-                    if let Some(p) = e.sp.paths.get(pi).filter(|p| si < p.pts.len()) {
-                        let (c, hi, ho) = (p.pts[si].p, p.handles(si).0, p.handles(si).1);
-                        let differs = match k {
-                            0 => (uv[0] - c[0]).abs() > 1e-5 || (uv[1] - c[1]).abs() > 1e-5,
-                            1 => ((uv[0] - c[0]) - hi[0]).abs() > 1e-5 || ((uv[1] - c[1]) - hi[1]).abs() > 1e-5,
-                            _ => ((uv[0] - c[0]) - ho[0]).abs() > 1e-5 || ((uv[1] - c[1]) - ho[1]).abs() > 1e-5,
-                        };
-                        if differs {
-                            if !moved {
-                                want_snap = true;
+        if resp.dragged_by(PointerButton::Primary) {
+            if let (Some(at), Some(i)) = (resp.interact_pointer_pos(), ed.pt) {
+                let t = to_t(at);
+                let on = ed.snap;
+                match ed.drag {
+                    SplDrag::Point => {
+                        let t = snap(t, on);
+                        if let Some(q) = ed.sp.paths.get_mut(ed.path).and_then(|p| p.pts.get_mut(i)) {
+                            q.p = t;
+                        }
+                        ed.edited();
+                    }
+                    SplDrag::Pen => {
+                        if let Some(q) = ed.sp.paths.get_mut(ed.path).and_then(|p| p.pts.get_mut(i)) {
+                            let d = [t[0] - q.p[0], t[1] - q.p[1]];
+                            if (d[0] * rect.width()).hypot(d[1] * rect.height()) > 4.0 {
+                                q.hout = Some(d);
+                                q.hin = Some([-d[0], -d[1]]);
+                                q.tan = 1;
+                                ed.edited();
                             }
-                            let pt = &mut e.sp.paths[pi].pts[si];
-                            // Auto and Mirrored points move both handles together; Free and Corner points (or Alt) one at a time
-                            let together = !alt && pt.tan <= 1;
-                            match k {
-                                0 => pt.p = uv,
-                                1 => {
-                                    let h = [uv[0] - c[0], uv[1] - c[1]];
-                                    pt.hin = Some(h);
-                                    if together {
-                                        pt.hout = Some([-h[0], -h[1]]);
-                                    } else if pt.hout.is_none() {
-                                        pt.hout = Some(ho);
-                                    }
+                        }
+                    }
+                    SplDrag::HandleIn | SplDrag::HandleOut => {
+                        let mode = ed.drag;
+                        if let Some(q) = ed.sp.paths.get_mut(ed.path).and_then(|p| p.pts.get_mut(i)) {
+                            let d = [t[0] - q.p[0], t[1] - q.p[1]];
+                            let (mine, other) = if mode == SplDrag::HandleOut { (d, [-d[0], -d[1]]) } else { (d, [-d[0], -d[1]]) };
+                            match (mode, q.tan) {
+                                (SplDrag::HandleOut, 1) => {
+                                    q.hout = Some(mine);
+                                    q.hin = Some(other);
+                                }
+                                (SplDrag::HandleIn, 1) => {
+                                    q.hin = Some(mine);
+                                    q.hout = Some(other);
+                                }
+                                (SplDrag::HandleOut, _) => {
+                                    q.hout = Some(mine);
+                                    q.tan = 2;
                                 }
                                 _ => {
-                                    let h = [uv[0] - c[0], uv[1] - c[1]];
-                                    pt.hout = Some(h);
-                                    if together {
-                                        pt.hin = Some([-h[0], -h[1]]);
-                                    } else if pt.hin.is_none() {
-                                        pt.hin = Some(hi);
-                                    }
+                                    q.hin = Some(mine);
+                                    q.tan = 2;
                                 }
                             }
-                            if k != 0 {
-                                pt.tan = if together { 1 } else { 2 };
-                            }
-                            e.drag = Some((k, si, true));
-                            changed = true;
+                            ed.edited();
                         }
                     }
+                    SplDrag::None => {}
                 }
-            } else {
-                e.drag = None;
             }
         }
-        if want_snap {
-            // the resource still holds the text from before this change, so the snapshot is the state to undo to
-            self.snap();
+        if resp.drag_stopped() {
+            if ed.drag != SplDrag::None {
+                *apply = true;
+            }
+            ed.drag = SplDrag::None;
         }
-        if changed {
-            self.spl_write(&mut e);
-        }
-        // ---- context menu
-        let menu_pt = e.menu_pt;
-        let mut del_pt = false;
-        let mut corner = false;
-        let mut smooth = false;
-        let mut new_path_at: Option<[f32; 2]> = None;
-        resp.context_menu(|ui| {
-            if let Some((pi, si)) = menu_pt {
-                if ui.button("Delete point").clicked() {
-                    del_pt = true;
-                    ui.close();
-                }
-                if ui.button("Corner point").clicked() {
-                    corner = true;
-                    ui.close();
-                }
-                if ui.button("Smooth point").clicked() {
-                    smooth = true;
-                    ui.close();
-                }
-                let _ = (pi, si);
-            } else {
-                let at = ui.input(|i| i.pointer.interact_pos()).map(to_uv);
-                if ui.button("Start a new path here").clicked() {
-                    new_path_at = at;
-                    ui.close();
-                }
-            }
-        });
-        if let Some((pi, si)) = menu_pt {
-            if del_pt || corner || smooth {
-                self.snap();
-                if let Some(p) = e.sp.paths.get_mut(pi) {
-                    if si < p.pts.len() {
-                        if del_pt {
-                            p.pts.remove(si);
-                            e.sel = None;
-                        } else {
-                            spl_set_tangent(p, si, if corner { 3 } else { 0 });
-                        }
-                    }
-                }
-                self.spl_write(&mut e);
-            }
-        } else if let Some(uv) = new_path_at {
-            self.snap();
-            let uv = snapped(uv, e.snap);
-            e.sp.paths.push(SPath { pts: vec![SPoint::new(uv[0], uv[1])], ..Default::default() });
-            e.path = e.sp.paths.len() - 1;
-            e.sel = Some(0);
-            self.spl_write(&mut e);
-        }
-        // ---- drawing
-        let accent = Color32::from_rgb(90, 220, 190);
-        for (pi, path) in e.sp.paths.iter().enumerate() {
-            if path.pts.is_empty() {
-                continue;
-            }
-            let poly = path.flatten(iw, ih);
-            let mut pts: Vec<Pos2> = poly.pts.iter().map(|p| pos2(img.min.x + p[0], img.min.y + p[1])).collect();
-            if poly.closed {
-                if let Some(f) = pts.first().copied() {
-                    pts.push(f);
-                }
-            }
-            let cur = pi == e.path;
-            let col = if cur { accent } else { Color32::from_rgb(150, 170, 190) };
-            if pts.len() >= 2 {
-                painter.add(egui::Shape::line(pts.clone(), Stroke::new(3.0_f32, Color32::from_black_alpha(150))));
-                painter.add(egui::Shape::line(pts, Stroke::new(1.5_f32, col)));
-            }
-            for (i, pt) in path.pts.iter().enumerate() {
-                let c = to_screen(pt.p);
-                let sel = cur && e.sel == Some(i);
-                let r = Rect::from_center_size(c, vec2(8.0, 8.0));
-                painter.rect_filled(r, 1.0, if sel { Color32::WHITE } else { Color32::from_black_alpha(200) });
-                painter.rect_stroke(r, 1.0, Stroke::new(1.5_f32, if i == 0 { Color32::from_rgb(255, 200, 80) } else { col }), egui::StrokeKind::Inside);
-                if sel {
-                    let (hi, ho) = path.handles(i);
-                    for h in [hi, ho] {
-                        if h[0].abs() + h[1].abs() > 1e-6 {
-                            let hp = to_screen([pt.p[0] + h[0], pt.p[1] + h[1]]);
-                            painter.line_segment([c, hp], Stroke::new(1.0_f32, Color32::from_gray(200)));
-                            painter.circle_filled(hp, 4.0, accent);
-                            painter.circle_stroke(hp, 4.0, Stroke::new(1.0_f32, Color32::BLACK));
+        // double-click a curve: a new point on it
+        if resp.double_clicked() {
+            if let Some(at) = resp.interact_pointer_pos() {
+                if find_point(ed, at).is_none() {
+                    let best = ed.sp.paths.iter().enumerate().filter_map(|(pi, p)| p.nearest(to_t(at), rect.width(), rect.height()).map(|(seg, t, d)| (pi, seg, t, d))).min_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal));
+                    if let Some((pi, seg, t, d)) = best {
+                        if d < 12.0 {
+                            ed.push_undo();
+                            let at = ed.sp.paths[pi].split(seg, t);
+                            ed.path = pi;
+                            ed.pt = Some(at);
+                            ed.edited();
+                            *apply = true;
                         }
                     }
                 }
             }
         }
-        self.spl = Some(e);
+        // right-click a point: delete it
+        if resp.secondary_clicked() {
+            if let Some(at) = resp.interact_pointer_pos() {
+                if let Some((pi, i)) = find_point(ed, at) {
+                    ed.push_undo();
+                    ed.sp.paths[pi].pts.remove(i);
+                    ed.path = pi;
+                    ed.pt = None;
+                    ed.edited();
+                    *apply = true;
+                }
+            }
+        }
+        if resp.clicked() && ed.drag == SplDrag::None {
+            if let Some(at) = resp.interact_pointer_pos() {
+                match find_point(ed, at) {
+                    Some((pi, i)) => {
+                        ed.path = pi;
+                        ed.pt = Some(i);
+                    }
+                    None if ed.tool == SplTool::Edit => ed.pt = None,
+                    None => {}
+                }
+            }
+        }
+        // Delete removes the selected point
+        let del = ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace));
+        if del && resp.hovered() {
+            if let Some(i) = ed.pt {
+                if let Some(p) = ed.sp.paths.get_mut(ed.path) {
+                    if i < p.pts.len() {
+                        ed.push_undo();
+                        ed.sp.paths[ed.path].pts.remove(i);
+                        ed.pt = None;
+                        ed.edited();
+                        *apply = true;
+                    }
+                }
+            }
+        }
     }
 }

@@ -25,9 +25,6 @@ struct BakeUi {
     report: Option<bake::BakeReport>,
     thumbs: BTreeMap<String, egui::TextureHandle>,
     shown: Option<String>,
-    into_package: bool,
-    write_files: bool,
-    add_nodes: bool,
     auto: bool,
     info: HashMap<PathBuf, (Option<std::time::SystemTime>, Result<String, String>)>,
     info_pending: HashSet<PathBuf>,
@@ -55,9 +52,6 @@ impl BakeUi {
             report: None,
             thumbs: BTreeMap::new(),
             shown: None,
-            into_package: true,
-            write_files: false,
-            add_nodes: true,
             auto: false,
             info: HashMap::new(),
             info_pending: HashSet::new(),
@@ -189,16 +183,12 @@ impl App {
             self.bake.msg = "Tick at least one map to bake.".into();
             return;
         }
-        if !self.bake.into_package && !self.bake.write_files {
-            self.bake.msg = "Choose where the maps go: into the package, into a folder, or both.".into();
-            return;
-        }
-        if self.bake.write_files && self.bake.out.is_none() {
-            self.bake.msg = "Choose the output folder.".into();
+        if self.bake.out.is_none() {
+            self.bake.msg = "Choose the output folder (Output tab): the maps are written there as 16-bit PNG files.".into();
             return;
         }
         let set = self.bake_set();
-        let out = if self.bake.write_files { self.bake.out.clone() } else { None };
+        let out = self.bake.out.clone();
         let prog = std::sync::Arc::new(bake::Progress::new());
         let (tx, rx) = channel();
         let (p2, ctx2) = (prog.clone(), ctx.clone());
@@ -275,37 +265,7 @@ impl App {
         if self.bake.shown.as_ref().map(|s| !res.maps.contains_key(s)).unwrap_or(true) {
             self.bake.shown = res.maps.keys().next().cloned();
         }
-        let name = bake_set_name(&self.bake.name);
         let mut parts: Vec<String> = Vec::new();
-        if self.bake.into_package {
-            self.snap();
-            let n = bake::store_maps(&mut self.g.resources, &name, &res.maps);
-            let cfg = self.bake_set().to_text();
-            self.g.resources.insert(bake::set_key(&name), std::sync::Arc::new(cfg.into_bytes()));
-            parts.push(format!("{n} map(s) stored in the package as set '{name}'"));
-            if self.bake.add_nodes {
-                let base = self.view_center_world();
-                let mut added = 0;
-                for (i, id) in res.maps.keys().enumerate() {
-                    let exists = self.g.nodes.values().any(|n| n.kind == "baked_map" && n.strs.get("set").map(|s| *s == name).unwrap_or(false) && n.strs.get("map").map(|m| m == id).unwrap_or(false));
-                    if exists {
-                        continue;
-                    }
-                    let nid = self.add_node_at("baked_map", None, pos2(base.x + (added as f32 % 4.0) * (CARD + 20.0), base.y + (added / 4) as f32 * (CARD_H + 30.0)));
-                    if let Some(n) = self.g.nodes.get_mut(&nid) {
-                        n.strs.insert("set".into(), name.clone());
-                        n.strs.insert("map".into(), id.clone());
-                    }
-                    added += 1;
-                    let _ = i;
-                }
-                if added > 0 {
-                    parts.push(format!("{added} Baked Map node(s) added"));
-                }
-            }
-            self.modified = true;
-            self.dirty = true;
-        }
         if !files.is_empty() {
             parts.push(format!("{} PNG file(s) written", files.len()));
         }
@@ -334,24 +294,6 @@ impl App {
                     self.bake_apply_preset(BakeSettings::final_quality());
                 }
                 ui.separator();
-                let stored: Vec<String> = self.g.resources.keys().filter(|k| k.starts_with("bake/") && k.ends_with(".cfg") && k.matches('/').count() == 1).map(|k| k[5..k.len() - 4].to_string()).collect();
-                if !stored.is_empty() {
-                    egui::ComboBox::from_id_salt("bake_stored").selected_text("Sets in package").show_ui(ui, |ui| {
-                        for n in &stored {
-                            if ui.selectable_label(false, n).clicked() {
-                                if let Some(b) = self.g.resources.get(&bake::set_key(n)) {
-                                    match bake::BakeSet::parse(n, &String::from_utf8_lossy(b)) {
-                                        Ok(set) => self.bake_load_set(set),
-                                        Err(e) => {
-                                            self.bake.ok = false;
-                                            self.bake.msg = format!("Cannot read set '{n}': {e}");
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    });
-                }
                 if ui.button("Load set file...").clicked() {
                     if let Some(p) = rfd::FileDialog::new().add_filter("Bake set", &["bakeset", "txt"]).pick_file() {
                         let nm = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "bake".into());
@@ -681,42 +623,14 @@ impl App {
     }
 
     fn bake_tab_output(&mut self, ui: &mut egui::Ui) {
-        ui.checkbox(&mut self.bake.into_package, "Store the maps in this package (16-bit)").on_hover_text("Baked Map nodes read them; they travel with the file and publish with it.");
-        ui.add_enabled_ui(self.bake.into_package, |ui| {
-            ui.checkbox(&mut self.bake.add_nodes, "Add a Baked Map node for every new map");
-        });
-        ui.checkbox(&mut self.bake.write_files, "Also write PNG files (16-bit)");
-        ui.add_enabled_ui(self.bake.write_files, |ui| {
-            ui.horizontal(|ui| {
-                if ui.button("Output folder...").clicked() {
-                    if let Some(d) = rfd::FileDialog::new().pick_folder() {
-                        self.bake.out = Some(d);
-                    }
+        ui.label("The maps are written as 16-bit PNG files to this folder; link them into the package as bitmaps to use them in a graph.");
+        ui.horizontal(|ui| {
+            if ui.button("Output folder...").clicked() {
+                if let Some(d) = rfd::FileDialog::new().pick_folder() {
+                    self.bake.out = Some(d);
                 }
-                ui.label(self.bake.out.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "(none)".into()));
-            });
+            }
+            ui.label(self.bake.out.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "(none)".into()));
         });
-        ui.add_space(8.0);
-        let stored = bake::stored_sets(&self.g.resources);
-        if stored.is_empty() {
-            ui.small("This package has no baked maps yet.");
-        } else {
-            ui.strong("Baked maps in this package");
-            let mut drop_set: Option<String> = None;
-            for (set, maps) in &stored {
-                ui.horizontal(|ui| {
-                    ui.label(format!("{set}: {}", maps.iter().map(|m| m.id()).collect::<Vec<_>>().join(", ")));
-                    if ui.small_button("Remove").clicked() {
-                        drop_set = Some(set.clone());
-                    }
-                });
-            }
-            if let Some(set) = drop_set {
-                self.snap();
-                let pre = format!("bake/{set}/");
-                self.g.resources.retain(|k, _| !k.starts_with(&pre) && *k != bake::set_key(&set));
-                self.dirty = true;
-            }
-        }
     }
 }

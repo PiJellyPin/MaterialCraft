@@ -6,12 +6,11 @@ use eframe::egui::{
     Sense, Stroke, TextStyle, Vec2, pos2, vec2,
 };
 use materialcraft::bake::{self, BakeSettings};
-use materialcraft::graph::{category, label, spec, usage_label, Comment, Exposed, Graph, Node, NodeCache, EXAMPLE, SPECS, THUMB};
+use materialcraft::graph::{usage_label, Comment, Graph, Node, NodeCache, THUMB};
 use materialcraft::render3d::{self, Maps, View};
 use materialcraft::tex::{self, Tex};
 use materialcraft::export::{self, Format};
 use materialcraft::gpu3d::{self, MapInputs};
-use materialcraft::params::{new_node_defaults, param_group, pdefs, PK};
 use materialcraft::{ops, png};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -111,6 +110,9 @@ fn checked_dock(l: Option<craft_ui::docking::Layout<Pn>>) -> craft_ui::docking::
 struct PrefsGeneral {
     skip_home: bool,
     hide_tip: bool,
+    snap_nodes: bool,
+    /// grid size in graph units; 0 = the default (16)
+    snap_grid: u32,
 }
 #[derive(serde::Serialize, serde::Deserialize, Default, Clone, PartialEq)]
 #[serde(default)]
@@ -134,26 +136,14 @@ const OUTPUT_NAMES: [&str; 11] = ["basecolor", "normal", "roughness", "metallic"
 const COMMENT_COLORS: [[u8; 3]; 6] = [[90, 140, 200], [200, 160, 60], [90, 180, 110], [190, 90, 90], [150, 100, 200], [150, 150, 150]];
 
 // ---------------------------------------------------------------- parameter tables
-fn slots(kind: &str) -> Vec<(&'static str, bool)> {
-    spec(kind)
-        .map(|s| s.req.iter().map(|n| (*n, true)).chain(s.opt.iter().map(|n| (*n, false))).collect())
-        .unwrap_or_default()
+
+/// The input sockets a node shows.
+fn node_slots(n: &Node, subgraphs: &BTreeMap<String, Graph>) -> Vec<(&'static str, bool)> {
+    sd_slots(n, subgraphs)
 }
 
 fn kind_color(kind: &str) -> Color32 {
-    match kind {
-        "subgraph" => Color32::from_rgb(214, 140, 56),
-        "input" | "dot" => Color32::from_rgb(110, 116, 128),
-        "bitmap" | "baked_map" => Color32::from_rgb(188, 118, 70),
-        "output" => Color32::from_rgb(74, 98, 120),
-        _ => match category(kind) {
-            "Generators" => Color32::from_rgb(176, 76, 66),
-            "SDF" => Color32::from_rgb(140, 88, 184),
-            "Material" => Color32::from_rgb(190, 150, 50),
-            "Utility" => Color32::from_rgb(100, 110, 130),
-            _ => Color32::from_rgb(64, 112, 176),
-        },
-    }
+    sd_color(kind)
 }
 
 fn qimg(t: &Tex) -> ColorImage {
@@ -184,14 +174,12 @@ struct SearchState {
 }
 
 enum Act {
+    NewSpline,
     Open,
     Save,
     SaveAs,
-    Publish,
-    ImportBitmap,
     Export,
     Bake,
-    Resources,
     Undo,
     Redo,
     Copy,
@@ -201,13 +189,8 @@ enum Act {
     Delete,
     SelectAll,
     Comment,
-    Subgraph,
     EnterSub(String),
     ExitSub,
-    SplineEdit(u32),
-    SplineImportSvg(u32),
-    SplineTrace(u32),
-    SplDelete,
     AutoLayout,
     FrameAll,
     Search(Option<Pos2>),
@@ -215,25 +198,30 @@ enum Act {
     NewGraph,
     Home,
     Drop(String, Pos2),
-    ImportGraph(PathBuf, Option<Pos2>, Option<String>),
     /// Import a graph of an open package (index, graph name or None for its main graph) as a node.
     ImportFromPkg(usize, Option<String>, Option<Pos2>),
     NewPackage,
     NewGraphIn(usize),
+    /// a new function graph in the `.sbs` package at this index
+    NewFunctionIn(usize),
     SwitchPkg(usize),
     OpenGraphTab(String),
     CloseGraphTab(String),
     ToggleDeps,
     SavePkg(usize),
     ClosePkg(usize),
-    /// Pick a package file and use one of its graphs as a live-linked node.
-    LinkPackage,
-    /// Re-read every live link of the current graph from disk.
-    RefreshLinks,
-    /// Open a ready-made template (library id) as an example in its own tab; nothing is added to the project.
-    OpenTemplate(String),
-    /// Copy a template into the project as a new graph (File > Package > Add template).
-    AddTemplate(String),
+    /// Start a new package from one of the New dialog's templates (index into `TEMPLATES`).
+    NewFromTemplate(usize),
+    /// Export the maps of a graph of an open package (package index, graph name or None for its main graph).
+    ExportMaps(usize, Option<String>),
+    /// Save one graph of an open package as a package of its own (with the graphs and functions it needs).
+    ExportGraphFile(usize, Option<String>),
+    /// Copy the graphs of another `.sbs` package into an open package.
+    AddGraphFile(usize),
+    /// Ask for a new name for a graph of an open package.
+    RenameGraph(usize, String),
+    DeleteGraph(usize, String),
+    DuplicateGraph(usize, Option<String>),
 }
 
 /// Drag payload: a graph of an open package (package index, graph label, graph name or None for the main graph).
@@ -248,22 +236,6 @@ struct Pkg {
     modified: bool,
     /// graph tabs that were open in this package (subgraph names)
     tabs: Vec<String>,
-    /// Some(template id) while this is a read-only-style example opened from the launcher: it is not part of the
-    /// user's project, is not remembered in the recent list and disappears when its tab is closed.
-    example: Option<String>,
-}
-
-fn read_pkg(path: &std::path::Path) -> Result<Pkg, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let mut g = Graph::parse_unchecked(&text).map_err(|e| e.to_string())?;
-    g.migrate_outputs();
-    // live links are read now (problems show up when the package is edited or evaluated)
-    let _ = g.resolve_links(path.parent().unwrap_or_else(|| std::path::Path::new(".")));
-    auto_layout_if_unplaced(&mut g);
-    if !g.meta.get("identifier").map(|s| !s.is_empty()).unwrap_or(false) {
-        g.meta.insert("identifier".into(), path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "graph".into()));
-    }
-    Ok(Pkg { path: Some(path.to_path_buf()), name: path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(), g, modified: false, tabs: Vec::new(), example: None })
 }
 
 struct EvalResult {
@@ -279,8 +251,18 @@ struct EvalResult {
     gpu: Option<gpu3d::GpuMaps>,
     /// resolution this pass was computed at
     size: usize,
-    /// a full pass (every node evaluated, thumbnails and 3D maps produced) rather than the cheap interactive pass
-    full: bool,
+    pass: Pass,
+}
+
+/// What an evaluation pass is for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Pass {
+    /// the viewed node and the outputs only, at a small or growing size: while a value moves
+    Interactive,
+    /// every node at a small size: all thumbnails, and first 3D maps (run once the input has settled)
+    Thumbs,
+    /// the outputs at the full preview size: the final 3D maps
+    Final,
 }
 
 /// The 2D view image of the selected node, sent as soon as that node is done (before the rest of the graph).
@@ -302,15 +284,14 @@ struct ExportUi {
     skip: BTreeSet<String>,
     /// output colour space for colour maps (index into `colorspace::SPACES`)
     space: usize,
+    /// whose maps: (package index, graph name or None for its main graph); None = the graph on screen
+    target: Option<(usize, Option<String>)>,
 }
 
 struct App {
-    was_focused: bool,
     gpu_eval: bool,
     /// graphs of the open package that have a tab (the main graph always has one)
     graph_tabs: Vec<String>,
-    /// template id when the package being edited is an example opened from the launcher
-    example: Option<String>,
     show_deps: bool,
     /// smallest / largest channel value of the node shown in the 2D view (HDR range readout)
     tex2d_range: Option<(f32, f32)>,
@@ -326,6 +307,8 @@ struct App {
     pan: Vec2,
     zoom: f32,
     canvas_rect: Rect,
+    /// the spline editor, when open
+    spl: Option<SplineEd>,
     connecting: Option<u32>,
     /// Output name of the graph-node socket a link is being dragged from.
     connecting_out: Option<String>,
@@ -343,16 +326,20 @@ struct App {
     prev_size: usize,
     /// a quick low-resolution result was just shown; compute the full-size one next
     refine: bool,
-    /// when the input has settled enough to run the full pass (thumbnails + 3D); reset on every change
+    /// when the input has settled enough to run the thumbnail and final passes; reset on every change
     settle_at: Option<std::time::Instant>,
-    /// the full (settled) pass has already been run for the current graph state
-    settled: bool,
+    /// the thumbnail pass (every node, small) is still to run for the current graph state
+    thumbs_due: bool,
+    /// the final pass (outputs at full size, 3D maps) is still to run for the current graph state
+    final_due: bool,
     /// resolution of the pass being computed, and the next (bigger) one to run when it finishes
     job_size: usize,
     refine_size: Option<usize>,
     node_sizes: HashMap<u32, usize>,
     /// resolution of the pass whose results are on screen (node_sizes are measured at this size)
     pass_size: usize,
+    /// resolution of the maps the 3D view shows
+    maps_size: usize,
     tile_preview: bool,
     thumbs: HashMap<u32, egui::TextureHandle>,
     /// pixels behind each thumbnail texture (an unchanged thumbnail is not uploaded again)
@@ -375,6 +362,8 @@ struct App {
     pkg_sel: usize,
     unsaved_name: String,
     confirm_close: Option<usize>,
+    /// the rename box of the Explorer: (package index, graph, new name being typed)
+    rename_graph: Option<(usize, String, String)>,
     dirty: bool,
     dirty3d: bool,
     gen: u64,
@@ -385,14 +374,13 @@ struct App {
     text_focus: bool,
     export: ExportUi,
     bake: BakeUi,
-    res: ResUi,
     res_dirs: Vec<PathBuf>,
     show_about: bool,
     /// the AI control window is open
     show_ai: bool,
+    import_view: Option<ImportView>,
     /// listening for assistants on a local port
     ctl: Option<ControlLink>,
-    link_pick: Option<(PathBuf, Vec<String>)>,
     screen: Screen,
     new_dlg: NewDlg,
     recent: Vec<PathBuf>,
@@ -408,7 +396,6 @@ struct App {
     lib_thumbs: HashMap<String, egui::TextureHandle>,
     lib_rx: Option<Receiver<HashMap<String, ColorImage>>>,
     lib_cat: String,
-    spl: Option<SplEdit>,
     view2d_rect: Rect,
     favorites: BTreeSet<String>,
     show: [bool; 5],
@@ -417,9 +404,12 @@ struct App {
     z2d: f32,
     pan2d: Vec2,
     need_fit: bool,
-    home_tpl: u8,
-    home_tpl_filter: String,
     connecting_in: Option<(u32, String)>,
+    /// snap dragged nodes to a grid, and the grid size in graph units
+    snap_nodes: bool,
+    snap_grid: f32,
+    /// size of the textures on the 3D mesh: 0 = the output nodes' own resolution, else a fixed size
+    mesh_tex_px: usize,
     copy_out: Option<String>,
     logo: Option<egui::TextureHandle>,
     logo_note: String,
@@ -430,8 +420,8 @@ impl App {
         apply_theme(&cc.egui_ctx);
         let (logo_tex, logo_note) = logo().clone();
         let logo_handle = cc.egui_ctx.load_texture("logo", qimg(&logo_tex), egui::TextureOptions::LINEAR);
-        let mut g = Graph::default();
-        g.meta.insert("identifier".into(), "Graph".into());
+        // the editor always holds an .sbs package: a fresh one until a package is created or opened
+        let g = materialcraft::sbs_native::new_package("Graph", 512);
         let active: Option<u32> = None;
         let (mut prefs, _prefs_report) = craft_settings::SettingsStore::<Prefs>::open(craft_settings::Location::Auto);
         if prefs.path().map(|p| !p.exists()).unwrap_or(false) {
@@ -445,12 +435,11 @@ impl App {
         }
         let skip_home = prefs.get().general.skip_home;
         let favorites: BTreeSet<String> = prefs.get().library.favorites.iter().cloned().collect();
-        let recent: Vec<PathBuf> = prefs.get().recent.files.iter().map(PathBuf::from).collect();
+        // only Substance packages open: older MaterialCraft files drop out of the list
+        let recent: Vec<PathBuf> = prefs.get().recent.files.iter().map(PathBuf::from).filter(|p| p.extension().map(|e| e.eq_ignore_ascii_case("sbs")).unwrap_or(false)).collect();
         App {
-            was_focused: true,
             gpu_eval: true,
             graph_tabs: Vec::new(),
-            example: None,
             show_deps: false,
             tex2d_range: None,
             parents: Vec::new(),
@@ -464,6 +453,7 @@ impl App {
             pan: vec2(30.0, 30.0),
             zoom: 0.9,
             canvas_rect: Rect::from_min_size(Pos2::ZERO, vec2(900.0, 500.0)),
+            spl: None,
             connecting: None,
             connecting_out: None,
             relink_all: false,
@@ -477,11 +467,13 @@ impl App {
             prev_size: 0,
             refine: false,
             settle_at: None,
-            settled: false,
+            thumbs_due: false,
+            final_due: false,
             job_size: 0,
             refine_size: None,
             node_sizes: HashMap::new(),
             pass_size: 0,
+            maps_size: 0,
             tile_preview: false,
             thumbs: HashMap::new(),
             thumb_px: HashMap::new(),
@@ -501,6 +493,7 @@ impl App {
             pkg_sel: 0,
             unsaved_name: "Unsaved Package".into(),
             confirm_close: None,
+            rename_graph: None,
             dirty: true,
             dirty3d: true,
             gen: 0,
@@ -509,14 +502,13 @@ impl App {
             node_cache: std::sync::Arc::new(NodeCache::with_default_budget()),
             lib_search: String::new(),
             text_focus: false,
-            export: ExportUi { open: false, dir: None, prefix: String::new(), sizes: [false, true, false, false, false, false], depth16: false, depth32: false, fmt: Format::Png, quality: 92, skip: BTreeSet::new(), space: 0 },
+            export: ExportUi { open: false, dir: None, prefix: String::new(), sizes: [false, true, false, false, false, false], depth16: false, depth32: false, fmt: Format::Png, quality: 92, skip: BTreeSet::new(), space: 0, target: None },
             bake: BakeUi::new(),
-            res: ResUi::new(),
             res_dirs: Vec::new(),
             show_about: false,
             show_ai: false,
+            import_view: None,
             ctl: None,
-            link_pick: None,
             screen: if skip_home { Screen::Editor } else { Screen::Home },
             new_dlg: NewDlg { open: false, sel: 1, name: "Graph".into(), size: 2048, height: 0, depth16: false, dest: None },
             recent,
@@ -524,6 +516,9 @@ impl App {
             home_page: 0,
             skip_home,
             hide_suggestions: prefs.get().general.hide_tip,
+            mesh_tex_px: 0,
+            snap_nodes: prefs.get().general.snap_nodes,
+            snap_grid: if prefs.get().general.snap_grid == 0 { 16.0 } else { prefs.get().general.snap_grid as f32 },
             dock: checked_dock(prefs.get().layout.dock.clone()),
             dock_closed: HashMap::new(),
             prefs,
@@ -532,7 +527,6 @@ impl App {
             lib_thumbs: HashMap::new(),
             lib_rx: Some(spawn_library_thumbs()),
             lib_cat: "Generators/Patterns".into(),
-            spl: None,
             view2d_rect: Rect::NOTHING,
             favorites,
             show: [true; 5],
@@ -541,57 +535,11 @@ impl App {
             z2d: 1.0,
             pan2d: Vec2::ZERO,
             need_fit: false,
-            home_tpl: 0,
-            home_tpl_filter: String::new(),
             connecting_in: None,
             copy_out: None,
             logo: Some(logo_handle),
             logo_note,
             g,
-        }
-    }
-
-    /// Import a saved graph file as a subgraph of the current graph and place it as a node.
-    fn import_graph_file(&mut self, p: PathBuf, at: Option<Pos2>, graph: Option<String>) {
-        let loaded = std::fs::read_to_string(&p).map_err(|e| e.to_string()).and_then(|t| Graph::parse_unchecked(&t).map_err(|e| e.to_string()));
-        let other = match loaded {
-            Ok(g) => g,
-            Err(e) => return self.status(format!("Cannot import {}: {e}", p.display()), false),
-        };
-        let stem: String = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "graph".into());
-        self.import_graph_value(other, stem, at, graph);
-    }
-
-    /// Folder links of the current package are relative to (the package's own folder, or the working folder when unsaved).
-    fn link_base(&self) -> PathBuf {
-        self.file.as_ref().and_then(|f| f.parent().map(|p| p.to_path_buf())).unwrap_or_else(|| PathBuf::from("."))
-    }
-
-    /// Pick a package file and use its main graph as a live-linked node (the file is read from disk, never copied).
-    fn link_package(&mut self) {
-        if !self.parents.is_empty() {
-            return self.status("Links belong to the package: leave the nested graph first", false);
-        }
-        let Some(p) = rfd::FileDialog::new().add_filter("MaterialCraft graph / package", &["mcg", "mca"]).pick_file() else { return };
-        // a package with several graphs lets the user choose which one to link
-        let names: Vec<String> = std::fs::read_to_string(&p)
-            .ok()
-            .and_then(|s| Graph::parse_unchecked(&s).ok())
-            .map(|g| g.subgraphs.iter().filter(|(_, s)| !s.meta.contains_key("embedded")).map(|(k, _)| k.clone()).collect())
-            .unwrap_or_default();
-        if names.is_empty() {
-            self.link_file(p, None);
-        } else {
-            self.link_pick = Some((p, names));
-        }
-    }
-
-    /// How a link to file `p` is stored: relative to this package when it has a file (so the pair can move together).
-    fn link_path_for(&self, p: &std::path::Path) -> String {
-        let base = self.link_base();
-        match p.strip_prefix(&base) {
-            Ok(r) if self.file.is_some() => r.to_string_lossy().replace('\\', "/"),
-            _ => p.to_string_lossy().replace('\\', "/"),
         }
     }
 
@@ -615,154 +563,35 @@ impl App {
         }
     }
 
-    /// Re-point link `name` at another file chosen by the user.
-    fn relink_dialog(&mut self, name: &str) {
-        let Some(p) = rfd::FileDialog::new().add_filter("MaterialCraft graph / package", &["mcg", "mca"]).pick_file() else { return };
-        let path = self.link_path_for(&p);
-        let graph = self.g.links.iter().find(|l| l.name == name).and_then(|l| l.graph.clone());
-        self.snap();
-        self.g.relink(name, &path, graph);
-        self.refresh_links(false);
-        self.dirty = true;
-        self.modified = true;
-        self.status(format!("Link '{name}' now points to {}", p.display()), true);
-    }
-
-    fn break_link_ui(&mut self, name: &str) {
-        self.snap();
-        match self.g.break_link(name) {
-            Ok(n) => {
-                self.dirty = true;
-                self.modified = true;
-                self.status(format!("'{name}' is now an embedded copy ({n} graph(s) saved with this package)"), true);
-            }
-            Err(e) => {
-                self.undo.pop();
-                self.status(e, false);
-            }
-        }
-    }
-
-    fn remove_link_ui(&mut self, name: &str) {
-        self.snap();
-        let left = self.g.remove_link(name);
-        self.dirty = true;
-        self.modified = true;
-        self.status(if left == 0 { format!("Link '{name}' removed") } else { format!("Link '{name}' removed - {left} node(s) still refer to it and will report an error") }, left == 0);
-    }
-
-    /// Add a live link to `graph` of the package at `p` (None = its main graph) and place an instance node.
-    fn link_file(&mut self, p: PathBuf, graph: Option<String>) {
-        let stem: String = match &graph {
-            Some(g) => g.clone(),
-            None => p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "linked".into()),
-        };
-        let base_name: String = stem.chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' }).collect();
-        let mut name = base_name.clone();
-        let mut i = 2;
-        while self.g.subgraphs.contains_key(&name) || self.g.links.iter().any(|l| l.name == name) {
-            name = format!("{base_name}_{i}");
-            i += 1;
-        }
-        // store the path relative to this package when it has a file, so the pair can be moved together
-        let base = self.link_base();
-        let path = match p.strip_prefix(&base) {
-            Ok(r) if self.file.is_some() => r.to_string_lossy().replace('\\', "/"),
-            _ => p.to_string_lossy().replace('\\', "/"),
-        };
-        self.snap();
-        self.g.links.push(materialcraft::graph::Link { name: name.clone(), path, graph });
-        let issues = self.g.resolve_links(&base);
-        if self.g.links.last().map(|l| l.name != name).unwrap_or(true) || !self.g.is_linked(&name) {
-            self.g.links.pop();
-            self.undo.pop();
-            let _ = self.g.resolve_links(&base);
-            return self.status(format!("Cannot link {}: {}", p.display(), issues.join("; ")), false);
-        }
-        let pos = self.view_center_world();
-        self.add_node_at("subgraph", Some(&name), pos);
-        self.undo.pop();
-        self.dirty = true;
-        self.modified = true;
-        self.status(format!("Linked '{name}' - it follows the file on disk. Every node that uses it is an instance."), true);
-    }
-
-    /// Re-read the live links of the current package from disk.
-    fn refresh_links(&mut self, verbose: bool) {
-        if !self.parents.is_empty() {
-            return;
-        }
-        if self.g.links.is_empty() {
-            if verbose {
-                self.status("This package has no live links (File > Link package as node...)", true);
-            }
-            return;
-        }
-        let before: Vec<String> = self.g.managed.iter().map(|k| self.g.subgraphs.get(k).map(|s| s.to_text()).unwrap_or_default()).collect();
-        let issues = self.g.resolve_links(&self.link_base());
-        let after: Vec<String> = self.g.managed.iter().map(|k| self.g.subgraphs.get(k).map(|s| s.to_text()).unwrap_or_default()).collect();
-        if before != after {
-            self.dirty = true;
-        }
-        if !issues.is_empty() {
-            self.dirty = true;
-            self.status(issues.join("; "), false);
-        } else if verbose {
-            self.status(if before != after { "Linked packages reloaded - changes applied" } else { "Linked packages are up to date" }.to_string(), true);
-        } else if before != after {
-            self.status("A linked package changed on disk - reloaded", true);
-        }
-    }
-
-    /// Import a graph of an open package as a node.
+    /// Copy a graph of another open package (with the graphs and functions it uses) into this one and place it as
+    /// a node.
     fn import_from_pkg(&mut self, i: usize, graph: Option<String>, at: Option<Pos2>) {
         let Some(pk) = self.pkgs.get(i).and_then(|p| p.as_ref()) else {
             return self.status("Drag graphs from another package onto this graph", false);
         };
-        let stem = pk.name.trim_end_matches(".mcg").trim_end_matches(".mca").to_string();
-        let other = pk.g.clone();
-        self.import_graph_value(other, stem, at, graph);
-    }
-
-    /// Embed `other` (or one named graph of it) as a subgraph of the current graph and place it as a node.
-    fn import_graph_value(&mut self, mut other: Graph, mut stem: String, at: Option<Pos2>, graph: Option<String>) -> Option<String> {
-        other.migrate_outputs();
-        auto_layout_if_unplaced(&mut other);
-        // a specific graph of the package: it becomes the imported root, the other graphs stay available to it
-        if let Some(gn) = graph.filter(|gn| other.subgraphs.contains_key(gn)) {
-            let mut sel = other.subgraphs.remove(&gn).unwrap_or_default();
-            sel.subgraphs = std::mem::take(&mut other.subgraphs);
-            sel.resources = other.resources.clone();
-            other = sel;
-            stem = format!("{stem}_{gn}");
-        } else if let Some(id) = other.meta.get("identifier").filter(|s| !s.is_empty()) {
-            stem = id.clone();
-        }
-        let base: String = stem.chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' }).collect();
-        let mut name = base.clone();
-        let mut i = 2;
-        while self.g.subgraphs.contains_key(&name) || self.parents.iter().any(|(pg, n)| pg.subgraphs.contains_key(&name) || *n == name) {
-            name = format!("{base}_{i}");
-            i += 1;
-        }
+        let name = graph.unwrap_or_else(|| materialcraft::sbs_native::graph_name(&pk.g));
+        let copied = match materialcraft::sbs_native::extract_package(&pk.g, &name) {
+            Ok(g) => g,
+            Err(e) => return self.status(format!("Cannot copy '{name}': {e}"), false),
+        };
         self.snap();
-        if let Err(e) = self.g.import_graph(other, &name) {
-            self.undo.pop();
-            self.status(format!("Cannot import '{stem}': {e}"), false);
-            return None;
-        }
-        // the copy only exists to feed the node, so keep it out of the Explorer's graph list
-        let prefix = format!("{name}__");
-        for (k, sg) in self.g.subgraphs.iter_mut() {
-            if *k == name || k.starts_with(&prefix) {
-                sg.meta.insert("embedded".into(), "1".into());
+        match materialcraft::sbs_native::add_package(&mut self.g, copied) {
+            Ok((first, n, warnings)) => {
+                let pos = at.unwrap_or_else(|| self.view_center_world());
+                let id = self.sd_add_node("sbs:graph", Some(&first), pos, false);
+                self.undo.pop();
+                self.sel = [id].into_iter().collect();
+                self.active = Some(id);
+                self.dirty = true;
+                self.modified = true;
+                let more = if warnings.is_empty() { String::new() } else { format!(" ({})", warnings.join("; ")) };
+                self.status(format!("Copied '{first}' ({n} graph(s)) into this package and placed it as a node{more}"), warnings.is_empty());
+            }
+            Err(e) => {
+                self.undo.pop();
+                self.status(format!("Cannot copy '{name}': {e}"), false);
             }
         }
-        let pos = at.unwrap_or_else(|| self.view_center_world());
-        self.add_node_at("subgraph", Some(&name), pos);
-        self.undo.pop(); // one undo step for the whole import
-        self.status(format!("Added '{name}' as a node - drag from one of its output sockets to connect it"), true);
-        Some(name)
     }
 
     // ------------------------------------------------------------ workspace of packages
@@ -797,8 +626,8 @@ impl App {
 
     fn pkg_modified(&self, i: usize) -> bool {
         match self.pkgs.get(i) {
-            Some(Some(p)) => p.modified || (p.path.is_none() && p.example.is_none()),
-            _ => self.modified || (self.file.is_none() && self.example.is_none()),
+            Some(Some(p)) => p.modified || p.path.is_none(),
+            _ => self.modified || self.file.is_none(),
         }
     }
 
@@ -823,14 +652,13 @@ impl App {
 
     fn snapshot_active(&mut self) -> Pkg {
         self.goto_root();
-        Pkg { path: self.file.clone(), name: self.package_label(), g: self.g.clone(), modified: self.modified, tabs: self.graph_tabs.clone(), example: self.example.clone() }
+        Pkg { path: self.file.clone(), name: self.package_label(), g: self.g.clone(), modified: self.modified, tabs: self.graph_tabs.clone() }
     }
 
     fn load_active(&mut self, p: Pkg) {
         self.parents.clear();
         self.g = p.g;
         self.graph_tabs = p.tabs;
-        self.example = p.example;
         self.clear_views();
         self.file = p.path;
         self.unsaved_name = p.name;
@@ -874,55 +702,6 @@ impl App {
         self.load_active(p);
     }
 
-    /// Open package files into the workspace (File > Open while editing).
-    fn open_packages(&mut self, files: Vec<PathBuf>) {
-        self.ws_init();
-        let mut last = None;
-        for p in files {
-            let open_at = (0..self.pkgs.len()).find(|&i| match &self.pkgs[i] {
-                Some(k) => k.path.as_ref() == Some(&p),
-                None => self.file.as_ref() == Some(&p),
-            });
-            if let Some(i) = open_at {
-                self.pkg_sel = i;
-                self.status(format!("{} is already open", p.display()), false);
-                continue;
-            }
-            match read_pkg(&p) {
-                Ok(pk) => {
-                    self.pkgs.push(Some(pk));
-                    self.pkg_sel = self.pkgs.len() - 1;
-                    self.push_recent(&p);
-                    last = Some(p);
-                }
-                Err(e) => self.status(format!("Open failed: {}: {e}", p.display()), false),
-            }
-        }
-        if let Some(p) = last {
-            self.status(format!("Opened package {} - drag its graphs onto the canvas", p.display()), true);
-        }
-    }
-
-    /// Add a new graph from the New dialog to open package `dest` and open it in the editor.
-    fn add_graph_to_pkg(&mut self, dest: usize, g: Graph, name: &str) {
-        self.switch_pkg(dest);
-        self.goto_root();
-        let base: String = name.chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' }).collect();
-        let base = if base.is_empty() { "Material_Graph".to_string() } else { base };
-        let root_id = self.gname();
-        let mut unique = base.clone();
-        let mut k = 2;
-        while self.g.subgraphs.contains_key(&unique) || unique == root_id {
-            unique = format!("{base}_{k}");
-            k += 1;
-        }
-        self.snap();
-        self.g.subgraphs.insert(unique.clone(), g);
-        self.enter_sub(&unique);
-        self.modified = true;
-        self.status(format!("Created graph '{unique}' in {}", self.package_label()), true);
-    }
-
     fn close_pkg(&mut self, i: usize) {
         self.ws_init();
         if i >= self.pkgs.len() {
@@ -931,7 +710,9 @@ impl App {
         if self.pkgs.len() == 1 {
             self.pkgs.clear();
             self.screen = Screen::Home;
-            self.modified = false;
+            // what "Go to editor" shows next is a fresh package, not the one just closed
+            self.load_active(Pkg { path: None, name: "Unsaved Package".into(), g: materialcraft::sbs_native::new_package("Graph", 512), modified: false, tabs: Vec::new() });
+            self.screen = Screen::Home;
             return;
         }
         if i == self.pkg_active {
@@ -1120,44 +901,6 @@ impl App {
         }
     }
 
-    fn add_node_at(&mut self, kind: &str, sub: Option<&str>, pos: Pos2) -> u32 {
-        self.snap();
-        let id = self.g.nodes.keys().max().copied().unwrap_or(0) + 1;
-        let mut n = Node { kind: kind.to_string(), pos: [pos.x, pos.y], ..Default::default() };
-        match kind {
-            "pixel_processor" => {
-                n.strs.insert("expr".into(), "u".into());
-            }
-            "subgraph" => {
-                n.strs.insert("graph".into(), sub.unwrap_or("").to_string());
-            }
-            "baked_map" => {
-                n.strs.insert("map".into(), "normal".into());
-                if let Some(set) = bake::stored_sets(&self.g.resources).keys().next() {
-                    n.strs.insert("set".into(), set.clone());
-                }
-            }
-            "colorize" => {
-                for (i, c) in [(0, 0.0f32), (1, 1.0)] {
-                    n.nums.insert(format!("p{i}"), c);
-                    for ch in ["r", "g", "b"] {
-                        n.nums.insert(format!("{ch}{i}"), c);
-                    }
-                }
-            }
-            _ => {}
-        }
-        for (k, v) in new_node_defaults(kind) {
-            n.nums.insert((*k).to_string(), *v);
-        }
-        self.g.nodes.insert(id, n);
-        self.sel = [id].into_iter().collect();
-        self.active = Some(id);
-        self.sel_comment = None;
-        self.dirty = true;
-        id
-    }
-
     fn view_center_world(&self) -> Pos2 {
         let c = self.canvas_rect;
         let w = ((c.center() - c.min) - self.pan) / self.zoom;
@@ -1176,26 +919,16 @@ impl App {
             }
             _ => {}
         }
-        let id = self.add_node_at(&e.kind, e.sub.as_deref(), world);
-        let in_sub = !self.parents.is_empty();
-        if let Some(n) = self.g.nodes.get_mut(&id) {
-            for (k, v) in &e.nums {
-                n.nums.insert(k.to_string(), *v);
-            }
-            if e.kind == "output" {
-                n.strs.insert("usage".into(), if in_sub { "out" } else { "basecolor" }.into());
-            }
-        }
-        if let Some(src) = link_from {
-            let first = slots(&e.kind).first().map(|s| s.0.to_string());
+        let gray = e.nums.iter().any(|(k, v)| *k == "gray" && *v > 0.5);
+        let id = self.sd_add_node(&e.kind, e.sub.as_deref(), world, gray);
+        if let Some(src) = link_from.filter(|s| *s != id && e.kind != "sbs:input") {
+            let first = self.g.nodes.get(&id).map(|n| sd_slots(n, &self.g.subgraphs)).and_then(|v| v.first().map(|s| s.0.to_string()));
             if let Some(slot) = first {
-                if src != id && e.kind != "input" {
-                    let o = self.link_out.take();
-                    if let Some(n) = self.g.nodes.get_mut(&id) {
-                        n.ins.insert(slot.clone(), src);
-                        if let Some(o) = o {
-                            n.in_out.insert(slot, o);
-                        }
+                let o = self.link_out.take();
+                if let Some(n) = self.g.nodes.get_mut(&id) {
+                    n.ins.insert(slot.clone(), src);
+                    if let Some(o) = o {
+                        n.in_out.insert(slot, o);
                     }
                 }
             }
@@ -1205,12 +938,11 @@ impl App {
 
     fn new_output(&mut self, usage: &str, from: u32) {
         self.snap();
-        let id = self.g.nodes.keys().max().copied().unwrap_or(0) + 1;
         let pos = self.g.nodes.get(&from).map(|n| [n.pos[0] + CARD + 70.0, n.pos[1]]).unwrap_or([0.0, 0.0]);
-        let mut node = Node { kind: "output".into(), pos, ..Default::default() };
-        node.strs.insert("usage".into(), usage.to_string());
-        node.ins.insert("in".into(), from);
-        self.g.nodes.insert(id, node);
+        let id = materialcraft::sbs_native::add_output(&mut self.g, usage, None, pos);
+        if let Some(n) = self.g.nodes.get_mut(&id) {
+            n.ins.insert("inputNodeOutput".into(), from);
+        }
         self.sel = [id].into_iter().collect();
         self.active = Some(id);
         self.dirty = true;
@@ -1228,6 +960,8 @@ impl App {
         }
         self.snap();
         let sel = std::mem::take(&mut self.sel);
+        // graph inputs and outputs go with the nodes that read and write them
+        materialcraft::sbs_native::remove_nodes(&mut self.g, &sel);
         for id in &sel {
             self.g.nodes.remove(id);
         }
@@ -1270,8 +1004,10 @@ impl App {
             next += 1;
         }
         let mut new_sel = BTreeSet::new();
+        let owner = self.g.meta.get("identifier").cloned().unwrap_or_default();
         for (id, n) in self.clip.clone() {
-            let mut nn = n.clone();
+            // a node of an .sbs package gets its own uid and its own copies of the functions its values use
+            let mut nn = materialcraft::sbs_native::copy_node(&n, &owner, map[&id], &mut self.g.subgraphs);
             nn.pos = [target.x + n.pos[0] - origin[0], target.y + n.pos[1] - origin[1]];
             nn.ins.retain(|_, s| map.contains_key(s));
             for v in nn.ins.values_mut() {
@@ -1304,7 +1040,7 @@ impl App {
             for id in &self.sel {
                 if let Some(n) = self.g.nodes.get(id) {
                     mn = [mn[0].min(n.pos[0]), mn[1].min(n.pos[1])];
-                    mx = [mx[0].max(n.pos[0] + CARD), mx[1].max(n.pos[1] + BAR + card_body(slots(&n.kind).len(), 0))];
+                    mx = [mx[0].max(n.pos[0] + CARD), mx[1].max(n.pos[1] + BAR + card_body(node_slots(n, &self.g.subgraphs).len(), 0))];
                 }
             }
             c.pos = [mn[0] - 24.0, mn[1] - 44.0];
@@ -1313,31 +1049,6 @@ impl App {
         self.g.comments.push(c);
         self.sel_comment = Some(self.g.comments.len() - 1);
         self.sel.clear();
-    }
-
-    fn make_subgraph(&mut self) {
-        let mut n = 1;
-        let name = loop {
-            let c = format!("subgraph_{n}");
-            if !self.g.subgraphs.contains_key(&c) && !self.parents.iter().any(|(p, _)| p.subgraphs.contains_key(&c)) {
-                break c;
-            }
-            n += 1;
-        };
-        self.snap();
-        let sel = self.sel.clone();
-        match self.g.extract_subgraph(&sel, &name) {
-            Ok(id) => {
-                self.sel = [id].into_iter().collect();
-                self.active = Some(id);
-                self.dirty = true;
-                self.status(format!("Created '{name}' - double-click it to edit its contents"), true);
-            }
-            Err(e) => {
-                self.undo.pop();
-                self.status(e, false);
-            }
-        }
     }
 
     /// The shown graph changed (switch, open, enter or leave a subgraph): drop the previews of the old one right away
@@ -1351,16 +1062,16 @@ impl App {
         self.dirty3d = true;
         self.gpu_maps_dirty = true;
         self.dirty = true;
-        self.spl = None;
     }
 
     fn enter_sub(&mut self, name: &str) {
         let Some(sub) = self.g.subgraphs.get(name).cloned() else {
-            return self.status(format!("subgraph '{name}' not found"), false);
+            return self.status(format!("graph '{name}' not found"), false);
         };
         let mut w = sub;
         w.subgraphs = self.g.subgraphs.clone();
         w.subgraphs.remove(name);
+        materialcraft::sbs_native::add_owner(&mut w.subgraphs, &mut self.g);
         w.resources = self.g.resources.clone();
         w.seed_offset = self.g.seed_offset;
         w.size = self.g.size;
@@ -1378,13 +1089,17 @@ impl App {
     fn exit_sub(&mut self) {
         if let Some((mut parent, name)) = self.parents.pop() {
             let mut sub = std::mem::take(&mut self.g);
-            let libs = std::mem::take(&mut sub.subgraphs);
+            materialcraft::sbs_native::adopt_package(&mut parent, &sub);
+            let mut libs = std::mem::take(&mut sub.subgraphs);
+            materialcraft::sbs_native::drop_owner(&mut libs, &parent);
             // splines made or edited inside the subgraph live in the package
             for (k, v) in std::mem::take(&mut sub.resources) {
                 parent.resources.insert(k, v);
             }
+            // the view's copies of the other graphs are the newest: graphs opened from here (a function of one of
+            // its nodes) were edited in them
             for (k, v) in libs {
-                parent.subgraphs.entry(k).or_insert(v);
+                parent.subgraphs.insert(k, v);
             }
             parent.subgraphs.insert(name, sub);
             self.g = parent;
@@ -1409,7 +1124,7 @@ impl App {
         let (mut mn, mut mx) = ([f32::MAX; 2], [f32::MIN; 2]);
         for n in self.g.nodes.values() {
             mn = [mn[0].min(n.pos[0]), mn[1].min(n.pos[1])];
-            mx = [mx[0].max(n.pos[0] + CARD), mx[1].max(n.pos[1] + BAR + card_body(slots(&n.kind).len(), 0))];
+            mx = [mx[0].max(n.pos[0] + CARD), mx[1].max(n.pos[1] + BAR + card_body(node_slots(n, &self.g.subgraphs).len(), 0))];
         }
         let c = self.canvas_rect;
         let z = ((c.width() - 80.0) / (mx[0] - mn[0]).max(1.0)).min((c.height() - 80.0) / (mx[1] - mn[1]).max(1.0)).clamp(0.3, 1.2);
@@ -1418,70 +1133,19 @@ impl App {
     }
 
     fn entries(&self) -> Vec<Entry> {
-        let mk = |label: &str, kind: &str, cat: &'static str, doc: &str, nums: Vec<(&'static str, f32)>| Entry { label: label.to_string(), kind: kind.to_string(), sub: None, cat, doc: doc.to_string(), nums };
-        let in_sub = !self.parents.is_empty();
-        // function graphs and pattern programs have their own node families
-        let specs: &[materialcraft::graph::Spec] = match self.g.graph_kind() {
-            "function" => materialcraft::func::FUNC_SPECS,
-            "fxmap" => materialcraft::fxmap::FXM_SPECS,
-            _ => SPECS,
-        };
-        let texture = self.g.graph_kind() == "texture";
-        let mut v: Vec<Entry> = specs
-            .iter()
-            .filter(|s| !matches!(s.kind, "input" | "subgraph" | "output" | "dot"))
-            .map(|s| mk(&label(s.kind), s.kind, category(s.kind), s.doc, vec![]))
-            .collect();
-        if !texture {
-            v.push(mk("Comment", "comment", "Utility", "small note placed at the cursor", vec![]));
-            v.push(mk("Frame", "frame", "Utility", "frame around the selected nodes", vec![]));
-            return v;
-        }
-        v.push(mk("Output", "output", "Utility", "graph output: drives the 3D view and exports a texture", vec![]));
-        if in_sub {
-            v.push(mk("Input Color", "input", "Utility", "color input of the subgraph", vec![("gray", 0.0)]));
-            v.push(mk("Input Grayscale", "input", "Utility", "grayscale input of the subgraph", vec![("gray", 1.0)]));
-        }
-        v.push(mk("Comment", "comment", "Utility", "small note placed at the cursor", vec![]));
-        v.push(mk("Frame", "frame", "Utility", "frame around the selected nodes", vec![]));
-        v.push(mk("Dot Node", "dot", "Utility", "re-route a link", vec![]));
-        let mut subs: BTreeSet<String> = self.g.subgraphs.keys().cloned().collect();
-        for (p, _) in &self.parents {
-            subs.extend(p.subgraphs.keys().cloned());
-        }
-        for name in subs {
-            let is_texture = self.g.subgraphs.get(&name).map(|g| g.graph_kind() == "texture").unwrap_or(true);
-            if !is_texture {
-                continue;
-            }
-            v.push(Entry { label: format!("subgraph: {name}"), kind: "subgraph".into(), sub: Some(name.clone()), cat: "Subgraphs", doc: format!("instance of subgraph '{name}'"), nums: vec![] });
-        }
-        v
+        self.sd_entries()
     }
 
     // ------------------------------------------------------------ file operations
     fn open_file(&mut self) {
-        let Some(files) = rfd::FileDialog::new().add_filter("MaterialCraft graph / package", &["mcg", "mca"]).pick_files() else { return };
-        if self.screen == Screen::Editor {
-            // a project is already open: the opened files join the workspace as packages in the Explorer
-            self.open_packages(files);
-        } else if let Some(p) = files.into_iter().next() {
-            self.open_path(p);
+        let Some(files) = rfd::FileDialog::new().add_filter("Substance package", &["sbs"]).pick_files() else { return };
+        for p in files {
+            self.open_sbs(p);
         }
     }
 
     fn save_to(&mut self, p: PathBuf) {
-        self.goto_root();
-        match materialcraft::safeio::write_file(&p, self.g.to_text().as_bytes()) {
-            Ok(()) => {
-                self.status(format!("Saved {}", p.display()), true);
-                self.push_recent(&p);
-                self.file = Some(p);
-                self.example = None;
-                self.modified = false;
-            }
-            Err(e) => self.status(format!("Save failed: {e}"), false),
-        }
+        self.save_sbs(p);
     }
 
     fn save(&mut self) {
@@ -1492,45 +1156,157 @@ impl App {
     }
 
     fn save_as(&mut self) {
-        if let Some(p) = rfd::FileDialog::new().add_filter("MaterialCraft graph", &["mcg"]).set_file_name("material.mcg").save_file() {
+        self.save_package_as(None);
+    }
+
+    /// Save the package under a new name.
+    fn save_package_as(&mut self, suggest: Option<PathBuf>) {
+        let stem = suggest
+            .as_ref()
+            .or(self.file.as_ref())
+            .and_then(|p| p.file_stem())
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| self.gname());
+        let mut dlg = rfd::FileDialog::new().add_filter("Substance package", &["sbs"]).set_file_name(format!("{stem}.sbs"));
+        if let Some(dir) = suggest.as_ref().or(self.file.as_ref()).and_then(|p| p.parent()) {
+            dlg = dlg.set_directory(dir);
+        }
+        if let Some(p) = dlg.save_file() {
             self.save_to(p);
         }
     }
 
-    fn publish(&mut self) {
-        self.goto_root();
-        match self.g.publish() {
-            Ok(text) => {
-                if let Some(p) = rfd::FileDialog::new().add_filter("MaterialCraft published asset", &["mca"]).set_file_name("material.mca").save_file() {
-                    match materialcraft::safeio::write_file(&p, text.as_bytes()) {
-                        Ok(()) => self.status(format!("Published {} ({} KB, {} exposed parameters)", p.display(), text.len() / 1024, self.g.exposed.len()), true),
-                        Err(e) => self.status(format!("Publish failed: {e}"), false),
-                    }
+    /// The package at `i` with the editor's unsaved edits of the graph on screen folded in (nothing is changed).
+    fn package_root(&self, i: usize) -> Option<Graph> {
+        if i == self.pkg_active || self.pkgs.is_empty() {
+            let mut cur = self.g.clone();
+            for (parent, name) in self.parents.iter().rev() {
+                let mut p = parent.clone();
+                let mut sub = cur;
+                let mut libs = std::mem::take(&mut sub.subgraphs);
+                materialcraft::sbs_native::drop_owner(&mut libs, &p);
+                for (k, v) in std::mem::take(&mut sub.resources) {
+                    p.resources.insert(k, v);
                 }
+                for (k, v) in libs {
+                    p.subgraphs.insert(k, v);
+                }
+                p.subgraphs.insert(name.clone(), sub);
+                cur = p;
             }
-            Err(e) => self.status(format!("Cannot publish: {e}"), false),
+            Some(cur)
+        } else {
+            self.pkgs.get(i).and_then(|p| p.as_ref()).map(|p| p.g.clone())
         }
     }
 
-    fn import_bitmap(&mut self) {
-        let Some(p) = rfd::FileDialog::new().add_filter("Images", materialcraft::imgio::EXTENSIONS).pick_file() else { return };
-        let pos = self.view_center_world();
-        let id = self.add_node_at("bitmap", None, pos);
-        if let Some(n) = self.g.nodes.get_mut(&id) {
-            n.strs.insert("file".into(), p.to_string_lossy().to_string());
+    /// Save graph `name` of package `i` as a package of its own with the graphs and functions it needs.
+    fn export_graph_file(&mut self, i: usize, name: Option<String>) {
+        let Some(root) = self.package_root(i) else { return };
+        let gname = name.unwrap_or_else(|| materialcraft::sbs_native::graph_name(&root));
+        let text = match materialcraft::sbs_native::extract_package(&root, &gname).and_then(|g| materialcraft::sbs_native::save_text(&g)) {
+            Ok(t) => t,
+            Err(e) => return self.status(format!("Cannot save the graph: {e}"), false),
+        };
+        let stem = gname.rsplit('/').next().unwrap_or("graph").to_string();
+        let Some(p) = rfd::FileDialog::new().add_filter("Substance package", &["sbs"]).set_file_name(format!("{stem}.sbs")).save_file() else { return };
+        let p = if p.extension().is_none() { p.with_extension("sbs") } else { p };
+        match materialcraft::safeio::write_file(&p, text.as_bytes()) {
+            Ok(()) => self.status(format!("Saved graph '{gname}' as {} with the graphs it uses", p.display()), true),
+            Err(e) => self.status(format!("Save failed: {e}"), false),
+        }
+    }
+
+    /// Copy every graph and function of another `.sbs` package into package `i` (names that are taken get a number).
+    fn add_graph_file(&mut self, i: usize) {
+        let Some(p) = rfd::FileDialog::new().add_filter("Substance package", &["sbs"]).pick_file() else { return };
+        let other = match materialcraft::sbs_native::open(&p) {
+            Ok((g, _)) => g,
+            Err(e) => return self.status(format!("Cannot read {}: {e}", p.display()), false),
+        };
+        self.switch_pkg(i);
+        self.goto_root();
+        self.snap();
+        match materialcraft::sbs_native::add_package(&mut self.g, other) {
+            Ok((mn, added, warnings)) => {
+                self.dirty = true;
+                self.modified = true;
+                let more = if warnings.is_empty() { String::new() } else { format!(" ({})", warnings.join("; ")) };
+                self.status(format!("Added {added} graph(s) from {}, first '{mn}'{more}", p.display()), warnings.is_empty());
+            }
+            Err(e) => {
+                self.undo.pop();
+                self.status(format!("Cannot add {}: {e}", p.display()), false);
+            }
+        }
+    }
+
+    /// Rename, remove or copy a graph of package `i` (as an undoable edit of that package).
+    fn graph_edit(&mut self, i: usize, f: impl FnOnce(&mut Graph) -> Result<String, String>) {
+        self.switch_pkg(i);
+        self.goto_root();
+        self.snap();
+        match f(&mut self.g) {
+            Ok(msg) => {
+                self.graph_tabs.retain(|t| self.g.subgraphs.contains_key(t));
+                self.dirty = true;
+                self.status(msg, true);
+            }
+            Err(e) => {
+                self.undo.pop();
+                self.status(e, false);
+            }
+        }
+    }
+
+    /// Title and outputs of the graph the Export window is for (read in place, without copying the package).
+    fn export_outputs(&self) -> (String, Vec<(String, String)>) {
+        let list = |g: &Graph| g.output_nodes().into_iter().map(|(u, i, _)| (usage_label(&u), i)).collect::<Vec<_>>();
+        let main_name = |g: &Graph| g.meta.get("identifier").cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| "Graph".into());
+        let active_root = self.parents.first().map(|p| &p.0).unwrap_or(&self.g);
+        let current = self.parents.last().map(|(_, n)| n.clone());
+        let (i, name) = match &self.export.target {
+            Some((i, n)) => (*i, n.clone()),
+            None => (self.pkg_active, current.clone()),
+        };
+        if i == self.pkg_active || self.pkgs.is_empty() {
+            match name {
+                None => (main_name(active_root), list(active_root)),
+                Some(n) if current.as_deref() == Some(n.as_str()) => (n.clone(), list(&self.g)),
+                Some(n) => (n.clone(), active_root.subgraphs.get(&n).map(list).unwrap_or_default()),
+            }
+        } else {
+            match self.pkgs.get(i).and_then(|p| p.as_ref()) {
+                Some(p) => match name {
+                    None => (main_name(&p.g), list(&p.g)),
+                    Some(n) => (n.clone(), p.g.subgraphs.get(&n).map(list).unwrap_or_default()),
+                },
+                None => (String::new(), Vec::new()),
+            }
+        }
+    }
+
+    /// The graph whose maps the Export window writes (the graph on screen unless it was opened for another one).
+    fn export_graph(&self) -> Result<Graph, String> {
+        match &self.export.target {
+            Some((i, name)) => self.package_root(*i).ok_or_else(|| "that package is no longer open".to_string())?.graph_view(name.as_deref()),
+            None => self.package_root(self.pkg_active).ok_or_else(|| "nothing is open".to_string())?.graph_view(self.parents.last().map(|(_, n)| n.as_str())),
         }
     }
 
     fn run_export(&mut self) {
-        self.goto_root();
         let Some(dir) = self.export.dir.clone() else {
             return self.status("Choose an export folder first.", false);
+        };
+        let g = match self.export_graph() {
+            Ok(g) => g,
+            Err(e) => return self.status(format!("Export failed: {e}"), false),
         };
         let sizes: Vec<usize> = [256usize, 512, 1024, 2048, 4096, 8192].iter().zip(self.export.sizes).filter(|(_, on)| *on).map(|(s, _)| *s).collect();
         if sizes.is_empty() {
             return self.status("Select at least one resolution.", false);
         }
-        let idents: Vec<String> = self.g.output_nodes().into_iter().map(|(_, i, _)| i).collect();
+        let idents: Vec<String> = g.output_nodes().into_iter().map(|(_, i, _)| i).collect();
         if idents.iter().all(|i| self.export.skip.contains(i)) {
             return self.status("Select at least one output to export.", false);
         }
@@ -1538,7 +1314,7 @@ impl App {
         let depth = if fmt.has_float32() && self.export.depth32 { 32 } else if fmt != Format::Jpeg && (self.export.depth16 || fmt == Format::Exr) { 16 } else { 8 };
         let mut count = 0;
         for &s in &sizes {
-            match self.g.evaluate(Some(s)) {
+            match g.evaluate(Some(s)) {
                 Ok(out) => {
                     let d = if sizes.len() > 1 { dir.join(s.to_string()) } else { dir.clone() };
                     if let Err(e) = std::fs::create_dir_all(&d) {
@@ -1579,9 +1355,23 @@ impl App {
     /// The size a node will have in the final result (shown under a node): its size in the pass on screen,
     /// scaled up to the graph's own size.
     fn nominal_node_size(&self, id: u32) -> usize {
-        match (self.node_sizes.get(&id), self.pass_size) {
-            (Some(&n), p) if p > 0 => ((n as u64 * self.g.size as u64) / p as u64).clamp(1, 8192) as usize,
-            _ => self.g.size,
+        // stored already scaled to the graph's size (passes run at different sizes)
+        self.node_sizes.get(&id).copied().unwrap_or(self.g.size)
+    }
+
+    /// The resolution of the material outputs as the output nodes set it (the largest one), at most 4096.
+    fn target_3d_auto(&self) -> usize {
+        let outs = self.g.output_nodes();
+        let m = outs.iter().map(|o| self.nominal_node_size(o.2)).max().unwrap_or(self.g.size);
+        m.clamp(16, 4096)
+    }
+
+    /// The size the 3D view's textures are evaluated at: the output nodes' resolution unless a fixed one is chosen.
+    fn target_3d(&self) -> usize {
+        if self.mesh_tex_px == 0 {
+            self.target_3d_auto()
+        } else {
+            self.mesh_tex_px
         }
     }
 
@@ -1604,16 +1394,21 @@ impl App {
         }
     }
 
-    /// `full`: evaluate every node and rebuild thumbnails + 3D maps (the settled, idle pass). When false, only the
-    /// viewed node and the material outputs are evaluated and the 3D maps are left untouched — the pass run while a
-    /// value is being dragged, so interaction stays responsive on a large or heavy graph.
-    fn spawn_eval(&mut self, size: usize, full: bool) {
+    /// Run one evaluation pass in the background (see [`Pass`]). An interactive pass evaluates only the viewed node
+    /// and the material outputs and leaves the 3D maps alone, so dragging a value stays responsive on a large graph;
+    /// the thumbnail pass evaluates every node at a small size so every card gets its picture quickly; the final pass
+    /// brings the outputs (and so the 3D view) to the full preview size.
+    fn spawn_eval(&mut self, size: usize, pass: Pass) {
+        let full = pass == Pass::Thumbs;
+        let maps = pass != Pass::Interactive;
         let g = match self.g.preview_host() {
             Some((h, _)) => h,
             None => self.g.clone(),
         };
         let prev_full = self.preview_full();
-        let size = size.clamp(16, prev_full.max(16));
+        // the final pass may go above the 2D preview size: the 3D textures follow the output resolution
+        let ceil = if pass == Pass::Final { prev_full.max(self.target_3d()) } else { prev_full };
+        let size = size.clamp(16, ceil.max(16));
         self.job_size = size;
         self.refine_size = None;
         let mut keep: Vec<u32> = g.output_nodes().iter().map(|o| o.2).collect();
@@ -1644,13 +1439,15 @@ impl App {
             }
             tex::set_job(gen);
             let outputs: Vec<(String, u32)> = g.output_nodes().into_iter().map(|(u, _, id)| (u, id)).collect();
-            // the GPU material maps are prepared only on the settled pass; a drag leaves the 3D view on its last maps
-            let gpu = if full {
+            // the GPU material maps are prepared only once the input has settled; a drag leaves the 3D view as it was
+            let gpu = if maps {
                 let named = |n: &str| outputs.iter().find(|o| o.0 == n).and_then(|o| r.kept.get(&o.1)).map(|a| a.as_ref());
                 let inv_gloss = named("glossiness").map(ops::invert);
+                // DirectX normal maps are shown the right way up
+                let normal_gl = named("normal").and_then(|t| g.normal_for_view(t));
                 Some(gpu3d::prepare(&MapInputs {
                     base: named("basecolor").or_else(|| named("out")).or_else(|| named("diffuse")),
-                    normal: named("normal"),
+                    normal: normal_gl.as_ref().or_else(|| named("normal")),
                     rough: named("roughness").or(inv_gloss.as_ref()),
                     metal: named("metallic"),
                     ao: named("ambient_occlusion"),
@@ -1676,7 +1473,7 @@ impl App {
                 img_for: active,
                 gpu,
                 size,
-                full,
+                pass,
             });
         });
     }
@@ -1713,14 +1510,16 @@ impl App {
         }
         let Some(rx) = &self.job else { return };
         match rx.try_recv() {
-            Ok(r) => {
+            Ok(mut r) => {
                 self.job = None;
                 if r.gen != self.gen {
                     return;
                 }
+                // a thumbnail pass smaller than the picture already on screen leaves the 2D view (and its refinement) alone
+                let show2d = !(r.pass == Pass::Thumbs && r.size < self.pass_size);
                 // progressive preview: this pass is on screen, the next (double size) one starts right away
                 let full = self.preview_full();
-                if r.size < full {
+                if r.size < full && show2d {
                     self.refine_size = Some((r.size * 2).min(full));
                     self.refine = true;
                 }
@@ -1731,11 +1530,12 @@ impl App {
                     wrap_mode: egui::TextureWrapMode::Repeat,
                     mipmap_mode: Some(egui::TextureFilter::Linear),
                 };
-                // thumbnails are produced only by the full (settled) pass; an interactive pass keeps the ones on screen
-                if r.full {
-                    self.thumbs.retain(|id, _| r.thumbs.contains_key(id));
-                    self.thumb_px.retain(|id, _| r.thumbs.contains_key(id));
-                    for (id, bytes) in r.thumbs {
+                // thumbnails come from the thumbnail pass; the other passes keep the ones on screen
+                if r.pass == Pass::Thumbs {
+                    let thumbs = std::mem::take(&mut r.thumbs);
+                    self.thumbs.retain(|id, _| thumbs.contains_key(id));
+                    self.thumb_px.retain(|id, _| thumbs.contains_key(id));
+                    for (id, bytes) in thumbs {
                         // most cards are unchanged after an edit: only a thumbnail whose pixels differ is uploaded again
                         if self.thumbs.contains_key(&id) && self.thumb_px.get(&id) == Some(&bytes) {
                             continue;
@@ -1752,23 +1552,35 @@ impl App {
                 }
                 if self.g.graph_kind() != "texture" {
                     if let Some(e) = r.errors.get(&materialcraft::graph::PREVIEW_ID) {
-                        self.status(format!("{}: {e}", if self.g.graph_kind() == "function" { "function" } else { "pattern program" }), false);
+                        self.status(format!("{}: {e}", if self.g.graph_kind() == "function" { "function" } else { "pattern graph" }), false);
                     }
                 }
-                // the full pass gives the complete picture; an interactive pass only refreshes the nodes it touched
-                if r.full {
-                    self.node_err = r.errors;
-                    self.node_sizes = r.sizes;
+                // node sizes are kept scaled to the graph's own size (the passes run at different sizes)
+                let gsize = self.g.size as u64;
+                let scaled: HashMap<u32, usize> = r.sizes.iter().map(|(k, v)| (*k, ((*v as u64 * gsize) / r.size.max(1) as u64).clamp(1, 8192) as usize)).collect();
+                // the thumbnail pass gives the complete picture; the others only refresh the nodes they touched
+                let errors = std::mem::take(&mut r.errors);
+                // a problem with the whole graph (it could not be turned into nodes to run) is not any node's
+                if let Some(e) = errors.get(&0).filter(|_| !self.g.nodes.contains_key(&0)) {
+                    self.status(format!("This graph cannot be drawn: {e}"), false);
+                }
+                if r.pass == Pass::Thumbs {
+                    self.node_err = errors;
+                    self.node_sizes = scaled;
                 } else {
-                    self.node_err.extend(r.errors);
-                    self.node_sizes.extend(r.sizes);
+                    self.node_err.extend(errors);
+                    self.node_sizes.extend(scaled);
+                }
+                if !show2d {
+                    self.apply_maps(&mut r);
+                    return;
                 }
                 self.pass_size = r.size;
                 self.tex2d_range = self.view_node().and_then(|a| r.kept.get(&a)).map(|t| {
                     t.px.iter().fold((f32::MAX, f32::MIN), |m, p| (m.0.min(p[0]).min(p[1]).min(p[2]), m.1.max(p[0]).max(p[1]).max(p[2])))
                 });
                 if let Some(a) = self.view_node() {
-                    if let (Some(img), true) = (r.img2d, r.img_for == Some(a)) {
+                    if let (Some(img), true) = (r.img2d.take(), r.img_for == Some(a)) {
                         self.tex2d_size = (img.size[0], img.size[1]);
                         self.tex2d = Some(ctx.load_texture("view2d", img, opts));
                     } else if let Some(t) = r.kept.get(&a) {
@@ -1780,35 +1592,50 @@ impl App {
                 } else {
                     self.tex2d = None;
                 }
-                // the material outputs and the 3D view are updated only by the settled pass; a drag leaves 3D as it was
-                if r.full {
-                    self.maps.clear();
-                    for (name, id) in &r.outputs {
-                        if let Some(t) = r.kept.get(id) {
-                            self.maps.insert(name.clone(), t.clone());
-                        }
-                    }
-                    if !self.maps.contains_key("basecolor") {
-                        if let Some(t) = self.maps.get("out").cloned() {
-                            self.maps.insert("basecolor".into(), t);
-                        }
-                    }
-                    self.dirty3d = true;
-                    if let Some(m) = r.gpu {
-                        if let Ok(mut g) = self.gpu.lock() {
-                            g.set_maps(m);
-                        }
-                        self.gpu_maps_dirty = false;
-                    } else {
-                        self.gpu_maps_dirty = true;
-                    }
-                }
+                self.apply_maps(&mut r);
             }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => {
                 self.job = None;
                 self.status("Evaluation failed unexpectedly.", false);
             }
+        }
+    }
+
+    /// The material outputs and the 3D view follow the thumbnail and final passes; a drag leaves 3D as it was.
+    fn apply_maps(&mut self, r: &mut EvalResult) {
+        if r.pass == Pass::Interactive {
+            return;
+        }
+        // a thumbnail pass never replaces sharper maps from a final pass of the same graph state
+        if r.pass == Pass::Thumbs && self.maps_size > r.size && !self.final_due {
+            return;
+        }
+        self.maps_size = r.size;
+        self.maps.clear();
+        for (name, id) in &r.outputs {
+            if let Some(t) = r.kept.get(id) {
+                // the viewers light normal maps in the OpenGL convention: a DirectX one is flipped for them
+                let t = match (name.as_str(), self.g.normal_for_view(t)) {
+                    ("normal", Some(f)) => std::sync::Arc::new(f),
+                    _ => t.clone(),
+                };
+                self.maps.insert(name.clone(), t);
+            }
+        }
+        if !self.maps.contains_key("basecolor") {
+            if let Some(t) = self.maps.get("out").cloned() {
+                self.maps.insert("basecolor".into(), t);
+            }
+        }
+        self.dirty3d = true;
+        if let Some(m) = r.gpu.take() {
+            if let Ok(mut g) = self.gpu.lock() {
+                g.set_maps(m);
+            }
+            self.gpu_maps_dirty = false;
+        } else {
+            self.gpu_maps_dirty = true;
         }
     }
 
@@ -1932,9 +1759,10 @@ fn apply_theme(ctx: &egui::Context) {
 
 include!("gui_params.rs");
 include!("gui_control.rs");
+include!("gui_import.rs");
+include!("gui_sbs.rs");
 include!("gui_spline.rs");
 include!("gui_bake.rs");
-include!("gui_res.rs");
 include!("gui_ui.rs");
 include!("gui_home.rs");
 include!("gui_launcher.rs");

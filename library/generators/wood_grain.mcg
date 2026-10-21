@@ -1,8 +1,0 @@
-# Wood grain pattern (grayscale, grain runs vertically)
-size 1024
-node 1 waveform count=26 angle=0 warp=0.6 warp_scale=4 seed=2 shape=0
-node 2 directional_noise scale=5 stretch=26 angle=0 seed=5
-node 3 blend fg=@2 bg=@1 mode=5 opacity=0.7
-output output 3
-expose "Ring count" 1 count 4 60
-expose "Waviness" 1 warp 0 2

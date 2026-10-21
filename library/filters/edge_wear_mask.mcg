@@ -1,8 +1,0 @@
-# Edge wear mask from a height map (connect the height to the input)
-size 1024
-node 1 input idx=0 gray=1
-node 2 fbm scale=14 octaves=5 seed=3
-node 3 edge_wear in=@1 noise=@2 amount=0.6 width=3 contrast=0.5
-output output 3
-expose "Wear width" 3 width 1 12
-expose "Amount" 3 amount 0 1

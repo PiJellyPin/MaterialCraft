@@ -609,6 +609,100 @@ impl Spline {
     }
 }
 
+/// How a path is drawn when a spline becomes a picture: filled (closed paths) and/or stroked with a width in
+/// texture units (0 = no stroke).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShapeStyle {
+    pub fill: bool,
+    pub stroke: f32,
+}
+
+impl Default for ShapeStyle {
+    fn default() -> Self {
+        ShapeStyle { fill: true, stroke: 0.0 }
+    }
+}
+
+impl SPath {
+    /// The path as SVG path data in texture coordinates (cubic curves).
+    pub fn svg_d(&self) -> String {
+        let n = self.pts.len();
+        if n == 0 {
+            return String::new();
+        }
+        let mut d = format!("M{} {}", num(self.pts[0].p[0]), num(self.pts[0].p[1]));
+        if n == 1 {
+            return d;
+        }
+        for i in 0..self.segment_count() {
+            let (_, c1, c2, b, _, _) = self.segment(i);
+            let _ = write!(d, " C{} {} {} {} {} {}", num(c1[0]), num(c1[1]), num(c2[0]), num(c2[1]), num(b[0]), num(b[1]));
+        }
+        if self.closed && n > 2 {
+            d.push_str(" Z");
+        }
+        d
+    }
+}
+
+impl Spline {
+    /// The spline as an SVG picture (white shapes on a transparent ground, the unit square as view box) that the SVG
+    /// node renders. The editable spline travels inside the file as metadata, so it can be opened again exactly.
+    pub fn to_svg(&self, styles: &[ShapeStyle]) -> String {
+        let mut s = String::from("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1 1\" width=\"1024\" height=\"1024\">\n");
+        s.push_str("<metadata id=\"materialcraft-spline\">");
+        s.push_str(self.to_text().trim_end());
+        for (i, st) in styles.iter().enumerate().take(self.paths.len()) {
+            let _ = write!(s, "\nstyle {} {} {}", i, st.fill as u8, num(st.stroke));
+        }
+        s.push_str("</metadata>\n");
+        for (i, p) in self.paths.iter().enumerate() {
+            if p.pts.len() < 2 {
+                continue;
+            }
+            let st = styles.get(i).copied().unwrap_or_default();
+            let fill = st.fill && p.closed && p.pts.len() > 2;
+            let stroke = st.stroke > 1e-5 || !fill;
+            let _ = write!(s, "<path d=\"{}\" fill=\"{}\"", p.svg_d(), if fill { "#fff" } else { "none" });
+            if stroke {
+                let _ = write!(s, " stroke=\"#fff\" stroke-width=\"{}\" stroke-linejoin=\"round\" stroke-linecap=\"round\"", num(if st.stroke > 1e-5 { st.stroke } else { 0.01 }));
+            }
+            s.push_str("/>\n");
+        }
+        s.push_str("</svg>\n");
+        s
+    }
+
+    /// The spline an SVG made by [`Spline::to_svg`] carries (with its styles); `None` for any other SVG.
+    pub fn from_svg_meta(svg: &str) -> Option<(Spline, Vec<ShapeStyle>)> {
+        let a = svg.find("<metadata id=\"materialcraft-spline\">")? + "<metadata id=\"materialcraft-spline\">".len();
+        let b = svg[a..].find("</metadata>")? + a;
+        let body = &svg[a..b];
+        let mut text = String::new();
+        let mut styles: Vec<ShapeStyle> = Vec::new();
+        for line in body.lines() {
+            if let Some(r) = line.trim().strip_prefix("style ") {
+                let f: Vec<&str> = r.split_whitespace().collect();
+                if f.len() == 3 {
+                    let i: usize = f[0].parse().ok()?;
+                    while styles.len() <= i {
+                        styles.push(ShapeStyle::default());
+                    }
+                    styles[i] = ShapeStyle { fill: f[1] == "1", stroke: f[2].parse().ok()? };
+                }
+            } else {
+                text.push_str(line);
+                text.push('\n');
+            }
+        }
+        let sp = Spline::parse(&text).ok()?;
+        while styles.len() < sp.paths.len() {
+            styles.push(ShapeStyle::default());
+        }
+        Some((sp, styles))
+    }
+}
+
 fn num(v: f32) -> String {
     let t = format!("{v:.5}");
     let t = t.trim_end_matches('0').trim_end_matches('.');

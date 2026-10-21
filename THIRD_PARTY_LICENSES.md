@@ -465,3 +465,12 @@ The AI-control layer (one command registry shared by the app, a command line and
 authenticated control port to drive the running editor) follows the architecture of the FilmCraft project. The
 implementation in `src/session.rs`, `src/agent.rs`, `src/agent_cli.rs` and `src/gui_control.rs` is written
 independently for MaterialCraft.
+
+## File format references (no code included)
+
+### .sbs package format
+
+The `.sbs` reader and writer (`src/sbs.rs`, `src/sbs_import.rs`, `src/sbs_native.rs`, `src/sbs_defs.rs` and the node table
+`src/sbs_atomic.txt`) follow the format reference of Adobe's Automation Toolkit documentation
+(github.com/AdobeDocs/substance-automation-toolkit, Copyright Adobe, licensed under the Apache License 2.0). Element names, node and
+parameter identifiers, value types and default values are taken from that reference; no documentation text or code is included.

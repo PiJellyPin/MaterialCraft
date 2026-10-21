@@ -1,0 +1,56 @@
+# What the numbered settings ("dropdowns") of the standard library graphs mean in MaterialCraft: one line per
+# setting, `<graph id> <parameter> = <label of 0>|<label of 1>|...`. The labels say what MaterialCraft draws for each
+# number (how sbs_adapt.rs reads it), so they are our own reading, not text taken from the library.
+#   <graph id> may be `package/graph`, may end with `*` (every graph whose id starts with the rest) or be `*` alone
+#   (every graph); a line naming the package wins over one that does not;
+#   a label `N:text` gives the number explicitly (numbers that are left out are unused);
+#   labels marked "(assumed)" are not yet checked against a reference render.
+
+# normal maps: 0 is DirectX (green points down), 1 OpenGL
+* normal_format = DirectX|OpenGL
+* Normal_Format = DirectX|OpenGL
+curvature_sobel input_normal_type = DirectX|OpenGL
+vector_warp* vector_format = DirectX|OpenGL
+
+# scatter nodes (Tile Generator, Tile Sampler, Splatter Circular)
+tile_generator* pattern = None|Image input|Square|Disc|Paraboloid|Bell|Gaussian|Thorn|Pyramid|Brick|Gradation|Waves|Half Bell|Ridged Bell|Crescent|Capsule|Cone
+tile_sampler* pattern = None|Image input|Square|Disc|Paraboloid|Bell|Gaussian|Thorn|Pyramid|Brick|Gradation|Waves|Half Bell|Ridged Bell|Crescent|Capsule|Cone
+splatter_circular* pattern = None|Image input|Square|Disc|Paraboloid|Bell|Gaussian|Thorn|Pyramid|Brick|Gradation|Waves|Half Bell|Ridged Bell|Crescent|Capsule|Cone
+tile_generator* blending_mode = Add / Sub|Max|Add|Alpha blend
+tile_sampler* blending_mode = Add / Sub|Max|Add|Alpha blend
+splatter_circular* blending_mode = Add / Sub|Max|Add|Alpha blend
+tile_generator* size_mode = Relative to the cell|Absolute (fraction of the image)|Pixels
+tile_sampler* size_mode = Absolute (fraction of the image)|Relative to the cell|Pixels
+tile_generator* pattern_input_distribution = Random|By pattern number|By ring number
+tile_sampler* pattern_input_distribution = Random|By pattern number|By ring number
+splatter_circular* pattern_input_distribution = Random|By pattern number|By ring number
+tile_generator* pattern_symmetry_random_mode = Horizontal|Vertical|Horizontal and vertical
+tile_sampler* pattern_symmetry_random_mode = Horizontal|Vertical|Horizontal and vertical
+splatter_circular* pattern_symmetry_random_mode = Horizontal|Vertical|Horizontal and vertical
+tile_generator* pattern_rotation = 0 degrees|90 degrees|180 degrees|270 degrees
+tile_sampler* pattern_rotation = 0 degrees|90 degrees|180 degrees|270 degrees
+tile_sampler* offset_type = Rows (horizontal)|Columns (vertical)
+
+# shapes: the newer Shape draws a dome for 1 (checked); 2.. are the shared pattern list
+shape/shape Pattern = None|Square|Disc|Paraboloid|Bell|Gaussian|Thorn|Pyramid|Brick|Gradation|Waves|Half Bell|Ridged Bell|Crescent|Capsule|Cone
+pattern_shape/shape Pattern = None|Dome|Disc|Paraboloid|Bell|Gaussian|Thorn|Pyramid|Brick|Gradation|Waves|Half Bell|Ridged Bell|Crescent|Capsule|Cone
+shape_base pattern = None|Dome|Disc|Paraboloid|Bell|Gaussian|Thorn|Pyramid|Brick|Gradation|Waves|Half Bell|Ridged Bell|Crescent|Capsule|Cone
+
+# noises
+voronoi* style = F1 (distance)|Random color|Edge|F2|F2 - F1|F1 * F2|F1 / F2
+voronoi* distance_mode = Euclidean|Manhattan|Chebyshev|Minkowski
+voronoi* random_color_seed_mode = Global (node seed)|Manual
+voronoi_fractal blend_mode = Add|Max|Min
+gradient_linear_* rotation = 0 degrees|90 degrees|180 degrees|270 degrees
+gradient_radial shape = Round|Square
+triangle_grid* color_output = Smooth heights|Flat triangles|Edge distance
+
+# filters
+bevel bevel_mode = Round|Angular
+mirror* mirror_type = Mirror X axis|Mirror Y axis|Mirror corner
+mirror* corner_type = Top left|Top right|Bottom left|Bottom right
+multi_directional_warp* mode = Average|Max|Min|Chain
+multi_directional_warp* directions = 1:1 direction|2:2 directions|4:4 directions
+normal_combine blend_quality = Whiteout|Channel mixer|Detail oriented
+threshold mode = Greater|Greater or equal|Lower|Lower or equal
+slope_blur* mode = 5:Max (assumed)|6:Min (assumed)|7:Blur

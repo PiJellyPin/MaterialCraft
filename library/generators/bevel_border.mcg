@@ -1,9 +1,0 @@
-# Rounded frame bevel around a closed shape, with height, normal and a mask of the frame
-size 2048
-node 1 path_border preset=3 width=44 side=0 profile=1 flat=0.15
-node 2 normal in=@1 strength=4
-output height 1
-output normal 2
-output frame 1.mask
-expose "Frame width" 1 width 8 120
-expose "Flat part" 1 flat 0 0.9

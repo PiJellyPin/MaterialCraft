@@ -71,17 +71,17 @@ pub const SPECS: &[Spec] = &[
     s!("gradient", [], [], "gradient: mode(0 linear,1 radial) angle"),
     s!("circle", [], [], "radius softness"),
     s!("rect", [], [], "width height softness"),
-    s!("polygon", [], [], "sides radius softness rotation"),
-    s!("checker", [], [], "tiles"),
+    s!("polygon", [], [], "sides radius softness rotation gradient curve gradient_invert tiling"),
+    s!("checker", [], [], "tiles white_first rotate45 lum_var seed"),
     s!("bricks", [], [], "rows cols mortar bevel offset lum_var seed"),
-    s!("fx_map", [], ["in", "in2", "in3", "in4"], "run a pattern program: program=\"name\" depth seed blend (0 max 1 add 2 over 3 min 4 multiply) color bg bg_r bg_g bg_b"),
+    s!("fx_map", [], ["in", "in2", "in3", "in4", "in5", "in6", "in7", "in8", "background"], "run a pattern program: program=\"name\" depth seed blend (0 max 1 add 2 over 3 min 4 multiply) color bg bg_r bg_g bg_b roughness (strength per quad-tree level) opacity; in..in8 are the image patterns, background the starting image"),
     s!("curve", ["in"], [], "tone curves: points (master), points_r points_g points_b points_a as \"x:y,x:y\" lists"),
     s!("svg", [], [], "vector image: file=\"art.svg\" fit (0 contain 1 stretch 2 cover) scale x y"),
     s!("text", [], [], "text: text=\"...\" font=\"face.ttf\" (optional) size x y align (0 left 1 centre 2 right) spacing line_spacing rotation value wrap(width as a fraction of the image, 0 off) use_color color_r color_g color_b"),
     s!("channel_shuffle", ["in"], ["in2"], "rebuild channels: src_r src_g src_b src_a (0-3 channels of in, 4-7 channels of in2, 8 zero, 9 one), inv_r inv_g inv_b inv_a"),
     s!("input_value", [], [], "graph parameter read by functions: name, type (0 float, 1 int, 2 bool, 3 float2, 4 float3, 5 float4, 6 int2, 7 int3, 8 int4, 9 string), v / x y z w, min max, label"),
-    s!("pixel_processor", [], ["in", "in2", "in3", "in4"], "per-pixel expr / expr_g / expr_b / expr_a (string params), or fn=\"function\" to run a function graph per pixel"),
-    s!("value_processor", [], ["in", "in2", "in3", "in4"], "run fn=\"function\" once; the result (float, float3 or float4) fills the image. The function can read image statistics"),
+    s!("pixel_processor", [], ["in", "in2", "in3", "in4", "in5", "in6", "in7", "in8", "in9", "in10", "in11", "in12", "in13", "in14", "in15", "in16"], "per-pixel expr / expr_g / expr_b / expr_a (string params), or fn=\"function\" to run a function graph per pixel"),
+    s!("value_processor", [], ["in", "in2", "in3", "in4", "in5", "in6", "in7", "in8", "in9", "in10", "in11", "in12", "in13", "in14", "in15", "in16"], "run fn=\"function\" once; the result (float, float3 or float4) fills the image. The function can read image statistics"),
     s!("sdf_shape", [], [], "2D signed distance shape: shape(0 circle,1 box,2 polygon,3 ring) size aspect sides rotation round x y range"),
     s!("sdf_op", ["a", "b"], [], "combine SDFs: op(0 union,1 subtract,2 intersect) smooth range"),
     s!("sdf_mask", ["in"], [], "SDF -> mask: offset softness"),
@@ -90,10 +90,10 @@ pub const SPECS: &[Spec] = &[
     s!("baked_map", [], [], "map baked from meshes and stored in the package: set=\"name\" map=\"normal\" flip_y invert gray; see the mesh baker"),
     s!("mesh_weathering", ["curvature"], ["ao", "normal", "noise"], "wear, dirt and dust masks from baked maps: wear dirt dust up_angle(degrees) up_spread breakup scale contrast invert seed"),
     s!("input", [], [], "subgraph input: idx"),
-    s!("subgraph", [], ["in0", "in1", "in2", "in3"], "instance of a reusable subgraph: graph=\"name\""),
-    s!("shape", [], [], "procedural shape: square, disc, paraboloid, gaussian, diamond, pyramid, half sphere, cone"),
-    s!("tile_sampler", [], ["pattern", "pattern2", "pattern3", "pattern4", "pattern5", "pattern6", "mask", "scale_map", "rotation_map", "displacement_map", "color_map", "distribution_map", "background"], "grid of pattern instances: x_amount y_amount size aspect size_mode scale scale_random size_random rotation rotation_random pattern_rotation symmetry_random position_random offset offset_mode offset_random global_offset_x global_offset_y color color_random lum_by_number lum_by_scale mask_threshold mask_invert mask_random mask_checker invert_mask blending opacity background reverse_order pattern_type pattern_specific pattern_distribution"),
-    s!("tile_generator", [], ["pattern", "pattern2", "pattern3", "pattern4", "pattern5", "pattern6", "mask", "scale_map", "rotation_map", "displacement_map", "color_map", "distribution_map", "background"], "brick-style tiles: x_amount y_amount size aspect size_mode scale scale_random size_random rotation rotation_random pattern_rotation symmetry_random position_random offset offset_mode offset_random global_offset_x global_offset_y color color_random lum_by_number lum_by_scale mask_checker mask_horizontal mask_vertical mask_random invert_mask blending opacity background reverse_order pattern_type pattern_specific pattern_distribution"),
+    Spec { kind: "subgraph", req: &[], opt: &SUB_INPUTS, doc: "instance of a reusable subgraph: graph=\"name\"; in0..in15 feed the graph's inputs (idx 0..15)" },
+    s!("shape", [], [], "procedural shape: shape(0 square,1 disc,2 paraboloid,3 gaussian,4 diamond,5 pyramid,6 half sphere,7 cone; 100+n pattern n of the scatter list) size_x size_y rotation pos_x pos_y tiling softness pattern_specific"),
+    s!("tile_sampler", [], ["pattern", "pattern2", "pattern3", "pattern4", "pattern5", "pattern6", "mask", "scale_map", "rotation_map", "displacement_map", "color_map", "distribution_map", "background"], "grid of pattern instances: x_amount y_amount size aspect size_mode scale scale_random size_random rotation rotation_random pattern_rotation pattern_rotation_random symmetry_random position_random offset offset_mode offset_random global_offset_x global_offset_y color color_random lum_by_number lum_by_scale mask_threshold mask_invert mask_random mask_checker invert_mask blending opacity background reverse_order pattern_type pattern_specific pattern_distribution"),
+    s!("tile_generator", [], ["pattern", "pattern2", "pattern3", "pattern4", "pattern5", "pattern6", "mask", "scale_map", "rotation_map", "displacement_map", "color_map", "distribution_map", "background"], "brick-style tiles: x_amount y_amount size aspect size_mode scale scale_random size_random rotation rotation_random pattern_rotation pattern_rotation_random symmetry_random position_random offset offset_mode offset_random global_offset_x global_offset_y color color_random lum_by_number lum_by_scale mask_checker mask_horizontal mask_vertical mask_random invert_mask blending opacity background reverse_order pattern_type pattern_specific pattern_distribution"),
     s!("splatter", [], ["pattern", "pattern2", "pattern3", "pattern4", "pattern5", "pattern6"], "random scatter of a pattern: count grid_number scale scale_var aspect rotation rot_var pattern_rotation lum_var disorder pan_x pan_y symmetry_random gain output_min output_max background blending opacity pattern_type pattern_specific pattern_distribution"),
     s!("splatter_circular", [], ["pattern", "pattern2", "pattern3", "pattern4", "pattern5", "pattern6"], "instances on one or more circles: number amount_random rings radius radius_random ring_radius_multiplier angle_random spiral_factor spread size size_random scale_by_number scale_by_ring rotation rotation_random center_orientation ring_rotation ring_rotation_random position_random color luminance_random lum_by_number lum_by_ring mask_random background blending opacity pattern_type pattern_specific pattern_distribution"),
     s!("clouds", [], [], "soft cloud noise: scale seed contrast invert disorder disorder_speed anisotropy anisotropy_angle tile_x tile_y"),
@@ -102,9 +102,9 @@ pub const SPECS: &[Spec] = &[
     s!("directional_noise", [], [], "streak noise, seamless at any angle: scale stretch angle seed contrast invert disorder disorder_speed anisotropy anisotropy_angle tile_x tile_y"),
     s!("grunge", [], [], "grunge masks: variant(0 concrete,1 scratches,2 spots,3 smudges) balance large_variation base_noisiness dirt_specks_opacity invert_dirt scratches_opacity sharpen quantity scratch_width scratch_length details coverage coverage_contrast disorder disorder_speed seed contrast invert"),
     s!("plasma", [], [], "smooth plasma waves"),
-    s!("stripes", [], [], "stripes: count angle softness width tile(1 = snap to seamless angle, 0 = exact)"),
+    s!("stripes", [], [], "stripes: count angle softness width tile(1 = snap to seamless angle, 0 = exact) shift phase"),
     s!("weave", [], [], "woven threads: count width"),
-    s!("star", [], [], "star shape: points inner size softness rotation"),
+    s!("star", [], [], "star shape: points inner size softness rotation straight"),
     s!("gradient_axial", [], [], "symmetric gradient: angle"),
     s!("gradient_circular", [], [], "angular gradient: offset"),
     s!("switch", [], ["a", "b", "c", "d"], "pass one of up to four inputs: index"),
@@ -119,8 +119,8 @@ pub const SPECS: &[Spec] = &[
     s!("slope_blur", ["in", "slope"], [], "blur along a slope map: samples intensity mode"),
     s!("blur_hq", ["in"], [], "high quality blur: intensity quality"),
     s!("histogram_range", ["in"], [], "select a range of values: position range contrast invert"),
-    s!("bevel", ["in"], [], "bevel a shape: distance smoothing threshold use_as_normal normal_intensity corner(0 round,1 angular) directx"),
-    s!("distance", ["in"], [], "distance field of a mask: distance mode"),
+    s!("bevel", ["in"], [], "bevel a shape (outputs: height, normal): distance (negative grows outwards) smoothing threshold use_as_normal normal_intensity corner(0 round,1 angular) directx"),
+    s!("distance", ["in"], [], "distance field of a mask, edges placed between pixels: distance threshold mode(0 inside,1 the format's Distance: 1 on the shape fading outside,2 both)"),
     s!("color_match", ["in"], ["reference", "src_color", "target_color"], "recolour: method(0 statistics transfer from reference,1 colour swap) strength source_mode(0 average,1 colour,2 input) src_r src_g src_b target_mode(0 colour,1 input) target_r target_g target_b custom_variation variation_hue variation_chroma variation_luma use_mask mask_hue_range mask_chroma_range mask_luma_range mask_smoothness"),
     s!("curvature_smooth", ["in"], [], "smooth curvature from a normal map"),
     s!("height_blend", ["bg", "fg"], ["mask"], "blend two height maps: opacity contrast output"),
@@ -176,7 +176,7 @@ pub const SPECS: &[Spec] = &[
     s!("grayscale_conversion", ["in"], [], "weighted grayscale: r g b"),
     s!("cells", [], ["color"], "cellular noise: scale jitter seed variant(0 cells1,1 cells2,2 cells3,3 cells4) luminance_random color_source(0 random,1 pseudorandom,2 image) pseudorandom_seed edge_width hardness contrast invert disorder disorder_speed anisotropy anisotropy_angle tile_x tile_y"),
     s!("fractal_sum", [], [], "sum of noise octaves: scale min_level max_level roughness seed mode(0 base,1 turbulence,2 creased) contrast invert disorder disorder_speed"),
-    s!("waveform", [], [], "tileable wave pattern: count angle warp warp_scale seed shape(0 sine,1 triangle,2 saw,3 square) contrast invert disorder disorder_speed"),
+    s!("waveform", [], [], "tileable wave pattern: count angle warp warp_scale seed shape(0 sine,1 triangle,2 saw,3 square) style(0 waves,1 sound bars) samples wave_number size_min size_max noise intensity contrast invert disorder disorder_speed"),
     s!("gaussian_spots", [], [], "soft gaussian spots: scale size size_variation seed contrast invert disorder disorder_speed anisotropy anisotropy_angle tile_x tile_y"),
     s!("normal_invert", ["in"], [], "flip normal map channels: invert_x invert_y invert_z invert_a"),
     s!("normal_normalize", ["in"], [], "renormalise a normal map"),
@@ -192,8 +192,8 @@ pub const SPECS: &[Spec] = &[
     s!("grunge_map", [], [], "grunge map 1-24: map balance contrast brush_pattern cracks disorder coverage seed invert"),
     s!("rgba_split", ["in"], [], "split into R, G, B and A grayscale outputs"),
     s!("alpha_split", ["in"], [], "split into an RGB output and an alpha output"),
-    s!("weave_generator", [], [], "woven threads with gaps: tile_x tile_y weave shape gap_x gap_y contrast invert"),
-    s!("starburst", [], [], "star-like rays: count rays sharpness size rotation rotation_random seed contrast invert"),
+    s!("weave_generator", [], [], "woven threads with gaps (outputs: height, mask_1, mask_2, opacity): tile_x tile_y weave shape gap_x gap_y style(0 plain,1 twill) contrast invert"),
+    s!("starburst", [], [], "star-like rays: count rays sharpness size rotation rotation_random style(0 wedges,1 light rays) blur randomness size_min size_variation seed contrast invert"),
     s!("gradient_reflected", [], [], "gradient that goes 0-1-0: count angle contrast invert"),
     s!("shape_stroke", ["in"], [], "outline of a shape: width offset softness threshold opacity color_r color_g color_b"),
     s!("shape_glow", ["in"], [], "glow around a shape: width softness intensity threshold opacity spread color_r color_g color_b"),
@@ -208,7 +208,7 @@ pub const SPECS: &[Spec] = &[
     s!("morphology", ["in"], [], "grow or shrink bright areas: mode(0 dilate,1 erode,2 open,3 close) radius"),
     s!("multi_switch", [], ["a", "b", "c", "d", "e", "f", "g", "h"], "pass one of up to eight inputs: index"),
     s!("color_lut", ["in"], [], "colour grade through a lookup table file (.cube, .3dl, or a strip / Hald image): file=\"grade.cube\" intensity"),
-    s!("lookup_table", ["in", "lut"], [], "recolour through a lookup image: mode(0 per channel,1 by luminance) row"),
+    s!("lookup_table", ["in", "lut"], [], "recolour through a lookup image: mode(0 per channel,1 by luminance) row (the line read) vertical (read a column) repeat"),
     s!("frequency_split", ["in"], [], "split into a blurred low band and a high band centred on gray (outputs: low, high): radius"),
     s!("frequency_merge", ["low", "high"], [], "recombine the bands of frequency_split: gain"),
     s!("auto_crop", ["in"], [], "stretch the non-black area to fill the image: threshold margin keep_aspect"),
@@ -235,8 +235,8 @@ pub const SPECS: &[Spec] = &[
     s!("palette_apply", ["in", "palette"], [], "snap colours to the nearest palette colour: count amount"),
     s!("make_it_tile_mirror", ["in"], [], "make an image tile by mirroring: mode(0 both axes,1 horizontal,2 vertical)"),
     s!("blue_noise", [], [], "evenly spread grain with little low-frequency content: scale seed tightness contrast invert"),
-    s!("fibers", [], [], "random curved hair-like strands: count length thickness angle angle_variation curl taper brightness_variation seed contrast invert"),
-    s!("scratches", [], [], "random thin scratches: count length thickness angle angle_variation curl taper brightness_variation seed contrast invert"),
+    s!("fibers", [], [], "random curved hair-like strands: count length thickness angle angle_variation curl taper brightness_variation blend(0 keep the brighter,1 add up) gain soft seed contrast invert"),
+    s!("scratches", [], [], "random thin scratches: count length thickness angle angle_variation curl taper brightness_variation blend(0 keep the brighter,1 add up) gain soft seed contrast invert"),
     s!("caustics", [], [], "light patterns of water: scale octaves strength sharpness seed contrast invert"),
     s!("liquid_noise", [], [], "swirling warped noise: scale octaves warp mode(0 liquid,1 marble) bands seed contrast invert"),
     s!("perlin_3d", [], [], "slice of 3D noise that loops in depth: scale depth octaves gain seed contrast invert"),
@@ -256,11 +256,12 @@ pub const SPECS: &[Spec] = &[
     s!("halftone", ["in"], [], "dots whose size follows brightness: cells mode(0 grid,1 diagonal) softness gain"),
     s!("reaction_diffusion", ["in"], [], "growing spots and stripes seeded by the input: resolution iterations feed kill spots seed"),
     s!("herringbone", [], [], "herringbone pavement: scale gap bevel variation mode(0 height,1 brick id,2 orientation) seed contrast invert"),
+    s!("tile_random2", [], [], "patchwork of random tiles with even gaps, rounded or pulled-in corners, slant and a bevel that does not depend on tile size: amount_x amount_y random_size random_size_x random_size_y interstice random_position round_corners scale scale_random rotation rotation_random corners_random slant slant_x slant_y bevel bevel_per_axis bevel_x bevel_y bevel_curve mask_random_invert mask_random_start mask_random_end seed contrast invert"),
     s!("arc_pavement", [], [], "fan-shaped arc pavement: scale rings stones gap bevel variation mode(0 height,1 stone id) seed contrast invert"),
-    s!("anisotropic_noise", [], [], "noise stretched along any direction, still tiling: scale stretch angle octaves gain seed contrast invert"),
-    s!("fur_noise", [], [], "fur-like hairs: count length thickness angle angle_variation curl taper root_shade brightness_variation seed contrast invert"),
+    s!("anisotropic_noise", [], [], "noise stretched along any direction, still tiling: scale stretch angle octaves gain style(0 fractal streaks,1 value grid) x_amount y_amount smoothness rotate seed contrast invert"),
+    s!("fur_noise", [], [], "fur-like hairs: count length thickness angle angle_variation curl taper root_shade brightness_variation flow flow_mode(0 noise field,1 waves) flow_scale waves seed contrast invert"),
     s!("moisture_noise", [], [], "damp patches with drips: scale coverage softness drips drip_length seed contrast invert"),
-    s!("microscope_noise", [], [], "cells seen through a microscope: scale jitter membrane nucleus grain mode(0 combined,1 membrane,2 nuclei,3 cell id) seed contrast invert"),
+    s!("microscope_noise", [], [], "cells seen through a microscope: scale jitter membrane nucleus grain mode(0 combined,1 membrane,2 nuclei,3 cell id) style(0 tissue,1 floating cells) density cell_size focus warp brightness seed contrast invert"),
     s!("worley_3d", [], [], "cellular noise in 3D, one slice per z: scale z jitter mode(0 f1,1 f2,2 f2-f1,3 cell id) seed contrast invert"),
     s!("fbm_3d", [], [], "fractal noise in 3D, one slice per z: scale z octaves gain mode(0 fbm,1 ridged,2 turbulence) seed contrast invert"),
     s!("volume_mask", [], [], "slice through a repeated 3D shape as a mask: shape(0 sphere,1 box,2 cylinder,3 torus,4 cone) size repeat z roundness softness contrast invert"),
@@ -278,9 +279,18 @@ pub const SPECS: &[Spec] = &[
     s!("water_filter", ["height"], ["base"], "water in the low parts (outputs: color, mask, height, roughness): level softness tint_r tint_g tint_b murkiness wet_edge ripples ripple_scale dry_roughness wet_roughness seed"),
     s!("fxaa", ["in"], [], "smooth jagged edges: strength threshold"),
     s!("bilateral_blur", ["in"], ["guide"], "blur that keeps edges: radius range"),
+    s!("noise_pattern", [], ["input"], "cell, crystal, gaussian, perlin and plasma noises matched to common library noises: preset scale jitter edge_width hardness color_source(0 random,1 pseudorandom,2 input image) pseudo_random_seed seed contrast invert disorder disorder_speed anisotropy anisotropy_angle tile_x tile_y"),
+    s!("noise_3d", [], ["position"], "noise read at 3D positions (a position map, or the texture plane): type(0 perlin,1 perlin fractal,2 ridged fractal,3 simplex,4 worley,5 voronoi,6 voronoi fractal) scale size_x size_y size_z offset_x offset_y offset_z distortion distortion_scale baseline noise_contrast absolute min_level max_level roughness lacunarity opacity jitter style(0 f1,1 cell value,2 edges,3 f2,4 f2-f1) edge_thickness seed contrast invert"),
+    s!("tile_preset", [], [], "bricks, cells, spots, meshes, parquet and random tiles: preset tiling interstice edge_smoothness roundness lum_var bricks_x bricks_y bevel_x bevel_y gap_x gap_y offset variant size_random seed contrast invert"),
+    s!("weave_preset", [], [], "rope, fibre and weave patterns: preset tiling rotate45 scale disorder seed contrast invert"),
+    s!("gradient_2pt", [], [], "gradient between two points: mode(0 linear,1 axial,2 circular,3 radial) p1_x p1_y p2_x p2_y tiling radial_shape peak profile(0 linear,1 ease out,2 ease in,3 smooth) angle invert"),
+    s!("preset_noise", [], [], "fractal noise presets matched to common library noises: preset scale roughness angle balance warp angle_random brush scratches specks streaks cracks grain sharpen seed contrast invert disorder disorder_speed anisotropy anisotropy_angle tile_x tile_y"),
 ];
 
 pub fn spec(kind: &str) -> Option<&'static Spec> {
+    if kind.starts_with("sbs:") {
+        return crate::sbs_defs::spec(kind);
+    }
     SPECS.iter().chain(crate::func::FUNC_SPECS.iter()).chain(crate::fxmap::FXM_SPECS.iter()).find(|s| s.kind == kind)
 }
 
@@ -288,7 +298,7 @@ pub fn category(kind: &str) -> &'static str {
     match kind {
         "color" | "white_noise" | "gaussian_noise" | "perlin" | "fbm" | "clouds" | "voronoi" | "voronoi_fractal" | "bnw_spots" | "crystal" | "directional_noise" | "grunge" | "plasma"
         | "gradient" | "gradient_axial" | "gradient_circular" | "circle" | "rect" | "polygon" | "shape" | "star" | "checker" | "bricks" | "stripes" | "weave"
-        | "tile_sampler" | "tile_generator" | "splatter" | "splatter_circular" | "pixel_processor" | "value_processor" | "fx_map" | "text" | "svg" | "cells" | "fractal_sum" | "waveform" | "gaussian_spots" | "triangle_grid" | "starburst" | "gradient_reflected" | "weave_generator" | "grunge_map" | "blue_noise" | "fibers" | "scratches" | "caustics" | "liquid_noise" | "perlin_3d" | "paving" | "wire_mesh" | "path_stroke" | "path_fill" | "path_distance" | "path_border" | "path_scatter" | "path_track" | "path_cable" | "path_seam" | "path_splatter" | "path_sample" | "herringbone" | "arc_pavement" | "anisotropic_noise" | "fur_noise" | "moisture_noise" | "microscope_noise" | "worley_3d" | "fbm_3d" | "volume_mask" | "gradient_3d" => "Generators",
+        | "tile_sampler" | "tile_generator" | "splatter" | "splatter_circular" | "pixel_processor" | "value_processor" | "fx_map" | "text" | "svg" | "cells" | "fractal_sum" | "waveform" | "gaussian_spots" | "triangle_grid" | "starburst" | "gradient_reflected" | "weave_generator" | "grunge_map" | "blue_noise" | "fibers" | "scratches" | "caustics" | "liquid_noise" | "perlin_3d" | "paving" | "wire_mesh" | "path_stroke" | "path_fill" | "path_distance" | "path_border" | "path_scatter" | "path_track" | "path_cable" | "path_seam" | "path_splatter" | "path_sample" | "herringbone" | "arc_pavement" | "anisotropic_noise" | "fur_noise" | "moisture_noise" | "microscope_noise" | "worley_3d" | "fbm_3d" | "volume_mask" | "gradient_3d" | "preset_noise" | "noise_pattern" | "gradient_2pt" | "weave_preset" | "tile_preset" | "tile_random2" | "noise_3d" => "Generators",
         "sdf_shape" | "sdf_op" | "sdf_mask" | "sdf_form" => "SDF",
         "bitmap" | "baked_map" | "input" | "input_value" | "subgraph" | "output" | "dot" => "Utility",
         k if k.starts_with("f_") => "Function",
@@ -336,6 +346,7 @@ pub fn label(kind: &str) -> String {
         "mesh_weathering" => "Mesh Weathering",
         "herringbone" => "Herringbone",
         "arc_pavement" => "Arc Pavement",
+        "tile_random2" => "Random Tiles 2",
         "anisotropic_noise" => "Anisotropic Noise",
         "fur_noise" => "Fur Noise",
         "moisture_noise" => "Moisture Noise",
@@ -367,6 +378,11 @@ pub fn label(kind: &str) -> String {
         "contrast_luminosity" => "Contrast / Luminosity",
         "clone_patch" => "Clone Patch",
         "perlin_3d" => "Perlin Noise 3D",
+        "gradient_2pt" => "Gradient (Two Points)",
+        "weave_preset" => "Weave Patterns",
+        "tile_preset" => "Tile Patterns",
+        "noise_3d" => "3D Noise (Position)",
+        "noise_pattern" => "Noise Patterns",
         "fxaa" => "FXAA",
         "metal_rough_to_spec_gloss" => "Metal/Rough To Spec/Gloss",
         "spec_gloss_to_metal_rough" => "Spec/Gloss To Metal/Rough",
@@ -398,6 +414,8 @@ pub fn label(kind: &str) -> String {
         "f_pos" => "Position",
         "f_out" => "Function Output",
         "fxm_out" => "Program Output",
+        "fxm_quad" => "Quad Cell",
+        "fxm_select" => "Select Branch",
         _ => "",
     };
     if !fnamed.is_empty() {
@@ -492,7 +510,7 @@ pub fn demo_graph_for(kind: &str) -> Option<String> {
     Some(t)
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Node {
     pub kind: String,
     pub nums: BTreeMap<String, f32>,
@@ -520,40 +538,15 @@ pub struct Exposed {
     pub max: f32,
 }
 
-/// Version of the `.mcg` text format this build writes. Files without a `format` line are version 1 (they load
-/// unchanged); a file with a newer version is refused with a clear message instead of being half-understood.
+/// Version of the line text of a graph (`Graph::parse` / `Graph::to_text`, the form tests and tools write graphs in).
+/// Text without a `format` line is version 1; newer text is refused with a clear message instead of being
+/// half-understood.
 pub const FORMAT_VERSION: u32 = 2;
-
-/// What resolving a live link found (kept in memory only).
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct LinkInfo {
-    /// the file that was actually read (the stored path, or a match found in the search folders)
-    pub found: Option<std::path::PathBuf>,
-    pub issue: Option<String>,
-    /// subgraph names this link brought into the package
-    pub members: Vec<String>,
-}
-
-/// A live link to a graph in another package file (`link <name> "<relative path>" ["<graph>"]`). The linked graph is
-/// not stored in this file: it is read from disk each time the file is opened or the links are refreshed, and used
-/// through a subgraph node whose `graph` is `<name>`. Every node that uses the same name is an instance of it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Link {
-    pub name: String,
-    pub path: String,
-    /// which graph of that package; `None` = its main graph
-    pub graph: Option<String>,
-}
 
 #[derive(Debug, Clone)]
 pub struct Graph {
-    /// format version the file was written with (1 when it had no `format` line)
+    /// format version of the line text it was parsed from (1 when it had no `format` line)
     pub format: u32,
-    pub links: Vec<Link>,
-    /// subgraph names that came from resolving `links` (read-only copies, never written to the file)
-    pub managed: BTreeSet<String>,
-    /// what the last `resolve_links` found for every link (not saved): the file used and the problem, if any
-    pub link_info: BTreeMap<String, LinkInfo>,
     pub size: usize,
     /// pixel height at the nominal size; 0 means square (same as `size`)
     pub height: usize,
@@ -567,15 +560,14 @@ pub struct Graph {
     pub comments: Vec<Comment>,
     pub seed_offset: u32,
     pub meta: BTreeMap<String, String>,
+    /// graphs of an `.sbs` package edited as it is (see `sbs_native`): where the graph lives in the file
+    pub sd: Option<Box<crate::sbs_native::SdGraph>>,
 }
 
 impl Default for Graph {
     fn default() -> Self {
         Graph {
             format: FORMAT_VERSION,
-            links: Vec::new(),
-            managed: BTreeSet::new(),
-            link_info: BTreeMap::new(),
             size: 512,
             height: 0,
             nodes: BTreeMap::new(),
@@ -587,6 +579,7 @@ impl Default for Graph {
             comments: Vec::new(),
             seed_offset: 0,
             meta: BTreeMap::new(),
+            sd: None,
         }
     }
 }
@@ -678,10 +671,34 @@ struct Ctx<'a> {
     gin: &'a BTreeMap<String, crate::func::Value>,
 }
 
+/// Most image inputs a graph used as a node takes.
+pub const MAX_SUB_INPUTS: usize = 16;
+/// Input slots of a graph node, in order of the graph's inputs (`idx`).
+pub const SUB_INPUTS: [&str; MAX_SUB_INPUTS] = ["in0", "in1", "in2", "in3", "in4", "in5", "in6", "in7", "in8", "in9", "in10", "in11", "in12", "in13", "in14", "in15"];
+
+/// Image-pattern inputs of the pattern program map, in order.
+/// Image inputs of the Pixel and Value Processor (the format allows any number; 16 here).
+pub const PROCESSOR_INPUTS: [&str; 16] = ["in", "in2", "in3", "in4", "in5", "in6", "in7", "in8", "in9", "in10", "in11", "in12", "in13", "in14", "in15", "in16"];
+const FX_MAP_IMAGES: [&str; 8] = ["in", "in2", "in3", "in4", "in5", "in6", "in7", "in8"];
+
 /// Node id used for the helper nodes of [`Graph::preview_host`] (far above any id an author would reach).
 pub const PREVIEW_ID: u32 = 4_000_000_001;
 
 impl Graph {
+    /// The graph's normal maps are made in the DirectX convention (green pointing down): viewers flip the green
+    /// channel of the normal output to light them correctly. Set with `meta normal_format "directx"`.
+    pub fn normal_directx(&self) -> bool {
+        if self.sd.is_some() {
+            return crate::sbs_native::normal_directx(self);
+        }
+        self.meta.get("normal_format").map(|v| v.eq_ignore_ascii_case("directx")).unwrap_or(false)
+    }
+
+    /// The normal map as a viewer needs it (OpenGL convention): flipped when the graph makes DirectX normals.
+    pub fn normal_for_view(&self, t: &Tex) -> Option<Tex> {
+        self.normal_directx().then(|| crate::ops::flip_green(t))
+    }
+
     /// "texture", "function" or "fxmap".
     pub fn graph_kind(&self) -> &str {
         match self.meta.get("kind").map(String::as_str) {
@@ -698,6 +715,9 @@ impl Graph {
         let kind = self.graph_kind();
         if kind == "texture" {
             return None;
+        }
+        if self.sd.is_some() {
+            return crate::sbs_native::preview_host(self);
         }
         let mut host = Graph::default();
         host.size = self.size;
@@ -784,12 +804,6 @@ impl Graph {
                         return Err(Error::Parse(ln, format!("this file uses format {v}, but this version of MaterialCraft reads up to format {FORMAT_VERSION}; please update")));
                     }
                     g.format = v;
-                }
-                "link" => {
-                    if t.len() < 3 || t.len() > 4 {
-                        return Err(Error::Parse(ln, "usage: link <name> \"<path>\" [\"<graph>\"]".into()));
-                    }
-                    g.links.push(Link { name: t[1].clone(), path: t[2].clone(), graph: t.get(3).cloned().filter(|s| !s.is_empty()) });
                 }
                 "size" => {
                     g.size = t.get(1).and_then(|s| s.parse::<usize>().ok()).ok_or_else(|| Error::Parse(ln, "size needs an integer".into()))?;
@@ -888,6 +902,15 @@ impl Graph {
     pub fn output_nodes(&self) -> Vec<(String, String, u32)> {
         let mut v = Vec::new();
         for (id, n) in &self.nodes {
+            if n.kind == "sbs:output" {
+                // a graph output of an .sbs package: named and used as the graph declares it
+                let uid = n.strs.get("#output").cloned().unwrap_or_default();
+                let sd = self.sd.as_ref();
+                let ident = sd.and_then(|s| s.output_identifier(&uid)).unwrap_or_else(|| "output".into());
+                let usage = sd.and_then(|s| s.output_usage(&uid)).map(|u| crate::sbs_import::usage(&u)).unwrap_or_else(|| crate::sbs_import::usage(&ident));
+                v.push((usage.to_string(), crate::sbs_import::san(&ident), *id));
+                continue;
+            }
             if n.kind == "output" {
                 let usage = n.strs.get("usage").cloned().unwrap_or_else(|| "basecolor".into());
                 let ident = n.strs.get("identifier").filter(|s| !s.is_empty()).cloned().unwrap_or_else(|| usage.clone());
@@ -950,6 +973,13 @@ impl Graph {
         if self.size == 0 || self.size > 8192 {
             return Err(Error::BadSize(self.size));
         }
+        if self.sd.is_some() {
+            // an .sbs graph: unconnected inputs read black there, so only what stops rendering counts
+            if self.output_nodes().is_empty() {
+                return Err(Error::NoOutputs);
+            }
+            return self.check_cycles();
+        }
         if self.height > 8192 {
             return Err(Error::BadSize(self.height));
         }
@@ -1002,7 +1032,7 @@ impl Graph {
             }
             if n.kind == "subgraph" {
                 match n.strs.get("graph") {
-                    Some(name) if self.subgraphs.contains_key(name) || self.links.iter().any(|l| l.name == *name) => {}
+                    Some(name) if self.subgraphs.contains_key(name) => {}
                     Some(name) => return Err(Error::BadParam(*id, format!("unknown subgraph '{name}'"))),
                     None => return Err(Error::BadParam(*id, "subgraph node needs graph=\"name\"".into())),
                 }
@@ -1062,12 +1092,6 @@ impl Graph {
     pub fn to_text(&self) -> String {
         let mut s = format!("format {FORMAT_VERSION}\n");
         s.push_str(&if self.is_square() { format!("size {}\n", self.size) } else { format!("size {} {}\n", self.size, self.height) });
-        for l in &self.links {
-            match &l.graph {
-                Some(gn) => s.push_str(&format!("link {} \"{}\" \"{}\"\n", l.name, l.path.replace('"', ""), gn.replace('"', ""))),
-                None => s.push_str(&format!("link {} \"{}\"\n", l.name, l.path.replace('"', ""))),
-            }
-        }
         if self.seed_offset != 0 {
             s.push_str(&format!("seed_offset {}\n", self.seed_offset));
         }
@@ -1080,9 +1104,6 @@ impl Graph {
             s.push_str(&format!("resource {k} {}\n", b64_encode(v)));
         }
         for (name, sub) in &self.subgraphs {
-            if self.managed.contains(name) {
-                continue;
-            }
             s.push_str(&format!("subgraph {name}\n{}end\n", sub.to_text()));
         }
         for (id, n) in &self.nodes {
@@ -1114,53 +1135,6 @@ impl Graph {
             s.push_str(&format!("comment {} {} {} {} {} {}\n", c.pos[0], c.pos[1], c.size[0], c.size[1], c.color, c.text.replace('#', "").replace('\n', " ")));
         }
         s
-    }
-
-    /// Flatten into a distributable package (.mca): embeds bitmaps, drops editor-only data.
-    pub fn publish(&self) -> Result<String, Error> {
-        self.validate()?;
-        let mut g = self.clone();
-        g.comments.clear();
-        let mut res = std::mem::take(&mut g.resources);
-        let mut seen: HashMap<String, String> = HashMap::new();
-        fn embed(g: &mut Graph, res: &mut BTreeMap<String, Arc<Vec<u8>>>, seen: &mut HashMap<String, String>, own: &BTreeMap<String, Arc<Vec<u8>>>) -> Result<(), Error> {
-            for (id, n) in g.nodes.iter_mut() {
-                n.pos = [0.0, 0.0];
-                for key in crate::resources::file_keys(&n.kind) {
-                    let Some(f) = n.strs.get(*key).cloned().filter(|f| !f.is_empty()) else { continue };
-                    if let Some(k) = seen.get(&f) {
-                        n.strs.insert(key.to_string(), k.clone());
-                        continue;
-                    }
-                    let bytes = match res.get(&f).or_else(|| own.get(&f)) {
-                        Some(b) => b.clone(),
-                        None => Arc::new(crate::resources::read_file(&f).map_err(|e| Error::BadParam(*id, format!("cannot embed '{f}': {e}")))?),
-                    };
-                    let base = crate::resources::sanitize(&f);
-                    let mut k2 = base.clone();
-                    let mut c = 1;
-                    while res.contains_key(&k2) && res.get(&k2) != Some(&bytes) {
-                        k2 = format!("{c}_{base}");
-                        c += 1;
-                    }
-                    res.insert(k2.clone(), bytes);
-                    seen.insert(f, k2.clone());
-                    n.strs.insert(key.to_string(), k2);
-                }
-            }
-            Ok(())
-        }
-        let own = BTreeMap::new();
-        embed(&mut g, &mut res, &mut seen, &own)?;
-        for sub in g.subgraphs.values_mut() {
-            embed(sub, &mut res, &mut seen, &own)?;
-        }
-        g.resources = res;
-        g.meta.retain(|k, _| !k.starts_with("origin:"));
-        for sub in g.subgraphs.values_mut() {
-            sub.meta.retain(|k, _| !k.starts_with("origin:"));
-        }
-        Ok(format!("# MaterialCraft published asset\n{}", g.to_text()))
     }
 
     /// Apply exposed-parameter overrides by label.
@@ -1209,167 +1183,6 @@ impl Graph {
         Ok(())
     }
 
-    /// True when subgraph `name` is a read-only copy that came from a live link.
-    pub fn is_linked(&self, name: &str) -> bool {
-        self.managed.contains(name)
-    }
-
-    /// (Re)read every live link relative to `base` (the folder of this file). Previous results are dropped first, so
-    /// calling it again picks up changes made to the linked files. Returns one message per link that could not be
-    /// used (missing file, parse error, unknown graph, empty graph, name clash); the other links still work.
-    pub fn resolve_links(&mut self, base: &std::path::Path) -> Vec<String> {
-        self.resolve_links_depth(base, 0)
-    }
-
-    fn resolve_links_depth(&mut self, base: &std::path::Path, depth: usize) -> Vec<String> {
-        self.link_info.clear();
-        for m in std::mem::take(&mut self.managed) {
-            self.subgraphs.remove(&m);
-        }
-        let mut issues = Vec::new();
-        if self.links.is_empty() {
-            return issues;
-        }
-        if depth >= 8 {
-            issues.push("links are nested too deeply (a package links itself?)".to_string());
-            return issues;
-        }
-        for l in self.links.clone() {
-            let start = issues.len();
-            match self.resolve_one(&l, base, depth, &mut issues) {
-                Some((path, members)) => {
-                    self.link_info.insert(l.name.clone(), LinkInfo { found: Some(path), issue: None, members });
-                }
-                None => {
-                    let msg = issues.get(start).cloned();
-                    self.link_info.insert(l.name.clone(), LinkInfo { found: None, issue: msg, members: Vec::new() });
-                }
-            }
-        }
-        issues
-    }
-
-    /// Folders (relative to the package) that are searched by file name when a linked file is not where the link says.
-    pub fn search_paths(&self) -> Vec<String> {
-        self.meta.get("search_paths").map(|s| s.split(';').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect()).unwrap_or_default()
-    }
-
-    fn resolve_one(&mut self, l: &Link, base: &std::path::Path, depth: usize, issues: &mut Vec<String>) -> Option<(std::path::PathBuf, Vec<String>)> {
-            let stored = base.join(&l.path.replace('\\', "/"));
-            // a moved file is looked for by name in the package's search folders
-            let path = if stored.is_file() {
-                stored
-            } else {
-                self.search_paths()
-                    .iter()
-                    .map(|d| base.join(d.replace('\\', "/")).join(stored.file_name().unwrap_or_default()))
-                    .find(|c| c.is_file())
-                    .unwrap_or(stored)
-            };
-            if self.subgraphs.contains_key(&l.name) {
-                issues.push(format!("link '{}': a graph with that name is already embedded", l.name));
-                return None;
-            }
-            let text = match std::fs::read_to_string(&path) {
-                Ok(t) => t,
-                Err(e) => {
-                    issues.push(format!("link '{}': cannot read {} ({e})", l.name, path.display()));
-                    return None;
-                }
-            };
-            let mut other = match Graph::parse_unchecked(&text) {
-                Ok(g) => g,
-                Err(e) => {
-                    issues.push(format!("link '{}': {} is not a valid package ({e})", l.name, path.display()));
-                    return None;
-                }
-            };
-            other.migrate_outputs();
-            let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| base.to_path_buf());
-            issues.extend(other.resolve_links_depth(&dir, depth + 1));
-            let main = match &l.graph {
-                Some(gn) => match other.subgraphs.remove(gn) {
-                    Some(mut m) => {
-                        // the rest of the package is what that graph may use
-                        m.subgraphs = std::mem::take(&mut other.subgraphs);
-                        m.resources.extend(std::mem::take(&mut other.resources));
-                        m
-                    }
-                    None => {
-                        issues.push(format!("link '{}': {} has no graph '{gn}'", l.name, path.display()));
-                        return None;
-                    }
-                },
-                None => other,
-            };
-            let before: BTreeSet<String> = self.subgraphs.keys().cloned().collect();
-            let mut members = Vec::new();
-            if let Err(e) = self.import_graph(main, &l.name) {
-                issues.push(format!("link '{}': {e}", l.name));
-                return None;
-            }
-            for (k, sg) in self.subgraphs.iter_mut() {
-                if !before.contains(k) {
-                    self.managed.insert(k.clone());
-                    members.push(k.clone());
-                    // keeps linked copies out of the Explorer's graph list
-                    sg.meta.insert("embedded".into(), "1".into());
-                }
-            }
-            Some((path, members))
-    }
-
-    /// Turn a live link into an ordinary embedded copy: the linked graphs become part of this package and are saved
-    /// with it. Instances keep working; later changes to the linked file no longer reach them.
-    pub fn break_link(&mut self, name: &str) -> Result<usize, String> {
-        let Some(i) = self.links.iter().position(|l| l.name == name) else { return Err(format!("no link '{name}'")) };
-        let info = self.link_info.remove(name).unwrap_or_default();
-        if info.found.is_none() {
-            return Err(format!("link '{name}' is not resolved (nothing to embed): {}", info.issue.unwrap_or_default()));
-        }
-        self.links.remove(i);
-        for m in &info.members {
-            self.managed.remove(m);
-            if let Some(sg) = self.subgraphs.get_mut(m) {
-                sg.meta.remove("embedded");
-            }
-        }
-        Ok(info.members.len())
-    }
-
-    /// Remove a link and the graphs it brought in. Returns how many nodes still refer to the removed name.
-    pub fn remove_link(&mut self, name: &str) -> usize {
-        self.links.retain(|l| l.name != name);
-        if let Some(info) = self.link_info.remove(name) {
-            for m in info.members {
-                self.managed.remove(&m);
-                self.subgraphs.remove(&m);
-            }
-        }
-        self.nodes.values().filter(|n| n.kind == "subgraph" && n.strs.get("graph").map(|g| g == name).unwrap_or(false)).count()
-    }
-
-    /// Point a link at another file (and optionally another graph in it), keeping its name so instances follow.
-    pub fn relink(&mut self, name: &str, path: &str, graph: Option<String>) -> bool {
-        match self.links.iter_mut().find(|l| l.name == name) {
-            Some(l) => {
-                l.path = path.replace('\\', "/");
-                l.graph = graph;
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// Read a package file, resolve its live links and validate it. The strings are link problems (not fatal).
-    pub fn load_file(path: &std::path::Path) -> Result<(Graph, Vec<String>), Error> {
-        let text = std::fs::read_to_string(path).map_err(|e| Error::Parse(0, format!("{}: {e}", path.display())))?;
-        let mut g = Graph::parse_unchecked(&text)?;
-        g.migrate_outputs();
-        let issues = g.resolve_links(path.parent().unwrap_or_else(|| std::path::Path::new(".")));
-        Ok((g, issues))
-    }
-
     /// Replace the selected nodes with a subgraph instance. Returns the new node id.
     pub fn extract_subgraph(&mut self, sel: &BTreeSet<u32>, name: &str) -> Result<u32, String> {
         let sel: BTreeSet<u32> = sel.iter().copied().filter(|i| self.nodes.contains_key(i)).collect();
@@ -1402,8 +1215,8 @@ impl Graph {
                     let iid = if let Some(x) = input_ids.get(src) {
                         *x
                     } else {
-                        if ext.len() >= 4 {
-                            return Err("a subgraph supports at most 4 external inputs".into());
+                        if ext.len() >= MAX_SUB_INPUTS {
+                            return Err(format!("a subgraph supports at most {MAX_SUB_INPUTS} external inputs"));
                         }
                         let idx = ext.len();
                         ext.push(*src);
@@ -1488,7 +1301,18 @@ impl Graph {
     }
 
     // ---------------- evaluation ----------------
+
+    /// An `.sbs` graph as MaterialCraft nodes (see `sbs_native::lower`); `None` for ordinary graphs.
+    fn lowered(&self) -> Result<Option<Graph>, Error> {
+        match &self.sd {
+            Some(sd) if sd.role == crate::sbs_native::Role::Graph => crate::sbs_native::lower(self).map(|l| Some(l.graph)).map_err(|e| Error::Parse(0, e)),
+            _ => Ok(None),
+        }
+    }
     pub fn evaluate(&self, size: Option<usize>) -> Result<BTreeMap<String, Tex>, Error> {
+        if let Some(low) = self.lowered()? {
+            return low.evaluate(size.or(Some(self.size)));
+        }
         self.validate()?;
         let size = size.unwrap_or(self.size);
         if size == 0 || size > 8192 {
@@ -1520,6 +1344,9 @@ impl Graph {
 
     /// Evaluate a single node (editor preview). Ignores unrelated incomplete nodes.
     pub fn evaluate_node(&self, id: u32, size: usize) -> Result<Tex, Error> {
+        if let Some(low) = self.lowered()? {
+            return low.evaluate_node(id, size);
+        }
         if size == 0 || size > 8192 {
             return Err(Error::BadSize(size));
         }
@@ -1564,6 +1391,14 @@ impl Graph {
 
     fn evaluate_all_impl(&self, size: usize, keep: &[u32], persist: Option<Arc<NodeCache>>, first: Option<u32>, full: bool, on_first: &mut dyn FnMut(&Tex)) -> EvalAll {
         let mut r = EvalAll { thumbs: HashMap::new(), errors: HashMap::new(), kept: HashMap::new(), sizes: HashMap::new() };
+        match self.lowered() {
+            Ok(Some(low)) => return low.evaluate_all_impl(size, keep, persist, first, full, on_first),
+            Ok(None) => {}
+            Err(e) => {
+                r.errors.insert(0, e.to_string());
+                return r;
+            }
+        }
         if size == 0 || size > 8192 {
             r.errors.insert(0, Error::BadSize(size).to_string());
             return r;
@@ -2289,6 +2124,7 @@ pub fn node_outputs(kind: &str) -> &'static [&'static str] {
         "cells" => &["output", "cell_id", "distance", "edge"],
         "splatter" => &["output", "id", "center", "size", "luminance"],
         "flood_fill_to_position" => &["position", "x", "y"],
+        "bevel" => &["height", "normal"],
         "flood_fill_to_bbox_size" => &["size", "width", "height"],
         "frequency_split" => &["low", "high"],
         "bent_normal" => &["normal", "ao"],
@@ -2296,6 +2132,7 @@ pub fn node_outputs(kind: &str) -> &'static [&'static str] {
         "spec_gloss_to_metal_rough" => &["base_color", "metallic", "roughness"],
         "material_blend" => &["base_color", "normal", "height", "roughness", "metallic", "ao"],
         "convex_concave" => &["convex", "concave"],
+        "curvature_smooth" => &["output", "convexity", "concavity"],
         "paving" => &["height", "cell_id", "gaps"],
         "path_border" => &["height", "mask"],
         "path_track" => &["height", "rails", "sleepers"],
@@ -2494,7 +2331,7 @@ pub fn output_pin(kind: &str, out: Option<&str>, any_color_in: bool, n: &Node) -
         "white_noise" | "gaussian_noise" | "perlin" | "fbm" | "clouds" | "voronoi" | "voronoi_fractal" | "bnw_spots" | "crystal" | "directional_noise"
         | "grunge" | "plasma" | "gradient" | "gradient_axial" | "gradient_circular" | "gradient_reflected" | "circle" | "rect" | "polygon" | "shape"
         | "star" | "starburst" | "checker" | "bricks" | "stripes" | "weave" | "cells" | "fractal_sum" | "waveform" | "gaussian_spots" | "triangle_grid"
-        | "grunge_map" | "sdf_shape" | "sdf_op" | "sdf_mask" | "sdf_form" | "blue_noise" | "fibers" | "scratches" | "caustics" | "liquid_noise" | "perlin_3d" | "paving" | "wire_mesh" | "reaction_diffusion" | "path_stroke" | "path_fill" | "path_distance" | "path_border" | "path_scatter" | "path_track" | "path_cable" | "path_seam" | "path_splatter" | "path_sample" | "herringbone" | "arc_pavement" | "anisotropic_noise" | "fur_noise" | "moisture_noise" | "microscope_noise" | "worley_3d" | "fbm_3d" | "volume_mask" | "gradient_3d" => Pin::Gray,
+        | "grunge_map" | "sdf_shape" | "sdf_op" | "sdf_mask" | "sdf_form" | "blue_noise" | "fibers" | "scratches" | "caustics" | "liquid_noise" | "perlin_3d" | "paving" | "wire_mesh" | "reaction_diffusion" | "path_stroke" | "path_fill" | "path_distance" | "path_border" | "path_scatter" | "path_track" | "path_cable" | "path_seam" | "path_splatter" | "path_sample" | "herringbone" | "arc_pavement" | "anisotropic_noise" | "fur_noise" | "moisture_noise" | "microscope_noise" | "worley_3d" | "fbm_3d" | "volume_mask" | "gradient_3d" | "preset_noise" | "noise_pattern" | "gradient_2pt" | "weave_preset" | "tile_preset" | "tile_random2" | "noise_3d" => Pin::Gray,
         "weave_generator" => Pin::Gray,
         // pixel processor and the scatter family produce colour only when colour comes in
         "pixel_processor" | "value_processor" | "fx_map" => Pin::Color,
@@ -2652,7 +2489,7 @@ fn run_function_image(id: u32, n: &Node, fname: &str, ins: &BTreeMap<String, Rc<
     let mut env = FnEnv::new([w as f64, h as f64]);
     env.seed = (n.nums.get("seed").copied().unwrap_or(0.0).max(0.0) as u32).wrapping_add(ctx.so);
     env.graph_inputs = ctx.gin;
-    for slot in ["in", "in2", "in3", "in4"] {
+    for slot in PROCESSOR_INPUTS {
         if let Some(t) = ins.get(slot) {
             env.images.push((slot, t.as_ref()));
         }
@@ -2711,7 +2548,7 @@ fn run_sub(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx, out: O
             }
         }
     }
-    let ext: Vec<Option<Rc<Tex>>> = (0..4).map(|i| ins.get(&format!("in{i}")).cloned()).collect();
+    let ext: Vec<Option<Rc<Tex>>> = SUB_INPUTS.iter().map(|k| ins.get(*k).cloned()).collect();
     let mut outs = sub.output_nodes();
     outs.sort_by_key(|o| OUTPUT_USAGES.iter().position(|x| *x == o.0).unwrap_or(99));
     let want = out.map(String::from).or_else(|| n.strs.get("output").cloned()).unwrap_or_default();
@@ -2973,8 +2810,11 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
                 let (sa, ca) = (ang * std::f32::consts::TAU).sin_cos();
                 (cnt.round() * ca, cnt.round() * sa)
             };
+            // shift: going down the image the stripes move right by a whole number of stripes over the height
+            let b = b - f("shift", 0.0).round();
+            let ph = f("phase", 0.0);
             Tex::gray_fn(s, hs, move |u, v| {
-                let t = (u * a + v * b).rem_euclid(1.0);
+                let t = (u * a + v * b - ph).rem_euclid(1.0);
                 smooth(0.0, soft, t) * (1.0 - smooth(wd, wd + soft, t))
             })
         }
@@ -2991,15 +2831,31 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
         }
         "shape" => {
             let (k, sx, sy, rot, px, py, til, so) = (f("shape", 1.0) as u32, f("size_x", 0.6), f("size_y", 0.6), f("rotation", 0.0), f("pos_x", 0.0), f("pos_y", 0.0), f("tiling", 1.0), f("softness", 0.02));
-            Tex::gray_fn(s, hs, move |u, v| ops::shape_value(k, u, v, px, py, sx, sy, rot, til, so))
+            let spec = f("pattern_specific", 0.0);
+            Tex::gray_fn(s, hs, move |u, v| ops::shape_value(k, u, v, px, py, sx, sy, rot, til, so, spec))
         }
         "star" => {
             let (pts, inner, size, so, rot) = (f("points", 5.0).round().max(3.0), f("inner", 0.45), f("size", 0.4), f("softness", 0.01).max(px1), f("rotation", 0.0));
+            let straight = f("straight", 0.0) > 0.5;
             Tex::gray_fn(s, hs, move |u, v| {
                 ops::tiled_max(size > 0.5, ops::wrapd(u - 0.5), ops::wrapd(v - 0.5), |x, y| {
                     let a = y.atan2(x) - rot * std::f32::consts::TAU + std::f32::consts::FRAC_PI_2;
                     let seg = std::f32::consts::TAU / pts;
                     let t = a.rem_euclid(seg) / seg;
+                    if straight {
+                        // distance to the straight edge from the outer point to the inner corner of this half sector
+                        let r = (x * x + y * y).sqrt();
+                        let h = (t - 0.5).abs() * seg; // angle from the outer point: 0 there, seg/2 at the inner corner
+                        let (px, py) = (r * h.cos(), r * h.sin());
+                        let (ox, oy) = (size, 0.0);
+                        let (ix, iy) = (size * inner * (seg * 0.5).cos(), size * inner * (seg * 0.5).sin());
+                        let (ex, ey) = (ix - ox, iy - oy);
+                        let l = (ex * ex + ey * ey).sqrt().max(1e-6);
+                        // positive outside (away from the centre)
+                        let d = ((px - ox) * ey - (py - oy) * ex) / l;
+                        let d = if (0.0 - ox) * ey - (0.0 - oy) * ex > 0.0 { -d } else { d };
+                        return 1.0 - smooth(-so, 0.0, d);
+                    }
                     let edge = size * inner + (size - size * inner) * (1.0 - (2.0 * t - 1.0).abs());
                     1.0 - smooth(-so, 0.0, (x * x + y * y).sqrt() - edge)
                 })
@@ -3090,26 +2946,59 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
         }
         "polygon" => {
             let (sd, r, so, rot) = (f("sides", 5.0), f("radius", 0.4), f("softness", 0.01).max(px1), f("rotation", 0.0));
-            Tex::gray_fn(s, hs, move |u, v| ops::tiled_max(r > 0.5, ops::wrapd(u - 0.5), ops::wrapd(v - 0.5), |x, y| 1.0 - smooth(-so, 0.0, ops::polygon_sdf(x, y, sd, r, rot))))
+            let (grad, curve) = (f("gradient", 0.0).clamp(0.0, 1.0), f("curve", 0.0).clamp(-1.0, 1.0));
+            let ginv = f("gradient_invert", 0.0) > 0.5;
+            let til = f("tiling", 1.0).round().clamp(1.0, 16.0);
+            let apo = (r * (std::f32::consts::PI / sd.round().max(3.0)).cos()).max(1e-6);
+            Tex::gray_fn(s, hs, move |u, v| {
+                let (u, v) = ((u * til).rem_euclid(1.0), (v * til).rem_euclid(1.0));
+                ops::tiled_max(r > 0.5, ops::wrapd(u - 0.5), ops::wrapd(v - 0.5), |x, y| {
+                    let d = ops::polygon_sdf(x, y, sd, r, rot);
+                    let hard = 1.0 - smooth(-so, 0.0, d);
+                    if grad <= 0.0 {
+                        return hard;
+                    }
+                    // a ramp from the edge (0) to the centre (1), bent by the curve
+                    let ramp = (-d / apo).clamp(0.0, 1.0);
+                    let ramp = if ginv { 1.0 - ramp } else { ramp };
+                    let ramp = if curve.abs() > 1e-4 { ramp.powf(2f32.powf(-curve * 2.0)) } else { ramp };
+                    hard * (1.0 - grad + grad * ramp)
+                })
+            })
         }
         "checker" => {
             let t = (f("tiles", 8.0) / 2.0).round().max(1.0) * 2.0; // even count so the pattern wraps
+            let (white_first, r45, lv) = (f("white_first", 0.0) > 0.5, f("rotate45", 0.0) > 0.5, f("lum_var", 0.0).clamp(0.0, 1.0));
             // anti-aliased: blend across a cell border over about one pixel
-            let aa = (t / s as f32).max(1e-6);
+            let aa = (t / s as f32 * if r45 { std::f32::consts::SQRT_2 * 0.5 } else { 1.0 }).max(1e-6);
             Tex::gray_fn(s, hs, move |u, v| {
-                let (x, y) = (u * t, v * t);
+                // turned by 45 degrees: diamonds, still wrapping (a whole number of cells along both diagonals)
+                let (x, y) = if r45 { ((u + v) * t * 0.5, (v - u) * t * 0.5) } else { (u * t, v * t) };
                 let (fx, fy) = (x - x.floor(), y - y.floor());
                 let (ix, iy) = (x.floor() as i64, y.floor() as i64);
                 // signed distances (in cells) to the nearest vertical / horizontal border and which side we are on
                 let sx = ((fx.min(1.0 - fx)) / aa).min(1.0) * 0.5 + 0.5; // 0.5 at the border .. 1 inside
                 let sy = ((fy.min(1.0 - fy)) / aa).min(1.0) * 0.5 + 0.5;
-                let base = ((ix + iy) & 1) as f32;
+                let base = (((ix + iy) & 1) ^ white_first as i64) as f32;
                 // mix towards the average (0.5) at the border: at a border the neighbour cell has the opposite value
                 let kx = 1.0 - sx; // 0 inside .. 0.5 at the border
                 let ky = 1.0 - sy;
                 let v1 = base + (1.0 - 2.0 * base) * kx; // moves towards the neighbour value across x
                 let v2 = v1 + (1.0 - 2.0 * v1) * ky;
-                v2.clamp(0.0, 1.0)
+                if lv <= 0.0 {
+                    return v2.clamp(0.0, 1.0);
+                }
+                // white squares get a random luminance; near a border the white neighbour's value is used
+                let (wx, wy) = if base > 0.5 {
+                    (ix, iy)
+                } else if fx.min(1.0 - fx) < fy.min(1.0 - fy) {
+                    (if fx < 0.5 { ix - 1 } else { ix + 1 }, iy)
+                } else {
+                    (ix, if fy < 0.5 { iy - 1 } else { iy + 1 })
+                };
+                let n = t as i64;
+                let r = crate::noise_styles::unit(wx.rem_euclid(n) as i32, wy.rem_euclid(n) as i32, seed);
+                (v2 * (1.0 - lv * r)).clamp(0.0, 1.0)
             })
         }
         "bricks" => {
@@ -3135,6 +3024,7 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
             p.rot = f("rotation", 0.0);
             p.rot_rand = f("rotation_random", 0.0);
             p.pattern_rot90 = f("pattern_rotation", 0.0) as u32;
+            p.pattern_rot_rand = f("pattern_rotation_random", 0.0).clamp(0.0, 1.0);
             p.symmetry_random = f("symmetry_random", 0.0) as u32;
             p.pos_rand = f("position_random", 0.0);
             p.pos_rand_x = f("position_random_x", 1.0);
@@ -3250,7 +3140,7 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
                 None => order.iter().find_map(|k| ins.get(*k)).map(|t| (**t).clone()).unwrap_or_else(|| Tex::solid(s, hs, [0.0, 0.0, 0.0, 1.0])),
             }
         }
-        "flood_fill" => ops::flood_fill(tex("in")?, f("threshold", 0.05)),
+        "flood_fill" => ops::flood_fill(tex("in")?, f("threshold", 0.5)),
         "flood_fill_to_index" => ops::flood_fill_to_index(tex("in")?),
         "flood_fill_to_position" | "flood_fill_to_bbox_size" => {
             let g = ops::flood_fill_to_geometry(tex("in")?, n.kind == "flood_fill_to_bbox_size");
@@ -3260,7 +3150,7 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
                 _ => g,
             }
         }
-        "flood_fill_random" => ops::flood_fill_random(tex("in")?, seed, f("min", 0.0), f("max", 1.0)),
+        "flood_fill_random" => ops::flood_fill_random(tex("in")?, seed, f("min", 0.0), f("max", 1.0), f("contrast", 0.0)),
         "flood_fill_color" => ops::flood_fill_color(tex("in")?, seed),
         "flood_fill_gradient" => ops::flood_fill_gradient(tex("in")?, f("angle", 0.0), f("variation", 0.0), seed),
         "vector_warp" => {
@@ -3295,7 +3185,7 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
         }
         "bevel" => {
             let b = ops::bevel_ex(tex("in")?, f("distance", 0.05) * s as f32, f("smoothing", 0.5), f("threshold", 0.5), f("corner", 1.0) < 0.5);
-            if f("use_as_normal", 0.0) > 0.5 {
+            if f("use_as_normal", 0.0) > 0.5 || f("_out", 0.0) >= 0.5 {
                 ops::normal_from_height(&b, f("normal_intensity", 4.0), f("directx", 0.0) > 0.5)
             } else {
                 b
@@ -3335,7 +3225,29 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
             let (res, mask) = ops::color_swap(src, &sw);
             if f("_out", 0.0) >= 0.5 { mask } else { res }
         }
-        "curvature_smooth" => ops::curvature_from_normal(tex("in")?, f("smoothing", 2.0) * rs, f("intensity", 6.0)),
+        "curvature_smooth" => {
+            let src = tex("in")?;
+            let flipped;
+            let src = if f("directx", 0.0) > 0.5 {
+                flipped = ops::flip_green(src);
+                &flipped
+            } else {
+                src
+            };
+            let c = ops::curvature_from_normal(src, f("smoothing", 2.0) * rs, f("intensity", 6.0));
+            // outputs: curvature (0.5 is flat), convexity (the positive half) and concavity (the negative half)
+            match f("_out", 0.0).round() as i32 {
+                1 => c.map(|p| {
+                    let v = ((p[0] - 0.5) * 2.0).clamp(0.0, 1.0);
+                    [v, v, v, 1.0]
+                }),
+                2 => c.map(|p| {
+                    let v = ((0.5 - p[0]) * 2.0).clamp(0.0, 1.0);
+                    [v, v, v, 1.0]
+                }),
+                _ => c,
+            }
+        }
         "height_blend" => {
             let (h, m) = ops::height_blend(tex("bg")?, tex("fg")?, ins.get("mask").map(|x| x.as_ref()), f("opacity", 1.0), f("contrast", 0.5));
             if f("output", 0.0) > 0.5 { m } else { h }
@@ -3381,11 +3293,16 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
             if !crate::fxmap::is_program(prog) {
                 return Err(Error::BadParam(id, format!("'{name}' is not a pattern program")));
             }
-            let pats = [ins.get("in").map(|t| t.as_ref()), ins.get("in2").map(|t| t.as_ref()), ins.get("in3").map(|t| t.as_ref()), ins.get("in4").map(|t| t.as_ref())];
+            let pats: Vec<Option<&Tex>> = FX_MAP_IMAGES.iter().map(|k| ins.get(*k).map(|t| t.as_ref())).collect();
             let color = f("color", 0.0) > 0.5;
             let bg = f("bg", 0.0);
             let bgc = if color { [f("bg_r", bg), f("bg_g", bg), f("bg_b", bg)] } else { [bg, bg, bg] };
-            let run = crate::fxmap::Run { depth: f("depth", 12.0).clamp(0.0, 32.0) as u32, seed, blend: f("blend", 0.0) as u32, color, patterns: &pats };
+            let mut run = crate::fxmap::Run::new(f("depth", 12.0).clamp(0.0, 32.0) as u32, seed, f("blend", 0.0) as u32, color, &pats);
+            run.lib = Some(ctx.lib);
+            run.graph_inputs = Some(ctx.gin);
+            run.roughness = f("roughness", 1.0).max(0.0);
+            run.opacity = f("opacity", 1.0);
+            run.background = ins.get("background").map(|t| t.as_ref());
             crate::fxmap::render(prog, s, hs, bgc, &run).map_err(|e| Error::BadParam(id, format!("{name}: {e}")))?
         }
         "curve" => {
@@ -3618,7 +3535,8 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
         "mirror" => ops::mirror_ex(tex("in")?, f("axis", 0.0) as u32, f("offset_x", 0.5), f("offset_y", 0.5), f("invert_x", 0.0) > 0.5, f("invert_y", 0.0) > 0.5, f("corner", 0.0) as u32),
         "warp" => {
             let (t, w, inten, fl) = (tex("in")?, tex("warp")?, f("intensity", 0.05), f("filtering", 2.0).max(0.0) as u32);
-            crate::gpu::warp(t, w, crate::gpu::WarpKind::Slope, inten, fl).unwrap_or_else(|| ops::warp_ex(t, w, inten, fl))
+            // the GPU measures the slope per pixel: scaled to 1/256 of the image like the CPU path
+            crate::gpu::warp(t, w, crate::gpu::WarpKind::Slope, inten * w.w as f32 / 256.0, fl).unwrap_or_else(|| ops::warp_ex(t, w, inten, fl))
         }
         "directional_warp" => {
             let (t, w, ang, inten, off, fl) = (tex("in")?, tex("warp")?, f("angle", 0.0), f("intensity", 0.1), f("offset", 0.5), f("filtering", 2.0).max(0.0) as u32);

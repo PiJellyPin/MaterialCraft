@@ -25,13 +25,16 @@ struct CtlSnap {
     graph: Graph,
     path: Option<PathBuf>,
     dirty: bool,
-    aliases: BTreeMap<String, u32>,
+    book: session::AliasBook,
+    focus: Option<String>,
 }
 
 struct ControlLink {
     rx: Receiver<CtlReq>,
     server: agent::ControlServer,
-    aliases: BTreeMap<String, u32>,
+    /// node names of every graph of the package, and the graph commands work on by default
+    book: session::AliasBook,
+    focus: Option<String>,
     commands: usize,
 }
 
@@ -81,7 +84,7 @@ impl App {
             let (rtx, rrx) = std::sync::mpsc::channel();
             send(CtlReq::Snapshot(rtx))?;
             let snap = rrx.recv_timeout(CTL_WAIT).map_err(|_| "the editor did not answer in time (is a dialog open?)".to_string())?;
-            Session::from_parts(snap.graph, snap.path, snap.dirty, snap.aliases, cache.clone()).execute(cmd, params)
+            Session::from_package(snap.graph, snap.path, snap.dirty, snap.book, snap.focus, cache.clone()).execute(cmd, params)
         });
         match agent::start_control(port, None, handler) {
             Ok(server) => {
@@ -89,7 +92,7 @@ impl App {
                     Ok(_) => self.status(format!("AI control is on (port {})", server.port), true),
                     Err(e) => self.status(format!("AI control is on (port {}) but its connection file could not be written: {e}", server.port), false),
                 }
-                self.ctl = Some(ControlLink { rx, server, aliases: BTreeMap::new(), commands: 0 });
+                self.ctl = Some(ControlLink { rx, server, book: BTreeMap::new(), focus: None, commands: 0 });
             }
             Err(e) => self.status(format!("AI control could not start: {e}"), false),
         }
@@ -118,8 +121,8 @@ impl App {
         for m in work {
             match m {
                 CtlReq::Snapshot(reply) => {
-                    let aliases = self.ctl.as_ref().map(|l| l.aliases.clone()).unwrap_or_default();
-                    let _ = reply.send(CtlSnap { graph: self.g.clone(), path: self.file.clone(), dirty: self.modified, aliases });
+                    let (book, focus) = self.ctl.as_ref().map(|l| (l.book.clone(), l.focus.clone())).unwrap_or_default();
+                    let _ = reply.send(CtlSnap { graph: self.g.clone(), path: self.file.clone(), dirty: self.modified, book, focus });
                 }
                 CtlReq::Exec { cmd, params, reply } => {
                     // a panic while editing must never take the window down
@@ -138,11 +141,11 @@ impl App {
     fn ctl_ensure_editor(&mut self) {
         if self.screen == Screen::Home {
             if self.pkgs.is_empty() {
-                let mut g = Graph::default();
-                g.meta.insert("identifier".into(), "Graph".into());
+                // a new .sbs package, as File > New makes
+                let g = materialcraft::sbs_native::new_package("Substance_graph", 512);
                 let name = self.unique_unsaved_name();
                 self.ws_fresh();
-                self.load_active(Pkg { path: None, name, g, modified: false, tabs: Vec::new(), example: None });
+                self.load_active(Pkg { path: None, name, g, modified: false, tabs: Vec::new() });
             }
             self.screen = Screen::Editor;
         }
@@ -193,32 +196,38 @@ impl App {
                 let (path, name) = match c.id {
                     "graph.open" => {
                         let p = tmp.path.clone();
-                        let n = p.as_ref().and_then(|p| p.file_name()).map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+                        let n = match &p {
+                            Some(p) => p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+                            // an imported .sbs package: unsaved, named after the file
+                            None => r.data.get("file").and_then(Json::as_str).map(|f| format!("{} (imported)", std::path::Path::new(f).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default())).unwrap_or_else(|| "Imported".into()),
+                        };
                         (p, n)
                     }
                     "library.load" => (None, r.data.get("loaded").and_then(Json::as_str).unwrap_or("Library graph").to_string()),
                     _ => (None, self.unique_unsaved_name()),
                 };
-                let pk = Pkg { path, name, g, modified: false, tabs: Vec::new(), example: None };
+                let pk = Pkg { path, name, g, modified: false, tabs: Vec::new() };
                 self.add_pkg_active(pk);
                 self.need_fit = true;
                 if let Some(l) = &mut self.ctl {
-                    l.aliases.clear();
+                    l.book.clear();
+                    l.focus = None;
                 }
                 return Ok(r);
             }
             _ => {}
         }
         // everything else runs on a copy of the graph; when it changed, the copy replaces the graph as one undo step
-        let aliases = self.ctl.as_ref().map(|l| l.aliases.clone()).unwrap_or_default();
-        let mut s = Session::from_parts(self.g.clone(), self.file.clone(), self.modified, aliases, Arc::new(NodeCache::new(256)));
+        let (book, focus) = self.ctl.as_ref().map(|l| (l.book.clone(), l.focus.clone())).unwrap_or_default();
+        let mut s = Session::from_package(self.g.clone(), self.file.clone(), self.modified, book, focus, Arc::new(NodeCache::new(256)));
         let r = s.execute(c.id, params);
         if r.is_ok() && s.take_changed() {
             let before: BTreeSet<u32> = self.g.nodes.keys().copied().collect();
             let was_small = self.g.nodes.len() <= 1;
             self.snap();
             if let Some(l) = &mut self.ctl {
-                l.aliases = s.aliases().clone();
+                l.book = s.alias_book();
+                l.focus = s.focus().map(str::to_string);
             }
             self.g = s.into_graph();
             self.after_restore();
@@ -232,7 +241,8 @@ impl App {
             }
             self.status(format!("AI: {cmd}"), true);
         } else if let Some(l) = &mut self.ctl {
-            l.aliases = s.aliases().clone();
+            l.book = s.alias_book();
+            l.focus = s.focus().map(str::to_string);
         }
         r
     }

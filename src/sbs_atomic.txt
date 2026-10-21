@@ -1,0 +1,537 @@
+# The built-in node types of the .sbs package format: the atomic compositing filters, the nodes of function graphs
+# and of FX-map graphs. Identifiers, value types, input names and creation defaults follow the format's reference,
+# Adobe's Substance Automation Toolkit documentation (Apache-2.0, github.com/AdobeDocs/substance-automation-toolkit);
+# the labels, groupings and slider ranges are MaterialCraft's own. See INDEPENDENT_IMPLEMENTATION.md.
+#
+#   @<identifier> <family> <label>         family: texture, function or pattern
+#   > <output> [<output> ...]               outputs (function nodes: the result type)
+#   < <input> <kind> [many]                 inputs: c colour or grey, g grey, a value type for function nodes;
+#                                           `many` = repeatable (input, input:1, input:2 ...)
+#   - <param> <type> <default...> [~ <min> <max>] [= <choice>|<choice>|...] [rel]
+#        types: f1-f4 float, i1-i4 integer, b boolean, s text, path, fv (float4 in colour, float1 in grey mode)
+#        choices are listed in code order (0, 1, 2 ...); `rel` = may be relative to the parent or the input
+#
+# The settings every image filter has (output size, format, pixel size and ratio, tiling, random seed) are listed
+# once under @$base.
+
+@$base texture Base settings
+- outputsize i2 0 0 ~ -12 12 rel
+- format i1 0 = 8 bits|16 bits|16 bits float|32 bits float rel
+- pixelsize f2 1 1 rel
+- pixelratio i1 0 = Square|Stretch rel
+- tiling i1 3 = No tiling|Horizontal|Vertical|Horizontal and vertical rel
+- randomseed i1 0 ~ 0 10000 rel
+
+@blend texture Blend
+> output
+< source c
+< destination c
+< opacity g
+- opacitymult f1 1 ~ 0 1
+- blendingmode i1 0 = Copy|Add|Subtract|Multiply|Add Sub|Max (Lighten)|Min (Darken)|Switch|Divide|Overlay|Screen|Soft Light
+- colorblending i1 0 = Use source alpha|Ignore alpha|Straight alpha|Premultiplied alpha
+- maskrectangle f4 0 1 0 1
+
+@blur texture Blur
+> output
+< input1 c
+- intensity f1 10 ~ 0 64
+
+@sharpen texture Sharpen
+> output
+< input1 c
+- intensity f1 1 ~ 0 10
+
+@dirmotionblur texture Directional Blur
+> output
+< input1 c
+- intensity f1 10 ~ 0 64
+- mblurangle f1 0 ~ 0 1
+
+@directionalwarp texture Directional Warp
+> output
+< input1 c
+< inputintensity g
+- intensity f1 10 ~ 0 64
+- warpangle f1 0 ~ 0 1
+
+@warp texture Warp
+> output
+< input1 c
+< inputgradient g
+- intensity f1 1 ~ 0 20
+
+@emboss texture Emboss
+> output
+< input1 c
+< inputgradient g
+- intensity f1 5 ~ 0 32
+- lightangle f1 0 ~ 0 1
+- highlightcolor fv 1 1 1 1
+- shadowcolor fv 0 0 0 0
+
+@distance texture Distance
+> output
+< mask g
+< source c
+- colorswitch b 0 = Grayscale|Color
+- distance f1 10 ~ 0 256
+- combinedistance b 1 = Source only|Combine
+
+@levels texture Levels
+> output
+< input1 c
+- levelinlow fv 0 0 0 0
+- levelinmid fv 0.5 0.5 0.5 0.5
+- levelinhigh fv 1 1 1 1
+- leveloutlow fv 0 0 0 0
+- levelouthigh fv 1 1 1 1
+- clampinterm b 1
+
+@hsl texture HSL
+> output
+< input1 c
+- hue f1 0.5 ~ 0 1
+- saturation f1 0.5 ~ 0 1
+- luminosity f1 0.5 ~ 0 1
+
+@normal texture Normal
+> output
+< input1 g
+- intensity f1 1 ~ 0 3
+- inversedy b 0 = DirectX|OpenGL
+- input2alpha b 0 = Alpha is 1|Input alpha
+
+@uniform texture Uniform Color
+> output
+- colorswitch b 1 = Grayscale|Color
+- outputcolor fv 0 0 0 1
+
+@shuffle texture Channels Shuffle
+> output
+< input1 c
+< input2 c
+- channelred i1 0 = Input 1 red|Input 1 green|Input 1 blue|Input 1 alpha|Input 2 red|Input 2 green|Input 2 blue|Input 2 alpha
+- channelgreen i1 1 = Input 1 red|Input 1 green|Input 1 blue|Input 1 alpha|Input 2 red|Input 2 green|Input 2 blue|Input 2 alpha
+- channelblue i1 2 = Input 1 red|Input 1 green|Input 1 blue|Input 1 alpha|Input 2 red|Input 2 green|Input 2 blue|Input 2 alpha
+- channelalpha i1 3 = Input 1 red|Input 1 green|Input 1 blue|Input 1 alpha|Input 2 red|Input 2 green|Input 2 blue|Input 2 alpha
+
+@grayscaleconversion texture Grayscale Conversion
+> output
+< input1 c
+- channelsweights f4 0.33 0.33 0.33 0
+- alphamult b 0
+- mattelevel f1 1 ~ 0 1
+
+@gradient texture Gradient Map
+> output
+< input1 g
+- colorswitch b 1 = Grayscale|Color
+- addressingrepeat b 0 = Clamp|Repeat
+
+@dyngradient texture Gradient (Dynamic)
+> output
+< input1 g
+< input2 c
+- addressingrepeat b 0 = Clamp|Repeat
+- uvselector i1 0 = Horizontal|Vertical
+- coordinate f1 0 ~ 0 1
+
+@curve texture Curve
+> output
+< input1 c
+- addressingrepeat b 0 = Clamp|Repeat
+
+@transformation texture Transformation 2D
+> output
+< input1 c
+- matrix22 f4 1 0 0 1
+- offset f2 0 0
+- mipmapmode i1 0 = Automatic|Manual
+- manualmiplevel i1 0 ~ 0 12
+- mattecolor fv 0 0 0 0
+- filtering i1 0 = Bilinear|Nearest
+
+@bitmap texture Bitmap
+> output
+- colorswitch b 1 = Grayscale|Color
+- bitmapresourcepath path
+- resizemethod i1 0 = Smooth stretch|Nearest
+
+@svg texture SVG
+> output
+< background c
+- colorswitch b 1 = Grayscale|Color
+- background fv 0 0 0 0
+- vectorresourcepath path
+
+@text texture Text
+> output
+< background c
+- colorswitch b 0 = Grayscale|Color
+- background fv 0 0 0 1
+- text s
+- fontdata s
+- alignment i1 1 = Left|Center|Right
+- frontcolor fv 1 1 1 1
+- fontsize f1 0.25 ~ 0 1
+- position f2 0 0
+- matrix22 f4 1 0 0 1
+
+@pixelprocessor texture Pixel Processor
+> output
+< input c many
+- colorswitch b 1 = Grayscale|Color
+- perpixel fv 0 0 0 1
+
+@valueprocessor texture Value Processor
+> output
+< input c many
+- colorswitch b 1 = Grayscale|Color
+- function fv 0 0 0 1
+
+@fxmaps texture FX-Map
+> output
+< background c
+< inputpattern c many
+- colorswitch b 1 = Grayscale|Color
+- background fv 0 0 0 0
+- renderroi f4 0 1 0 1
+- tilingroi f4 0 1 0 1
+- hurst f1 1 ~ 0 1
+- opacitymult f1 1 ~ 0 1
+
+@passthrough texture Dot
+> output
+< input c
+
+# ---------------------------------------------------------------------------------- FX-map graph nodes
+
+@paramset pattern Quadrant
+< input a
+> output0 output1 output2 output3
+- opacity fv 1 1 1 1
+- branchoffset f2 0 0
+- patterntype i1 0 = None|Image|Square|Disc|Paraboloid|Bell|Gaussian|Thorn|Pyramid|Brick|Gradation|Waves|Half bell|Ridged bell|Crescent|Capsule|Cone
+- frameoffset f2 0 0
+- patternsize f2 1 1
+- patternrotation f1 0 ~ 0 1
+- patternsuppl f1 0 ~ 0 1
+- blendingmode i1 0 = Add/Sub|Max|Alpha blending
+- randomseed i1 0 ~ 0 10000
+- randominherited b 1
+- imageindex i1 0 ~ 0 64
+- imagepremul b 0
+- imagefiltering i1 0 = Bilinear and mipmaps|Bilinear|Nearest
+
+@addnode pattern Iterate
+< input a
+> output0 output1
+- numberadded i1 1 ~ 0 256
+- randomseed i1 0 ~ 0 10000
+- randominherited b 1
+
+@markov2 pattern Switch
+< input a
+> output0 output1
+- switch b 0
+- randomseed i1 0 ~ 0 10000
+- randominherited b 1
+
+# ---------------------------------------------------------------------------------- function graph nodes
+# function nodes keep their data (the value of a constant, the name a Get reads, a swizzle) as parameters named
+# after the function, as the format stores it
+
+@const_bool function Bool
+> b
+- const_bool b 0
+@const_int1 function Integer
+> i1
+- const_int1 i1 0
+@const_int2 function Integer2
+> i2
+- const_int2 i2 0 0
+@const_int3 function Integer3
+> i3
+- const_int3 i3 0 0 0
+@const_int4 function Integer4
+> i4
+- const_int4 i4 0 0 0 0
+@const_float1 function Float
+> f1
+- const_float1 f1 0
+@const_float2 function Float2
+> f2
+- const_float2 f2 0 0
+@const_float3 function Float3
+> f3
+- const_float3 f3 0 0 0
+@const_float4 function Float4
+> f4
+- const_float4 f4 0 0 0 0
+@const_string function String
+> s
+- const_string s
+@get_bool function Get Bool
+> b
+- get_bool s
+@get_integer1 function Get Integer
+> i1
+- get_integer1 s
+@get_integer2 function Get Integer2
+> i2
+- get_integer2 s
+@get_integer3 function Get Integer3
+> i3
+- get_integer3 s
+@get_integer4 function Get Integer4
+> i4
+- get_integer4 s
+@get_float1 function Get Float
+> f1
+- get_float1 s
+@get_float2 function Get Float2
+> f2
+- get_float2 s
+@get_float3 function Get Float3
+> f3
+- get_float3 s
+@get_float4 function Get Float4
+> f4
+- get_float4 s
+@get_string function Get String
+> s
+- get_string s
+@set function Set
+> t
+< value t
+- set s
+@sequence function Sequence
+> t
+< seqin t
+< seqlast t
+@ifelse function If Else
+> t
+< condition b
+< ifpath t
+< elsepath t
+@vector2 function Vector Float2
+> f2
+< componentsin f1
+< componentslast f1
+@vector3 function Vector Float3
+> f3
+< componentsin f2
+< componentslast f1
+@vector4 function Vector Float4
+> f4
+< componentsin f3
+< componentslast f1
+@ivector2 function Vector Integer2
+> i2
+< componentsin i1
+< componentslast i1
+@ivector3 function Vector Integer3
+> i3
+< componentsin i2
+< componentslast i1
+@ivector4 function Vector Integer4
+> i4
+< componentsin i3
+< componentslast i1
+@swizzle1 function Swizzle Float
+> f1
+< vector t
+- swizzle1 i1 0
+@swizzle2 function Swizzle Float2
+> f2
+< vector t
+- swizzle2 i2 0 1
+@swizzle3 function Swizzle Float3
+> f3
+< vector t
+- swizzle3 i3 0 1 2
+@swizzle4 function Swizzle Float4
+> f4
+< vector t
+- swizzle4 i4 0 1 2 3
+@iswizzle1 function Swizzle Integer
+> i1
+< vector t
+- iswizzle1 i1 0
+@iswizzle2 function Swizzle Integer2
+> i2
+< vector t
+- iswizzle2 i2 0 1
+@iswizzle3 function Swizzle Integer3
+> i3
+< vector t
+- iswizzle3 i3 0 1 2
+@iswizzle4 function Swizzle Integer4
+> i4
+< vector t
+- iswizzle4 i4 0 1 2 3
+@toint1 function To Integer
+> i1
+< value f1
+@toint2 function To Integer2
+> i2
+< value f2
+@toint3 function To Integer3
+> i3
+< value f3
+@toint4 function To Integer4
+> i4
+< value f4
+@tofloat function To Float
+> f1
+< value i1
+@tofloat2 function To Float2
+> f2
+< value i2
+@tofloat3 function To Float3
+> f3
+< value i3
+@tofloat4 function To Float4
+> f4
+< value i4
+@add function Add
+> t
+< a t
+< b t
+@sub function Subtract
+> t
+< a t
+< b t
+@mul function Multiply
+> t
+< a t
+< b t
+@mulscalar function Scalar Multiply
+> t
+< a t
+< scalar f1
+@div function Divide
+> t
+< a t
+< b t
+@neg function Negate
+> t
+< a t
+@mod function Modulo
+> t
+< a t
+< b t
+@dot function Dot Product
+> f1
+< a t
+< b t
+@cross function Cross Product
+> t
+< a t
+< b t
+@and function And
+> b
+< a b
+< b b
+@or function Or
+> b
+< a b
+< b b
+@not function Not
+> b
+< a b
+@eq function Equal
+> b
+< a t
+< b t
+@noteq function Not Equal
+> b
+< a t
+< b t
+@gt function Greater
+> b
+< a t
+< b t
+@gteq function Greater or Equal
+> b
+< a t
+< b t
+@lr function Lower
+> b
+< a t
+< b t
+@lreq function Lower or Equal
+> b
+< a t
+< b t
+@abs function Absolute
+> t
+< a t
+@floor function Floor
+> t
+< a t
+@ceil function Ceil
+> t
+< a t
+@cos function Cosine
+> t
+< a t
+@sin function Sine
+> t
+< a t
+@tan function Tangent
+> t
+< a t
+@sqrt function Square Root
+> t
+< a t
+@log function Logarithm
+> t
+< a t
+@log2 function Log 2
+> t
+< a t
+@exp function Exponential
+> t
+< a t
+@pow2 function Power of 2
+> t
+< a t
+@atan2 function Arc Tangent 2
+> f1
+< a f2
+@cartesian function Cartesian
+> f2
+< rho f1
+< theta f1
+@lerp function Linear Interpolation
+> t
+< a t
+< b t
+< x f1
+@min function Minimum
+> t
+< a t
+< b t
+@max function Maximum
+> t
+< a t
+< b t
+@rand function Random
+> f1
+< a f1
+@samplelum function Sample Gray
+> f1
+< pos f2
+- samplelum i2 0 0
+@samplecol function Sample Color
+> f4
+< pos f2
+- samplecol i2 0 0
+@passthrough function Passthrough
+> t
+< input t
+@instance function Function Call
+> t
+- instance s

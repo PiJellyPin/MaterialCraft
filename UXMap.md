@@ -38,8 +38,9 @@
   - Or File > Open package(s)...
   - Or Ctrl+O
   - Or click a card in Recent
-- Try an example
-  - Home > Brick wall example
+- Start from a template
+  - Home > Templates, click one
+  - Or File > New from template
 - Add a node
   - Press Tab over the graph
   - Type part of the name
@@ -70,19 +71,19 @@
 - Group nodes
   - Select them
   - Press C for a comment frame
-- Reuse a group of nodes
-  - Select them
-  - Edit > Create subgraph from selection
-  - Double-click the subgraph to open it
+- Reuse a graph
+  - Explorer > right-click the package > New > Material Graph, build it
+  - Drag it from the Explorer onto another graph's canvas: it becomes a node
+  - Double-click that node to open its graph
 - Use a graph from another file
-  - Drag its graph from the Explorer onto the canvas
-  - Or File > Link package as node...
+  - Open that package too and drag its graph from the Explorer onto the canvas (it is copied in with what it uses)
+  - Or File > Package > Add the graphs of another .sbs...
 - Let a user change a value without opening the graph
-  - Click `P` next to the parameter
-  - File > Publish package
-- Drive a value by logic
+  - Click `P` next to the parameter: it becomes a parameter of the graph
+  - Set its default, label and range under INPUT PARAMETERS
+- Compute a value with logic
   - Click `fn` next to the parameter
-  - Pick a function graph
+  - Build the function graph that opens; mark the node that gives the value
 - Export textures
   - Export window
   - Pick folder, format, sizes and outputs
@@ -91,8 +92,8 @@
   - Tools > Mesh map baker...
   - Add low-poly and high-poly meshes
   - Pick settings and maps
-  - Press Bake
-  - Maps go into the package and show as Baked Map nodes
+  - Pick an output folder, press Bake
+  - Maps are written there as 16-bit PNG files
 - Undo a mistake
   - Ctrl+Z
 - Find a shortcut
@@ -197,8 +198,8 @@
 - Links are curves whose handles follow the distance: close nodes give a short tight wire, a wire that turns back gets a wider loop
 - Drag a link into empty space
   - Add a node and connect it
-- Double-click a subgraph
-  - Open it
+- Double-click a graph node or an FX-Map node
+  - Open its graph
 - Right-click a node
   - Node menu
 - Right-click the background
@@ -261,88 +262,35 @@
 
 ### 3.1 Files the app opens
 
-- `.mcg`
-  - MaterialCraft graph
-  - Plain text
-  - One file holds one graph and its subgraphs
-  - Opens with File > Open package(s)...
-  - Opens with Ctrl+O
-  - Opens by dropping the file on the window
-  - Lines
-    - `size W [H]`
-    - `meta key "value"`
-    - `link`
-    - `subgraph name` ... `end`
-    - `node N kind key=value in=@id[.out]`
-    - `output name id[.pin]`
-    - `expose`
-    - `comment`
-    - `resource name base64`
-      - Embedded files, for example splines (`*.spl`)
-  - Spline resource text (`*.spl`)
-    - `spline 1`
-    - `path closed=0|1 smooth=0|1`
-    - `pt x y [hin=dx,dy] [hout=dx,dy] [w=factor] [z=height] [tan=auto|mirrored|free|corner]`
-    - Coordinates are 0..1, y down
-    - Handles are offsets from the point
-    - A point without handles gets automatic ones when the path is smooth
-    - `z` is the height value read by Path Sample (0..1, default 1); `tan` is the tangent mode the editor uses (also written as 0..3)
-    - `#` starts a comment
-  - Function graph = subgraph with `meta kind "function"`
-  - Pattern program = subgraph with `meta kind "fxmap"`
-  - Version number is stored in the file
-  - A file from a newer version is refused
-  - Message says to update the app
-- `.mca`
-  - MaterialCraft published asset
-  - Plain text
-  - Flattened graph
-  - Bitmaps embedded
-  - Exposed parameters kept
-  - Made by File > Publish package
-  - Made by `materialcraft publish`
-  - Opens like `.mcg`
-- `.png`, `.jpg`, `.tif`, `.exr`, `.hdr`, `.webp`, `.dds`, `.tga`, `.bmp`
-  - Import bitmap
-  - File > Import bitmap...
-  - Bitmap node Browse image...
-  - Dropping the file onto the graph adds a Bitmap node
-  - Format recognised from the contents
-  - Reads 8-bit, 16-bit and floating point data
-- `.cube`, `.3dl`
-  - Colour lookup table for the Color LUT node
-  - Dropping the file onto the graph adds a Color LUT node
-- `.ttf`, `.otf`, `.ttc`, `.woff`
-  - Font for the Text node
-- `.svg`
-  - Vector image for the SVG node
-  - Subset of the format
-  - Paths, basic shapes, fills, strokes
-  - Browse SVG... in the node
-- `.ttf`
-  - Font for the Text node
-  - Browse TrueType font...
-  - Built-in font is used when none is set
+- `.sbs`
+  - The app's only file format: XML package of graphs and functions
+  - New packages are `.sbs` (Home > New graph, File > New)
+  - Opens with File > Open package(s)... (filter "Substance package"), Ctrl+O, dropping the file on the window, Recent files, or a path on the command line
+  - Any other file is refused with "only Substance packages (.sbs) can be opened"
+  - Opens as it is, in the Explorer as a package
+  - Save writes it back with only the changes rewritten
+  - Saved without changes = the same file, byte for byte
+  - Kept untouched: resources, dependencies, presets, icons, unknown parts
+  - Nodes: the format's own (atomic nodes, library graphs, the package's graphs and functions, inputs, outputs)
+  - Graphs it uses from other `.sbs` files in the same folder are read from there
+  - When something draws approximately, the Import report window opens with it (9.0)
+  - How each node is drawn: IMPORT_SBS.md
+- Files a package links (bitmaps, SVG, fonts)
+  - Found by their path, then next to the package and in its `resources` folder, then by file name in those folders
+  - Bitmaps: `.png`, `.jpg`, `.tif`, `.exr`, `.hdr`, `.webp`, `.dds`, `.tga`, `.bmp`; format recognised from the contents; 8-bit, 16-bit and floating point
 - `.obj`, `.gltf`, `.glb`, `.ply`, `.stl`
-  - Meshes for the baker
+  - Meshes for the baker and the 3D view
   - Low-poly mesh needs UVs
   - High-poly mesh does not
 - `.bakeset`
   - Text file with a bake set (mesh list and settings)
-- `bake/<set>/<map>.png`
-  - Baked maps inside a package (16-bit PNG)
-  - `bake/<set>.cfg` holds the set
+- The older MaterialCraft files (`.mcg`, `.mcgp`, `.mca`) are no longer opened (October 2026)
 
 ### 3.2 Files the app writes
 
-- `.mcg`
-  - File > Save
-  - File > Save as...
-- `.mca`
-  - File > Publish package
-- Spline resources
-  - Saved inside the `.mcg` as `resource name.spl base64`
-  - No separate file
+- `.sbs`
+  - File > Save, Save package as...
+  - Explorer > a graph > Save as its own package (.sbs)... (the graph and what it uses)
 - `.png`
   - Export
   - 8-bit or 16-bit
@@ -360,8 +308,8 @@
   - Export
   - 32-bit RGBE
 - Baked map images
-  - Written to the chosen output folder
-  - Normal, world normal, position, ambient occlusion, thickness, curvature, ID
+  - 16-bit PNG files in the chosen output folder
+  - Normal, world normal, position, ambient occlusion, thickness, curvature, ID ...
 
 ### 3.3 App data files
 
@@ -407,11 +355,15 @@
 
 ## 4. Command line
 
-- `materialcraft render <graph> <outdir>`
+- Every command that reads a graph takes an `.sbs` package; `package.sbs#graph` picks one of its graphs
+- `materialcraft graphs <package.sbs>`
+  - Lists the graphs and functions: kind, outputs, which graphs use them
+  - `--export <graph> <out.sbs>` saves one graph with the graphs and functions it uses as a package
+- `materialcraft render <package.sbs[#graph]> <outdir>`
   - `--size N`
   - `--sizes 256,512`
   - `--depth 8|16|32`
-  - `--param "Label=value"` (repeatable)
+  - `--param "name=value"` (repeatable; a graph parameter by identifier or label)
   - `--variations N`
   - `--preview`
   - `--render3d`
@@ -419,11 +371,12 @@
   - `--quality 1-100`
   - `--only basecolor,normal`
   - `--colorspace srgb|p3|wide|romm|rec2020|linear`
-- `materialcraft publish <in.mcg> <out.mca>`
-- `materialcraft params <graph>`
-  - Lists exposed parameters
-- `materialcraft check <graph.mcg>`
-  - Prints node, subgraph, output counts and size
+- `materialcraft render3d <package.sbs[#graph]> <out.png> [options]`
+  - 3D picture or turntable; `materialcraft render3d --help`
+- `materialcraft params <package.sbs[#graph]>`
+  - Lists the graph's parameters: identifier, label, type, default
+- `materialcraft check <package.sbs>`
+  - Graph count, node and output counts, size, and how the nodes draw
 - `materialcraft bake --low <mesh>... [--high <mesh>...] [--cage <mesh>] --out <dir>`
   - Short form `materialcraft bake <low> <high> <outdir>`
   - Meshes: OBJ, glTF, GLB, PLY, STL
@@ -444,23 +397,16 @@
   - `--set-opt key=value`
   - `--save-set <file>`
   - `--help`
+- `materialcraft example <outdir>`
+  - Writes a small example package, `brick_wall.sbs` (Tile Generator bricks, Perlin grain, colour, normal and height outputs)
 - `materialcraft testmesh <outdir>`
   - Writes a demo low and high mesh
-- `materialcraft example <outdir>`
-  - Writes the brick wall example
-- `materialcraft library [words...]`
-  - Lists the built-in ready-made graphs
-  - Words must all match name, tag, category or description
-  - `--kind material|generator|filter`
-  - `--export <id> <file.mcg>` writes one graph out to edit
-- `materialcraft trace <graph> <node id> <out.spl>`
-  - `--size N` (default 256)
-  - `--threshold T` (default 0.5)
-  - `--tolerance X` (default 0.002)
-  - Outlines the light areas of a node as a spline
-- `materialcraft nodes`
-  - Prints every node with inputs and parameters
-- `materialcraft-gui [file.mcg|file.mca]`
+- `materialcraft nodes [words]`
+  - Prints the nodes graphs can use: kind, family (graph, function, fx-map), category, name
+  - Words must all match the kind, name or category
+- `materialcraft mcp | serve | exec | commands`
+  - AI and script control, see AI_CONTROL.md
+- `materialcraft-gui [file.sbs]`
   - Starts the editor
   - A file on the command line opens at once
 
@@ -506,7 +452,7 @@
     - Icon: new; shortcut hint "CTRL+N" in the bottom-right corner
     - Click opens the New Material Graph dialog
   - "Open package"
-    - Sub-text "Load a .mcg or .mca file from disk"
+    - Sub-text "Load a Substance package (.sbs)"
     - Icon: open; shortcut hint "CTRL+O"
     - Click opens a file picker
   - "Mesh map baker"
@@ -520,7 +466,7 @@
   - Link "HIDE" hides the strip; then link "SHOW TIP"
 - Recent files
   - Heading "RECENT FILES" with the count, search box "Search recent files" on the right (filters by file name)
-  - File cards (up to 20, newest first)
+  - File cards (up to 20, newest first); only `.sbs` packages are listed (older MaterialCraft files drop out)
     - Swatch picture, colour from the file name
     - File name, folder path
     - Date and size in small capitals, for example `2026-10-16 12:00 · 41 KB`
@@ -535,33 +481,28 @@
 
 ### 6.2b Templates page
 
-- Small label "TEMPLATES", title "Start from a finished graph"
-- Sub-title "Click one to open it as an example in its own tab. Examples are not part of your project - use File > Package > Add template to copy one in."
-- Segmented filter with counts: "ALL", "MATERIALS", "GENERATORS", "FILTERS"; search box "Search templates" on the right
-- Square tiles that fill the column (at least about 150 px)
-  - Preview rendered at 192 px, never stretched
-  - Name, then "KIND · CATEGORY" in small capitals (cut short with … when too long)
-  - Brick wall carries an accent "EXAMPLE" chip
+- Small label "TEMPLATES", title "Start a new package"
+- Sub-title "Each template starts an .sbs package with the outputs of a workflow, ready for your nodes."
+- Square tiles that fill the column (at least about 150 px), one per template of the New dialog
+  - Empty, Metallic Roughness, Metallic Roughness - Emissive, Metallic Roughness - Opacity, Specular Glossiness, Generator (grayscale), Generator (color)
+  - Picture: one band per output, in the colour that output starts with (Empty: a swatch)
+  - Name, then "N OUTPUT(S)" in small capitals
   - Hover: accent border; tooltip with the description
-- Click opens the template as an example in its own tab (named "<name> (example)")
-  - Clicking the same template again switches to the open example tab instead of making another one
-  - The example is not part of any package: not saved, not in recent files, gone when its tab is closed
-  - Example tab shows a bar "Example - not part of your project" with "Add to project" and "Save as..."
-  - "Add to project" copies it as a new graph into the selected package (or a new unsaved package)
+- Click starts a new unsaved package from the template (graph name "Graph") and opens the Editor
 
 ### 6.3 Learn page
 
 - Small label "LEARN", title "Getting started", sub-title "The few things worth knowing before your first graph."
-- Numbered list (01-08) in one outlined box
-  - New graph and templates; Tab to add nodes; Library drag and favorites; examples vs. project; subgraphs; publishing; mesh baker; AI control
-- Buttons "OPEN THE BRICK WALL EXAMPLE" (light) and "KEYBOARD SHORTCUTS" (outlined)
+- Numbered list (01-07) in one outlined box
+  - New graph and templates (packages are .sbs); Tab to add nodes; Library drag and favorites; graphs of a package used as nodes; the fn and P buttons; mesh baker; AI control
+- Buttons "NEW PACKAGE" (light, starts a Metallic Roughness package) and "KEYBOARD SHORTCUTS" (outlined)
 
 ### 6.4 Footer
 
 - Checkbox "Skip this screen on startup" (saved within half a second)
-- Status in small capitals, for example "4 RECENT · 45 TEMPLATES"
+- Status in small capitals, for example "4 RECENT · 7 TEMPLATES"
 - Link "KEYBOARD SHORTCUTS" opens the shortcuts window
-- Button "GO TO EDITOR" (light fill, dark text) opens the Editor with the current graph
+- Button "GO TO EDITOR" (light fill, dark text) opens the Editor with the current package (a fresh unsaved `.sbs` package when none is open)
 - Hairline along the top edge
 
 ## 7. Editor screen
@@ -570,7 +511,7 @@
 
 - Menu bar
 - Package tabs (only when a package is open)
-- Graph tabs (only when subgraphs are open)
+- Graph tabs (only when other graphs of the package are open)
 - Toolbar
 - Work area
 - Status bar
@@ -607,33 +548,31 @@
 - New >
   - "Material Graph...   Ctrl+N"
     - Opens the New Material Graph dialog
+    - Makes an `.sbs` package
   - "Empty Package..."
     - Opens the New Package dialog
 - "Open package(s)...   Ctrl+O"
-  - Multi-select file picker
-  - Filter: MaterialCraft graph / package
+  - Multi-select file picker, filter "Substance package" (`.sbs`)
+  - Packages open as they are
 - "Save   Ctrl+S"
   - Saves the active package
   - Asks for a name when it has none
-- "Save as..."
-  - Filter: MaterialCraft graph
-  - Default name `material.mcg`
+- "Save package as..."
+  - Filter "Substance package", default name `<name>.sbs`
 - Separator
-- "Link package as node..."
-  - File picker for `.mcg` or `.mca`
-  - Asks "Link which graph?" when the file has several
-- "Refresh linked packages"
-  - Re-reads linked files
-- "Dependencies..."
-  - Opens the Package dependencies window
-- "Import bitmap..."
-  - Image picker (all supported formats)
-  - Adds a Bitmap node
+- "New from template" >
+  - One item per template of the New dialog (tooltip: its description); starts a new package from it
+- "Package" >
+  - "Save this graph as its own .sbs..."
+    - The graph on screen, with the graphs and functions it uses
+  - "Add the graphs of another .sbs..."
+    - Copies every graph and function of the picked package in
+    - Taken names get a number
+    - Resources of that file are not copied; the status line says so
+  - "Dependencies..."
+- Separator
 - "Export textures..."
   - Opens the Export window
-- "Publish package"
-  - Saves a `.mca`
-  - Default name `material.mca`
 - Separator
 - "Home screen"
   - Goes back to Home
@@ -658,8 +597,6 @@
 - Separator
 - "Add node...   Tab"
 - "Comment frame   C"
-- "Create subgraph from selection"
-  - Disabled with no selection
 
 #### Tools
 
@@ -668,6 +605,8 @@
 - "Auto-layout"
   - Places nodes in columns by link depth
 - Separator
+- "AI control..."
+  - Tooltip "Let an AI assistant build and edit the open graph"
 - Checkbox "GPU acceleration"
   - Shown when a graphics adapter is found
   - Tooltip names the adapter
@@ -714,10 +653,10 @@
 
 - Row under the package tabs
 - First tab "Main graph"
-- One tab per opened subgraph
+- One tab per other graph or function of the package that was opened
 - Click a tab
   - Switch to that graph
-- "x" on a subgraph tab
+- "x" on a graph tab
   - Close the tab
 - Active tab text uses the accent colour
 
@@ -749,37 +688,30 @@
 - Messages
   - "Saved <path>"
   - "Save failed: <reason>"
-  - "Opened package <path> - drag its graphs onto the canvas"
+  - "<path>: only Substance packages (.sbs) can be opened"
   - "Open failed: <path>: <reason>"
-  - "<path> is already open"
+  - "Created package with '<graph>' from template '<template>'"
   - "Created graph '<name>' in <package>"
+  - "Created function '<name>'. Open it to add nodes; the node marked as the result gives its value."
+  - "Saved graph '<name>' as <path> with the graphs it uses"
+  - "Added N graph(s) from <path>, first '<name>'"
+  - "Copied '<name>' (N graph(s)) into this package and placed it as a node"
+  - "'<label>' is now graph parameter '<identifier>'"
   - "Copied N node(s)"
-  - "Created '<name>' - double-click it to edit its contents"
+  - "Moved N link(s) to the new node"
   - "Connection rejected: it would create a cycle."
   - "Connection rejected: <slot> input needs <type>, this output is <type>."
-  - "Linked '<name>' - it follows the file on disk. Every node that uses it is an instance."
-  - "Link '<name>' now points to <path>"
-  - "Link '<name>' removed"
-  - "Linked packages reloaded - changes applied"
-  - "Linked packages are up to date"
-  - "A linked package changed on disk - reloaded"
-  - "This package has no live links (File > Link package as node...)"
-  - "Links belong to the package: leave the nested graph first"
   - "Drag graphs from another package onto this graph"
-  - "Added '<name>' as a node - drag from one of its output sockets to connect it"
-  - "Published <path> (N KB, N exposed parameters)"
-  - "Publish failed: <reason>"
-  - "Cannot publish: <reason>"
-  - "Cannot import <path>: <reason>"
-  - "Cannot link <path>: <reasons>"
+  - "This graph cannot be drawn: <reason>"
+  - "function: <reason>" / "pattern graph: <reason>"
   - "Choose an export folder first."
   - "Select at least one resolution."
   - "Select at least one output to export."
   - "Export failed: <reason>"
   - "Export blocked: <reason>"
   - "Exported N <format> file(s) to <folder>"
+  - "AI control is on (port N)" / "AI control is off" / "AI: <command>"
   - "Evaluation failed unexpectedly."
-  - "Bake failed unexpectedly."
 
 ## 8. Panels
 
@@ -794,18 +726,26 @@
   - Name, or "Not saved yet"
   - Right-click menu
     - "New" > "Material Graph"
+    - "New" > "Function" (tooltip "A function graph of the package: values call it with an Instance node"; opens the new function graph)
     - "Save Package"
+    - "Add Graph File..."
+      - Tooltip "Copy every graph and function of another .sbs package into this one"
     - "Close Package"
   - Graph rows inside
-    - Main graph row shows the identifier
-    - Subgraph rows show their name
-    - "embedded" tag for embedded copies
+    - One row per graph and function of the package, by identifier
+    - Graphs kept in a folder: grey "folder/" line, then the graph names indented under it
     - Click opens the graph
     - Drag onto the canvas adds it as a node
-    - Tooltip "Click to open - drag onto the canvas to use it as a node"
+    - Tooltip "Click to open - drag onto the canvas to use it as a node - right-click for more"
+    - Right-click menu
+      - "Open"
+      - "Export maps..." (this graph's outputs as image files)
+      - "Save as its own package (.sbs)..." (with the graphs and functions it uses)
+      - "Duplicate"
+      - "Rename..." (nodes that use it follow)
+      - "Delete" (only when no other graph uses it)
 - Resources section
-  - Lists bitmaps and files
-  - Row types: "bitmap", "file"
+  - Lists the package's resources (bitmaps, SVG, fonts ...): name and type
 - Close package dialog
   - Title "Close package"
   - Buttons "Save", "Discard changes", "Cancel"
@@ -814,6 +754,13 @@
 ### 8.2 LIBRARY
 
 - Tab text "Library"
+- Lists the format's own nodes, each once (an old and a new version of a library graph are one entry: the one with its settings)
+  - "Structure": Input, Output, the package's other graphs, Dot
+  - "Core nodes": the format's atomic nodes, plus Comment and Frame
+  - "Generators" and "Filters" folders and "Material tools": the library graphs, by what they make
+  - "Logic nodes": function nodes (listed inside a function graph)
+  - "Pattern builders": FX-Map nodes (listed inside an FX-Map's pattern graph)
+  - Inside a function or pattern graph every folder lists that graph's own nodes
 - Search box
   - Hint "Search"
   - Matches node names and descriptions
@@ -829,8 +776,6 @@
     - "Noises"
     - "Patterns"
     - "Shapes"
-    - "SDF"
-    - "Paths"
   - "Filters"
     - "Adjustments"
     - "Blur and warp"
@@ -838,38 +783,23 @@
     - "Effects"
     - "Masks and regions"
   - "Material tools"
-  - "Mesh-driven"
   - Click a folder to list it
-  - Under "Generators" and "Filters" a folder "Ready-made" lists finished generators or filters
 - Item grid (right)
   - One tile per node
-  - Tile shows icon and name
-  - Hover shows the description
+  - Tile shows a 64 px picture of what the node makes (the node alone, its image inputs fed from a noise and a gradient); nodes without a picture show a coloured icon
+  - Pictures are drawn in the background after start-up, a batch at a time
+  - Name under the picture (two lines at most)
+  - Hover shows the description and "(drag onto the graph to add)"
   - Clicking does nothing; nodes are added only by dragging
   - Drag onto the canvas adds it there
   - Right-click > "Add to favorites"
   - Right-click > "Remove from favorites"
   - Star mark on favorites
-- Folders "Generators/Ready-made" and "Filters/Ready-made" list finished graphs instead of nodes (materials are not listed here, they are launcher templates)
-  - Tile shows a 64 px preview and the name
-  - Hover shows name, kind, category, description
-  - Drag onto the graph adds ONE node (clicking a tile adds nothing; an instance of an embedded copy of the template graph); more drops reuse the same copy
-  - Right-click tile > "Open as example" opens the template in its own example tab
-  - Right-click the node > "Edit template" opens its graph; changes apply to every instance in the package
-  - A search also lists matching ready-made generators and filters
-  - Search matches name, tags, category and description
 - Empty texts
-  - "Right-click a node to add it to favorites."
+  - "Right-click a node to add it to favorites." (Favorites)
+  - "Function nodes: open a function graph (a value's fn button, or Explorer > New > Function) to add them." (Logic nodes)
+  - "FX-Map nodes: open an FX-Map's pattern graph to add them." (Pattern builders)
   - "Nothing here."
-  - "Not available in this version."
-- Folder "Structure" holds
-  - Bitmap
-  - Input
-  - Output
-  - Dot
-  - Comment
-  - Frame
-  - Subgraph
 
 ### 8.3 Graph canvas
 
@@ -880,15 +810,15 @@
 - Mini toolbar (see 8.4)
 - Rubber-band box while dragging
 - Drop highlight when dragging from Explorer or Library
-- Back button "< Back" inside a subgraph
+- Back button "< Back" inside a graph opened from a node
 
 #### Node card
 
 - Title bar
   - Colour = node family
   - Text = node name
-  - Subgraph: text = graph name
-  - Output node: text = usage name
+  - Graph node (an instance of another graph): text = graph name
+  - Output node: text = output identifier
   - Long names use a smaller font
 - Thumbnail of the result
   - Dark square until ready
@@ -909,15 +839,15 @@
   - Small "WxH" text under the card when the node size differs from the graph
 - Drag the card
   - Moves it and the other selected nodes
-- Double-click a subgraph card
-  - Opens it
+- Double-click a graph node or an FX-Map card
+  - Opens its graph (the FX-Map's pattern graph)
 - Right-click an unselected card
   - Selects it first
 
 #### Output node card
 
 - Globe badge at the top-left corner
-- Text "(identifier)" next to the badge
+- Text "(usage)" next to the badge, for example "(baseColor)"
 - Text "WxH - C8" or "WxH - C16" under the card
 - One input socket, teal
 - No output socket
@@ -928,14 +858,10 @@
 - One input, one output
 - Used to bend a link
 
-#### Linked-graph node
+#### Graph node
 
-- Read-only
-- Double-click shows a status message that it is a live link
-
-#### Subgraph node
-
-- Sockets follow the Input nodes inside
+- An instance of another graph of the package (or of a package it depends on)
+- Sockets follow the input nodes of that graph
 - Several outputs show one socket each
 - Output socket names sit to the right of the card
 
@@ -1005,10 +931,8 @@
 - "Copy"
 - "Duplicate"
 - "Delete"
-- "Open subgraph" (subgraph nodes only)
-- "Trace to spline" (not on Output or subgraph nodes)
-  - Outlines the light areas of the node's picture (256 px, threshold 0.5) as a new spline resource "traced.spl" and adds a Path Stroke node that draws it
-- "Create subgraph from selection"
+- Separator
+- "Open graph" (graph nodes) or "Open pattern graph" (FX-Map nodes)
 - "Add output node" >
   - One item per output usage
   - Adds an Output node linked to this node
@@ -1043,7 +967,6 @@
 - Button "Frame all (F)"
 - Button "Auto-layout"
 - Button "Comment frame (C)"
-- Button "Create subgraph from selection"
 - Label "Parent Size:"
   - Width box
   - Link icon between width and height
@@ -1052,7 +975,7 @@
   - Height box
   - Values are powers of two
 - Button "< Back"
-  - Shown inside a subgraph
+  - Shown inside a graph opened from a node
   - Returns to the parent graph
 
 ### 8.5 2D VIEW
@@ -1073,49 +996,6 @@
   - Warning "Values outside 0..1 (HDR). The view clips them; exports keep them in float formats (EXR, HDR, 32-bit TIFF)."
 - Wheel zooms
 - Drag pans
-- Spline editing
-  - Starts with Properties > "Edit spline" on a path node
-  - Properties of a path node also has a "More splines to merge" group with three more spline dropdowns, and the shared path options (number of paths, scale, rotation, offset, mirror, reverse)
-  - A node on a built-in shape gets a copy of it as a new embedded spline
-  - Tool row above the image
-    - Text "Spline <name>"
-    - Button "Done"
-    - Button "New path"
-    - Buttons "<" and ">" with text "path N of M"
-    - Checkbox "Closed"
-    - Checkbox "Smooth"
-      - Points without handles get automatic smooth handles
-    - Button "Delete path"
-    - Checkbox "Snap"
-      - 1/32 grid
-      - Shift flips it while dragging
-    - For the selected point
-      - Number "Width"
-      - Number "Height"
-      - Dropdown "Tangent: <mode>" with Auto, Mirrored, Free, Corner
-      - Button "Delete point"
-  - Click on the curve adds a point there
-  - Click elsewhere adds a point at the end of the path
-  - Click on a point selects it
-  - Drag moves a point or a handle
-  - Handles follow the point's tangent mode: Auto and Mirrored points move both handles together, Free and Corner points one at a time
-    - Alt while dragging moves one handle only and makes the point Free
-  - Double-click on a point
-    - Switches between corner and smooth
-  - Right-click on a point
-    - "Delete point"
-    - "Corner point"
-    - "Smooth point"
-  - Right-click elsewhere
-    - "Start a new path here"
-  - Delete key removes the selected point
-  - Alt, Space or middle button drags pan the view
-  - Every change is saved in the package at once
-  - Undo and redo work on spline edits
-  - Colours
-    - Current path green
-    - Other paths blue-gray
-    - First point has an orange outline
 
 ### 8.6 3D VIEW
 
@@ -1184,227 +1064,83 @@
 - Tab text "Properties"
 - Header text "<node kind> - PROPERTIES" or "<graph> - PROPERTIES"
 - Nothing selected
-  - Shows GRAPH SETTINGS and DETAILS
+  - Shows GRAPH SETTINGS, INPUT PARAMETERS, DETAILS and FUNCTIONS
 - One node selected
   - Shows node properties
+- Several nodes selected
+  - Text "N nodes selected"
 - Comment frame selected
   - Shows frame properties
-- Function graph open
-  - Shows FUNCTIONS AND PATTERN PROGRAMS
-- Always at the bottom
-  - PUBLISHED PARAMETERS
 
-#### GRAPH SETTINGS
+#### `.sbs` package: graph (nothing selected)
 
-- Header "GRAPH SETTINGS"
-- "Output Size"
-  - "Width" slider, powers of two
-  - "Height" slider, powers of two
-  - Link icon
-    - Tooltip "Linked: height follows width (click to unlink)"
-    - Tooltip "Unlinked: click to make the graph square again"
-  - Text "{n} px"
-- "Output Format" (`output_format`)
-  - "8 Bits per Channel"
-  - "16 Bits per Channel"
-- "Node Precision" (`nodeprec`)
-  - "8 bits integer"
-  - "16 bits integer"
-  - "16 bits float"
-  - "32 bits float"
-  - Tooltip "Every node is rounded to this precision unless it sets its own Output Format"
-- "Tiling Mode"
-  - Greyed button "H and V Tiling"
-  - Cannot be changed
-- "Random Seed"
-  - Number box
-  - Changes every random node that follows the graph seed
+- "GRAPH SETTINGS"
+  - "Output size": "Relative to parent" or "Absolute"; "Width / height" boxes (absolute: px, relative: x2, /2 ...)
+  - "Output format": "8 bits", "16 bits", "16 bits float", "32 bits float"
+  - "Random seed"
+- "INPUT PARAMETERS" (when the graph has parameters)
+  - One block per parameter
+  - Label text box; tooltip shows the identifier
+  - "x" removes the parameter; values it set go back to its default
+  - "Default": slider, int slider, dropdown, checkbox, colour button or number boxes, by type
+  - "Range": min and max boxes (number parameters)
+- "DETAILS": "Label", "Description", "Category", "Author", "Author URL", "Tags"
+- "FUNCTIONS"
+  - Text "A function of the package computes a value; nodes' values and other functions can call it."
+  - One row per function of the package with "Open"
+  - Button "New function"
 
-#### DETAILS
+#### `.sbs` package: function or pattern graph open
 
-- "Identifier"
-  - Text
-  - Letters, digits, underscore
-- "Label"
-  - Text
-- "Type"
-  - "Standard material"
-  - "Filter"
-  - "Generator"
-  - "Other"
-- "Physical size (cm)"
-  - X box
-  - Y box
-  - Z box
-- "Package"
-  - Text
-- "Exposed in package"
-  - Checkbox
-- "Show in library"
-  - Checkbox
-- "Yes" / "No" choices
-- "Description"
-  - Multi-line text
-- "Category"
-  - Text
-- "Author"
-  - Text
-- "Author URL"
-  - Text
-- "Tags"
-  - Text
+- A function inside a node's value: "This function computes '<parameter>' of node #<id>." and how to build it
+- An FX-Map's pattern graph: "The pattern graph of FX-Map node #<id>." and what Quadrant, Iterate and Switch do
+- A function of the package: "INPUT PARAMETERS" and "DETAILS" only
 
-#### Node properties (every node)
+#### `.sbs` package: node selected
 
-- Title with the node name
-- Identifier text box
-- INPUTS list
-  - One row per socket
-  - Text ", required" when a link is needed
-- PARAMETERS group
-  - One row per parameter
-  - Label
-  - Control: slider, int box, dropdown, checkbox, colour wheel, text, file picker or curve
-  - Button `fn` per parameter
-    - Tooltip "Drive this parameter by a function graph"
-    - Menu "(not driven)" and a list of function graphs
-    - Driven parameters appear under FUNCTION-DRIVEN PARAMETERS
-  - Button `P` per parameter
-    - Publishes the parameter
-    - Lit when published
-  - Group headers split long lists
-- OUTPUT SIZE group (`osize_mode`)
-  - "Size mode"
-    - "Relative to input"
-    - "Relative to parent"
-    - "Absolute"
-  - "Size" (absolute) or "Modifier" (relative)
-  - Tooltip "A lower size computes faster: give heavy nodes (AO, blurs, noises) a smaller size."
-- "Output format"
-  - "Graph default"
-  - "8 bits integer"
-  - "16 bits integer"
-  - "16 bits float"
-  - "32 bits float"
-- Checkbox "Square cells"
-  - On tile nodes and noises
-  - Tooltip "Keep the cells of this pattern square in a non-square graph (the vertical cell count follows the aspect ratio)"
-- Text "No adjustable parameters." when none
-
-#### Special node panels
-
-- Output node
-  - "Usage" dropdown
-    - basecolor
-    - normal
-    - roughness
-    - metallic
-    - height
-    - ambient_occlusion
-    - opacity
-    - emissive
-    - diffuse
-    - specular
-    - glossiness
-  - "Identifier" text
-- Input node
-  - Name, type, default
-- Bitmap node
-  - Button "Browse image..."
-  - File type "Images" (every supported extension)
-- Color LUT node
-  - Text "(no lookup table)" or the file name
-  - Button "Browse lookup table..."
-  - File type "Colour lookup table" (`.cube`, `.3dl`, or an image)
-- SVG node
-  - Text "(no file)" or the file name
-  - Button "Browse SVG..."
-  - File type "SVG image"
-  - "Fit": contain, stretch, cover
-- Text node
-  - "Text" box
-  - Label "Font: built-in" or the file name
-  - Button "Browse TrueType font..."
-  - File type "TrueType font"
-  - Choice "Built-in"
-  - Alignment: left, centre, right
-- Pixel Processor node
-  - "Function graph" dropdown
-  - Boxes `expr`, `expr_g`, `expr_b`, `expr_a`
-  - Hint "vars: u v x y w h r g b l   funcs: sin cos abs sqrt min max pow floor fract clamp mix step smoothstep noise rand tex atan2 exp log"
-  - Hint "The function runs once per pixel. Its position input is the pixel position; it can sample the inputs."
-- Value Processor node
-  - "Function graph" dropdown
-  - Hint "The function runs once. A float fills the image with grey, a float3 or float4 with colour. It can read image statistics."
-- Pattern Program Map node (`fx_map`)
-  - "Pattern program" dropdown
-  - Button "Open program"
-- Curve node
-  - Channel choice: Master, R, G, B, A
-  - Square graph area
-  - Drag on empty area adds a point and moves it
-  - Drag a point moves it
-  - Points keep their left-to-right order
-  - Double-click a point removes it (two points stay)
-- Gradient Map node
-  - Gradient bar with stop markers
-  - Click the bar adds a stop (up to 16)
-  - Click or drag a marker selects and moves it
-  - Colour wheel for the selected stop
-  - Button "Remove" (disabled with two stops)
-- Colour parameters
-  - Colour wheel (`cwheel`)
-  - Red, Green, Blue, Alpha sliders
-  - Mode: "Color" or "Grayscale"
-  - "Value" slider for gray
-- Subgraph node
-  - Button "Open subgraph"
-  - Exposed inputs list
-- Input Value node
-  - "Name" box
-  - "type" dropdown
-  - "Default text" (string type)
-  - Min, max, label
-- Function nodes with a name
-  - `f_get`, `f_set`: "Name"
-  - `f_input`, `f_graph_input`: "Name"
-  - `f_string`: "Text"
-  - `f_swizzle`: "Components", hint "xyzw or rgba, e.g. zyx"
-  - `f_call`: "Function"
-  - `f_sample_gray`, `f_sample_color`, `f_image_avg`, `f_image_min`, `f_image_max`: "Image input" slot
+- Title "<name>  #<id>" with a colour mark
+- Kind line: "<filter> node", "Library graph <graph> (<package>)" or "Graph <name>"
+- Orange note when the node draws as a placeholder; the file keeps it as it is
+- Function and FX-map graphs: "This node gives the graph's result" or button "Make this the result"
+- "Name" text box (title shown on the card)
+- Graph node: button "Open graph"
+- FX-Map node: button "Open pattern graph" (or "Make pattern graph" when it has none); a new FX-Map comes with one Quadrant
+- Gradient Map node: "GRADIENT" group
+  - Ramp preview
+  - One row per key: position slider, colour button, "x" removes it
+  - "+ Add key": a new key halfway along the widest gap
+- Output node: "Usage" dropdown (baseColor, normal, roughness ...)
+- "INPUTS" list: socket <- source node, or "(not connected)"
+- "PARAMETERS", then other groups, then "BASE SETTINGS" (closed, open when the node has no other settings)
+  - Control by value type: slider, int slider, dropdown, checkbox, colour button, number boxes, text
+  - "↺": back to the default
+  - "fn": compute the value with a new function graph
+  - "P": expose as a graph parameter (graphs only, not base settings)
+  - Computed value: "function" with "Edit" (opens it) and "x" (back to the default)
+  - Exposed value: "graph parameter '<identifier>'" in blue with "x" (stop exposing)
 
 #### Comment frame properties
 
+- Heading "Comment frame"
 - Title text
 - Colour dots, six
-- Body text
 - Button "Delete frame"
 
-#### FUNCTIONS AND PATTERN PROGRAMS
-
-- Header "FUNCTIONS AND PATTERN PROGRAMS"
-- Text "A function graph computes values that can drive any parameter or a pixel processor. A pattern program is drawn by a Pattern Program Map node."
-- List of function graphs
-  - Row per function
-  - Button "Open"
-- List of pattern programs
-  - Row per program
-  - Button "Open"
-- Button "New function"
-  - Creates a graph with a Position, Swizzle and Output node
-- Button "New pattern program"
-  - Creates a graph with a Marker, Iterate and Output node
-
-#### PUBLISHED PARAMETERS
-
-- Header "PUBLISHED PARAMETERS"
-- Text "Click 'P' next to a parameter to publish it. Published parameters can be set when rendering a .mca package."
-- One row per published parameter
-  - Label
-  - Range
-  - Remove button
-
 ## 9. Windows and dialogs
+
+### 9.0 Import report
+
+- Opens after an `.sbs` import; close with the X
+- Title "Import report"
+- File name, summary "N graphs, N functions, N nodes: N exact, N approximate, N not converted"
+- Counters in green (exact), yellow (approximate), orange (not converted)
+- Explanation line
+- "Show:" radio buttons "everything", "approximate and missing" (default when there is any), "missing only"
+- Button "Copy report" copies the whole report as text
+- Scrolling list, worst first: level, "<graph> #<node>", text, button "Show"
+  - "Show" opens that graph, selects the node and centres it at 100 %
+- On the canvas: a node the importer could not convert has an orange corner on its title bar; its Properties panel shows "Not converted on import: <reason>" in orange
+- Imported nodes keep their names from the file as card titles (shown in italics under the Properties title)
 
 ### 9.1 New Material Graph
 
@@ -1525,12 +1261,9 @@
   - Resizable window
   - Closes with the x
 - Header row
-  - Text box "Bake set" (name of the set, used in resource names)
+  - Text box "Bake set" (name of the set, used for set files)
   - Text "Quality:" with buttons "Preview", "Game", "Final"
     - Set size, anti-aliasing, padding and ray counts
-  - Dropdown "Sets in package"
-    - Shown when the package holds bake sets
-    - Loads the settings and mesh list of a set
   - Button "Load set file..."
   - Button "Save set file..."
 - Tabs "Meshes", "Settings", "Maps", "Output"
@@ -1595,13 +1328,9 @@
     - Vertex colour, Opacity (ray hits), World space direction, UV layout
   - Small buttons "All", "Common", "None"
 - Tab "Output"
-  - Checkbox "Store the maps in this package (16-bit)"
-  - Checkbox "Add a Baked Map node for every new map"
-  - Checkbox "Also write PNG files (16-bit)"
-    - Button "Output folder..." and path text
-  - List "Baked maps in this package"
-    - One row per set with its map names
-    - Small button "Remove"
+  - Text "The maps are written as 16-bit PNG files to this folder; link them into the package as bitmaps to use them in a graph."
+  - Button "Output folder..." and path text
+  - Baking without a folder: "Choose the output folder (Output tab): the maps are written there as 16-bit PNG files."
 - Bottom row
   - Button "Bake"
     - Becomes "Cancel" and a progress bar with the stage name while running
@@ -1619,28 +1348,9 @@
 ### 9.6 Package dependencies
 
 - Title "Package dependencies"
-- Text when inside a nested graph: "Links belong to the package: leave the nested graph to manage them."
-- Text when empty: "This package has no live links. Use File > Link package as node... to add one."
-- One block per link
-  - Name in bold
-  - Text "N instance(s)"
-  - Path text, with "> graph name"
-  - Text "read from <file>" when found elsewhere
-  - Button "Relink..."
-  - Button "Embed copy"
-    - Disabled when the file is not found
-    - Tooltip "Turn the link into a copy saved inside this package"
-  - Button "Remove"
-- "Search folders" box
-  - Text "When a linked file is not where the link says, these folders (relative to the package, separated by ;) are searched for a file with the same name."
-- Button "Refresh links"
-
-### 9.7 Link which graph?
-
-- Title "Link which graph?"
-- Text "<file> contains several graphs."
-- Button "Main graph"
-- One button per subgraph
+- Text "The packages this one uses: library graphs, and graphs of other .sbs files."
+- One row per package the file depends on, with "N node(s)" using it
+- Text when empty: "This package uses no other packages."
 
 ### 9.8 Keyboard shortcuts
 
@@ -1658,22 +1368,22 @@
   - "F" - frame all
   - "C" - comment frame around selection
   - "Delete" - delete selection
-  - "Double-click subgraph" - open it
+  - "Double-click a graph node" - open its graph
   - "Ctrl+S / Ctrl+O" - save / open
 - Close with the window cross
 
 ### 9.9 Native dialogs
 
-- Open file picker
-  - Filter: MaterialCraft graph / package (`mcg`, `mca`)
-- Save file picker
-  - Filter: MaterialCraft graph (`mcg`)
-- Publish picker
-  - Filter: MaterialCraft published asset (`mca`)
-- PNG picker
+- Open package picker
+  - Filter: Substance package (`sbs`), several files at once
+- Save package picker
+  - Filter: Substance package (`sbs`)
+- PNG picker (3D view picture)
   - Filter: PNG image
-- OBJ picker
-  - Filter: Wavefront OBJ
+- Mesh pickers (baker, 3D view)
+  - Filter: Meshes (OBJ, glTF, GLB, PLY, STL)
+- Environment image picker
+- Bake set picker (`bakeset`)
 - Folder picker
 - Look follows the operating system
 
@@ -1700,3851 +1410,4836 @@
 
 - Every node has
   - A card on the graph
-  - A Library tile
+  - A Library tile with a picture
   - A Properties page
-- Every texture node also has
-  - Identifier text
-  - OUTPUT SIZE group
-  - Output format dropdown
-- Every parameter also has
+- Every graph node also has BASE SETTINGS (output size, format, pixel size and ratio, tiling, random seed)
+- Every value also has
   - `fn` button
-  - `P` button
-- Counts below come from `materialcraft nodes`
+  - `P` button (graphs only)
+- 453 nodes, generated from the editor (`materialcraft-gui --dump-ux <kind>...`); `materialcraft nodes` lists the same kinds
+- Folders follow the Library; function nodes are in "Logic nodes" and FX-Map nodes in "Pattern builders"
 
-### Generators nodes (73)
+### Structure (3)
 
-- Color (`color`)
-  - Library: Generators > Patterns
-  - Tooltip: constant colour
+- Dot (`sbs:passthrough`)
+  - Library: Structure
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Input (`sbs:input`)
+  - Library: Structure
   - Inputs: none
   - Outputs: output
   - Properties:
-    - R
-      - Control: number box
-    - G
-      - Control: number box
-    - B
-      - Control: number box
-    - A
-      - Control: number box
-- White Noise (`white_noise`)
-  - Library: Generators > Noises
-  - Tooltip: per-pixel random
-  - Inputs: none
+- Output (`sbs:output`)
+  - Library: Structure
+  - Inputs: inputNodeOutput
+    - inputNodeOutput
+      - Left-edge socket
+  - Outputs: none
+  - Properties:
+
+### Core nodes (24)
+
+- Blend (`sbs:blend`)
+  - Library: Core nodes
+  - Inputs: source, destination, opacity
+    - source
+      - Left-edge socket
+    - destination
+      - Left-edge socket
+    - opacity
+      - Left-edge socket
   - Outputs: output
   - Properties:
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-- Gaussian Noise (`gaussian_noise`)
-  - Library: Generators > Noises
-  - Tooltip: gaussian-distributed per-pixel noise
-  - Inputs: none
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Blending Mode
+      - Control: dropdown
+      - Default: Copy
+      - Choices: Copy / Add / Subtract / Multiply / Add Sub / Max (Lighten) / Min (Darken) / Switch / Divide / Overlay / Screen / Soft Light
+    - Alpha Blending
+      - Control: dropdown
+      - Default: Use source alpha
+      - Choices: Use source alpha / Ignore alpha / Straight alpha / Premultiplied alpha
+    - Cropping Area
+      - Default: 0 1 0 1
+- Blur (`sbs:blur`)
+  - Library: Core nodes
+  - Inputs: input1
+    - input1
+      - Left-edge socket
   - Outputs: output
   - Properties:
-    - Scale (grain)
-      - Control: int
-      - Default: 1
-      - Range: 1..16
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
+    - Intensity
       - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-    - Disorder speed
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Disorder anisotropy
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Disorder anisotropy angle
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Tile offset X
-      - Control: slider
-      - Default: 0
-      - Range: -16..16
-    - Tile offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -16..16
-- Perlin (`perlin`)
-  - Library: Generators > Noises
-  - Tooltip: perlin noise
-  - Inputs: none
+      - Default: 10
+      - Range: 0..64
+- Channels Shuffle (`sbs:shuffle`)
+  - Library: Core nodes
+  - Inputs: input1, input2
+    - input1
+      - Left-edge socket
+    - input2
+      - Left-edge socket
   - Outputs: output
   - Properties:
-    - Scale
-      - Control: int
-      - Default: 4
-      - Range: 1..64
-    - Disorder
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-    - Disorder speed
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Tile offset X
-      - Control: slider
-      - Default: 0
-      - Range: -16..16
-    - Tile offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -16..16
-- Fbm (`fbm`)
-  - Library: Generators > Noises
-  - Tooltip: fractal noise/clouds
-  - Inputs: none
+    - Red Channel
+      - Control: dropdown
+      - Default: Input 1 red
+      - Choices: Input 1 red / Input 1 green / Input 1 blue / Input 1 alpha / Input 2 red / Input 2 green / Input 2 blue / Input 2 alpha
+    - Green Channel
+      - Control: dropdown
+      - Default: Input 1 green
+      - Choices: Input 1 red / Input 1 green / Input 1 blue / Input 1 alpha / Input 2 red / Input 2 green / Input 2 blue / Input 2 alpha
+    - Blue Channel
+      - Control: dropdown
+      - Default: Input 1 blue
+      - Choices: Input 1 red / Input 1 green / Input 1 blue / Input 1 alpha / Input 2 red / Input 2 green / Input 2 blue / Input 2 alpha
+    - Alpha Channel
+      - Control: dropdown
+      - Default: Input 1 alpha
+      - Choices: Input 1 red / Input 1 green / Input 1 blue / Input 1 alpha / Input 2 red / Input 2 green / Input 2 blue / Input 2 alpha
+- Curve (`sbs:curve`)
+  - Library: Core nodes
+  - Inputs: input1
+    - input1
+      - Left-edge socket
   - Outputs: output
   - Properties:
-    - Scale
-      - Control: int
-      - Default: 4
-      - Range: 1..64
-    - Octaves
-      - Control: int
-      - Default: 5
-      - Range: 1..10
-    - Gain
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Disorder
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Mode
+    - Repeat
       - Control: dropdown
-      - Default: fBm
-      - Choices: fBm / Ridged / Turbulence
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-    - Disorder speed
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Disorder anisotropy
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Disorder anisotropy angle
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Tile offset X
-      - Control: slider
-      - Default: 0
-      - Range: -16..16
-    - Tile offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -16..16
-- Voronoi (`voronoi`)
-  - Library: Generators > Noises
-  - Tooltip: cellular
-  - Inputs: none
-  - Outputs: output, cell_id, edge, distance
-    - output
-      - Right-edge socket
-    - cell_id
-      - Right-edge socket
-    - edge
-      - Right-edge socket
-    - distance
-      - Right-edge socket
-  - Properties:
-    - Scale
-      - Control: int
-      - Default: 6
-      - Range: 1..64
-    - Size Y / X
-      - Control: slider
-      - Default: 1
-      - Range: 0.25..4
-    - Offset X
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Offset Y
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Disorder
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Distortion intensity
-      - Control: slider
-      - Default: 0
-      - Range: 0..2
-    - Distortion scale
-      - Control: int
-      - Default: 3
-      - Range: 1..32
-    - Style
-      - Control: dropdown
-      - Default: F1 (distance)
-      - Choices: F1 (distance) / Random color / Edge / F2 / F2 - F1 / F1 * F2 / F1 / F2
-    - Edge thickness
-      - Control: slider
-      - Default: 0.25
-      - Range: 0.01..1
-    - Rounded curve
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Distance mode
-      - Control: dropdown
-      - Default: Euclidean
-      - Choices: Euclidean / Manhattan / Chebyshev / Minkowski
-    - Minkowski number
-      - Control: slider
-      - Default: 2
-      - Range: 0.25..16
-    - Distance scale
-      - Control: slider
-      - Default: 1
-      - Range: 0..8
-    - Random color seed mode
-      - Control: dropdown
-      - Default: Global (node seed)
-      - Choices: Global (node seed) / Manual
-    - Random color seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Invert
-      - Control: checkbox
-      - Default: off
-    - Min level
-      - Control: int
-      - Default: 0
-      - Range: 0..8
-    - Max level
-      - Control: int
-      - Default: 3
-      - Range: 0..8
-    - Roughness (Add)
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1.5
-    - Lacunarity
-      - Control: slider
-      - Default: 2
-      - Range: 1..4
-    - Global opacity
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Blend mode
-      - Control: dropdown
-      - Default: Add
-      - Choices: Add / Max / Min
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-- Voronoi Fractal (`voronoi_fractal`)
-  - Library: Generators > Noises
-  - Tooltip: layered voronoi
-  - Inputs: none
+      - Default: Clamp
+      - Choices: Clamp / Repeat
+- Directional Blur (`sbs:dirmotionblur`)
+  - Library: Core nodes
+  - Inputs: input1
+    - input1
+      - Left-edge socket
   - Outputs: output
   - Properties:
-    - Scale
-      - Control: int
-      - Default: 6
-      - Range: 1..64
-    - Size Y / X
+    - Intensity
       - Control: slider
-      - Default: 1
-      - Range: 0.25..4
-    - Offset X
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Offset Y
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Disorder
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Distortion intensity
-      - Control: slider
-      - Default: 0
-      - Range: 0..2
-    - Distortion scale
-      - Control: int
-      - Default: 3
-      - Range: 1..32
-    - Style
-      - Control: dropdown
-      - Default: F1 (distance)
-      - Choices: F1 (distance) / Random color / Edge / F2 / F2 - F1 / F1 * F2 / F1 / F2
-    - Edge thickness
-      - Control: slider
-      - Default: 0.25
-      - Range: 0.01..1
-    - Rounded curve
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Distance mode
-      - Control: dropdown
-      - Default: Euclidean
-      - Choices: Euclidean / Manhattan / Chebyshev / Minkowski
-    - Minkowski number
-      - Control: slider
-      - Default: 2
-      - Range: 0.25..16
-    - Distance scale
-      - Control: slider
-      - Default: 1
-      - Range: 0..8
-    - Random color seed mode
-      - Control: dropdown
-      - Default: Global (node seed)
-      - Choices: Global (node seed) / Manual
-    - Random color seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Invert
-      - Control: checkbox
-      - Default: off
-    - Min level
-      - Control: int
-      - Default: 0
-      - Range: 0..8
-    - Max level
-      - Control: int
-      - Default: 3
-      - Range: 0..8
-    - Roughness (Add)
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1.5
-    - Lacunarity
-      - Control: slider
-      - Default: 2
-      - Range: 1..4
-    - Global opacity
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Blend mode
-      - Control: dropdown
-      - Default: Add
-      - Choices: Add / Max / Min
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-- Gradient (`gradient`)
-  - Library: Generators > Patterns
-  - Tooltip: gradient
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Type
-      - Control: dropdown
-      - Default: Linear
-      - Choices: Linear / Radial
+      - Default: 10
+      - Range: 0..64
     - Angle
       - Control: slider
       - Default: 0
       - Range: 0..1
-- Circle (`circle`)
-  - Library: Generators > Shapes
-  - Tooltip: radius softness
-  - Inputs: none
+- Directional Warp (`sbs:directionalwarp`)
+  - Library: Core nodes
+  - Inputs: input1, inputintensity
+    - input1
+      - Left-edge socket
+    - inputintensity
+      - Left-edge socket
   - Outputs: output
   - Properties:
-    - Radius
+    - Intensity
       - Control: slider
-      - Default: 0.4
-      - Range: 0..0.7
-    - Edge softness
+      - Default: 10
+      - Range: 0..64
+    - Warp Angle
       - Control: slider
-      - Default: 0.01
-      - Range: 0..0.5
-- Rect (`rect`)
-  - Library: Generators > Shapes
-  - Tooltip: width height softness
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Width
-      - Control: slider
-      - Default: 0.6
+      - Default: 0
       - Range: 0..1
-    - Height
-      - Control: slider
-      - Default: 0.4
-      - Range: 0..1
-    - Edge softness
-      - Control: slider
-      - Default: 0.01
-      - Range: 0..0.5
-- Polygon (`polygon`)
-  - Library: Generators > Shapes
-  - Tooltip: sides radius softness rotation
-  - Inputs: none
+- Distance (`sbs:distance`)
+  - Library: Core nodes
+  - Inputs: mask, source
+    - mask
+      - Left-edge socket
+    - source
+      - Left-edge socket
   - Outputs: output
   - Properties:
-    - Sides
-      - Control: int
+    - Color Mode
+      - Control: dropdown
+      - Default: Grayscale
+      - Choices: Grayscale / Color
+    - Distance
+      - Control: slider
+      - Default: 10
+      - Range: 0..256
+    - Combine Distance
+      - Control: dropdown
+      - Default: Combine
+      - Choices: Source only / Combine
+- Emboss (`sbs:emboss`)
+  - Library: Core nodes
+  - Inputs: input1, inputgradient
+    - input1
+      - Left-edge socket
+    - inputgradient
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Intensity
+      - Control: slider
       - Default: 5
-      - Range: 3..32
-    - Radius
-      - Control: slider
-      - Default: 0.4
-      - Range: 0..0.7
-    - Edge softness
-      - Control: slider
-      - Default: 0.01
-      - Range: 0..0.5
-    - Rotation
+      - Range: 0..32
+    - Light Angle
       - Control: slider
       - Default: 0
       - Range: 0..1
-- Checker (`checker`)
-  - Library: Generators > Patterns
-  - Tooltip: tiles
-  - Inputs: none
+    - Highlight Color
+      - Default: 1 1 1 1
+    - Shadow Color
+      - Default: 0 0 0 0
+- Gradient (Dynamic) (`sbs:dyngradient`)
+  - Library: Core nodes
+  - Inputs: input1, input2
+    - input1
+      - Left-edge socket
+    - input2
+      - Left-edge socket
   - Outputs: output
   - Properties:
-    - Tiles
-      - Control: int
-      - Default: 8
-      - Range: 1..64
-- Bricks (`bricks`)
-  - Library: Generators > Patterns
-  - Tooltip: rows cols mortar bevel offset lum_var seed
-  - Inputs: none
+    - Repeat
+      - Control: dropdown
+      - Default: Clamp
+      - Choices: Clamp / Repeat
+    - Coordinate Axis
+      - Control: dropdown
+      - Default: Horizontal
+      - Choices: Horizontal / Vertical
+    - Coordinate
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Gradient Map (`sbs:gradient`)
+  - Library: Core nodes
+  - Inputs: input1
+    - input1
+      - Left-edge socket
   - Outputs: output
   - Properties:
-    - Rows
-      - Control: int
-      - Default: 8
-      - Range: 1..32
-    - Columns
-      - Control: int
-      - Default: 4
-      - Range: 1..32
-    - Mortar
+    - Color Mode
+      - Control: dropdown
+      - Default: Color
+      - Choices: Grayscale / Color
+    - Repeat
+      - Control: dropdown
+      - Default: Clamp
+      - Choices: Clamp / Repeat
+- Grayscale Conversion (`sbs:grayscaleconversion`)
+  - Library: Core nodes
+  - Inputs: input1
+    - input1
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Channel Weights
+      - Default: 0.33 0.33 0.33 0
+    - Alpha Multiplier
+      - Default: 0
+    - Matte Level
       - Control: slider
-      - Default: 0.03
-      - Range: 0..0.2
-    - Bevel
-      - Control: slider
-      - Default: 0.05
-      - Range: 0.001..0.5
-    - Row offset
+      - Default: 1
+      - Range: 0..1
+- HSL (`sbs:hsl`)
+  - Library: Core nodes
+  - Inputs: input1
+    - input1
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Hue
       - Control: slider
       - Default: 0.5
       - Range: 0..1
-    - Brick variation
-      - Control: slider
-      - Default: 0.3
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-- Fx Map (`fx_map`)
-  - Library: Filters > Adjustments
-  - Tooltip: run a pattern program
-  - Inputs: in, in2, in3, in4
-    - in
-      - Left-edge socket
-    - in2
-      - Left-edge socket
-    - in3
-      - Left-edge socket
-    - in4
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Recursion depth
-      - Control: int
-      - Default: 12
-      - Range: 0..32
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Blend
-      - Control: dropdown
-      - Default: Max
-      - Choices: Max / Add / Over / Min / Multiply
-    - Colour
-      - Control: checkbox
-      - Default: off
-    - Background
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Background R
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Background G
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Background B
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-- Svg (`svg`)
-  - Library: Filters > Adjustments
-  - Tooltip: vector image
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Fit
-      - Control: dropdown
-      - Default: Contain
-      - Choices: Contain / Stretch / Cover
-    - Scale
-      - Control: slider
-      - Default: 1
-      - Range: 0.05..8
-    - Offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-- Text (`text`)
-  - Library: Filters > Adjustments
-  - Tooltip: text
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Size
-      - Control: slider
-      - Default: 0.2
-      - Range: 0.02..1.5
-    - Offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Align
-      - Control: dropdown
-      - Default: Centre
-      - Choices: Left / Centre / Right
-    - Letter spacing
-      - Control: slider
-      - Default: 0
-      - Range: -0.3..1
-    - Line spacing
-      - Control: slider
-      - Default: 1
-      - Range: 0.3..3
-    - Rotation (deg)
-      - Control: slider
-      - Default: 0
-      - Range: -360..360
-    - Value
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Wrap width (0 = off)
-      - Control: slider
-      - Default: 0
-      - Range: 0..2
-    - Coloured text
-      - Control: checkbox
-      - Default: off
-    - Colour R
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Colour G
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Colour B
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-- Pixel Processor (`pixel_processor`)
-  - Library: Generators > Patterns
-  - Tooltip: per-pixel expr / expr_g / expr_b / expr_a (string params), or fn="function" to run a function graph per pixel
-  - Inputs: in, in2, in3, in4
-    - in
-      - Left-edge socket
-    - in2
-      - Left-edge socket
-    - in3
-      - Left-edge socket
-    - in4
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Seed (function)
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-- Value Processor (`value_processor`)
-  - Library: Filters > Adjustments
-  - Tooltip: run fn="function" once; the result (float, float3 or float4) fills the image. The function can read image statistics
-  - Inputs: in, in2, in3, in4
-    - in
-      - Left-edge socket
-    - in2
-      - Left-edge socket
-    - in3
-      - Left-edge socket
-    - in4
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Seed (function)
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-- Shape (`shape`)
-  - Library: Generators > Shapes
-  - Tooltip: procedural shape
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Shape
-      - Control: dropdown
-      - Default: Disc
-      - Choices: Square / Disc / Paraboloid / Gaussian / Diamond / Pyramid / Half sphere / Cone
-    - Width
-      - Control: slider
-      - Default: 0.6
-      - Range: 0..1.5
-    - Height
-      - Control: slider
-      - Default: 0.6
-      - Range: 0..1.5
-    - Rotation
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Position X
-      - Control: slider
-      - Default: 0
-      - Range: -0.5..0.5
-    - Position Y
-      - Control: slider
-      - Default: 0
-      - Range: -0.5..0.5
-    - Tiling
-      - Control: int
-      - Default: 1
-      - Range: 1..16
-    - Edge softness
-      - Control: slider
-      - Default: 0.02
-      - Range: 0..1
-- Tile Sampler (`tile_sampler`)
-  - Library: Generators > Patterns
-  - Tooltip: rn3,pattern4,pattern5,pattern6,mask,scale_map,rotation_map,displacement_map,color_map,distribution_map,background grid of pattern instances
-  - Inputs: pattern, pattern2, patte
-    - pattern
-      - Left-edge socket
-    - pattern2
-      - Left-edge socket
-    - patte
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - X amount
-      - Control: int
-      - Default: 8
-      - Range: 1..64
-    - Y amount
-      - Control: int
-      - Default: 8
-      - Range: 1..64
-- Tile Generator (`tile_generator`)
-  - Library: Generators > Patterns
-  - Tooltip: rn3,pattern4,pattern5,pattern6,mask,scale_map,rotation_map,displacement_map,color_map,distribution_map,background brick-style tiles
-  - Inputs: pattern, pattern2, patte
-    - pattern
-      - Left-edge socket
-    - pattern2
-      - Left-edge socket
-    - patte
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - X amount
-      - Control: int
-      - Default: 6
-      - Range: 1..64
-    - Y amount
-      - Control: int
-      - Default: 6
-      - Range: 1..64
-- Splatter (`splatter`)
-  - Library: Generators > Patterns
-  - Tooltip: rn3,pattern4,pattern5,pattern6 random scatter of a pattern
-  - Inputs: pattern, pattern2, patte
-    - pattern
-      - Left-edge socket
-    - pattern2
-      - Left-edge socket
-    - patte
-      - Left-edge socket
-  - Outputs: output, id, center, size, luminance
-    - output
-      - Right-edge socket
-    - id
-      - Right-edge socket
-    - center
-      - Right-edge socket
-    - size
-      - Right-edge socket
-    - luminance
-      - Right-edge socket
-  - Properties:
-    - Count
-      - Control: int
-      - Default: 40
-      - Range: 0..500
-    - Grid number (0 = random)
-      - Control: int
-      - Default: 0
-      - Range: 0..32
-    - Size
-      - Control: slider
-      - Default: 0.1
-      - Range: 0.01..0.5
-    - Size random
-      - Control: slider
-      - Default: 0.3
-      - Range: 0..1
-    - Pattern height / width
-      - Control: slider
-      - Default: 1
-      - Range: 0.1..4
-    - Rotation
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Rotation random
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Symmetry random
-      - Control: dropdown
-      - Default: None
-      - Choices: None / Horizontal / Vertical / Both
-    - Color random
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Disorder (grid jitter)
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Pan X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Pan Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Gain
-      - Control: slider
-      - Default: 1
-      - Range: 0.1..4
-    - Output min
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Output max
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Background
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Blending mode
-      - Control: dropdown
-      - Default: Max
-      - Choices: Max / Add / Alpha blend / Add / Sub
-    - Global opacity
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-- Splatter Circular (`splatter_circular`)
-  - Library: Generators > Patterns
-  - Tooltip: rn3,pattern4,pattern5,pattern6 instances on one or more circles
-  - Inputs: pattern, pattern2, patte
-    - pattern
-      - Left-edge socket
-    - pattern2
-      - Left-edge socket
-    - patte
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Pattern amount
-      - Control: int
-      - Default: 12
-      - Range: 1..256
-    - Amount random
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Amount random min
-      - Control: int
-      - Default: 1
-      - Range: 1..256
-    - Ring amount
-      - Control: int
-      - Default: 1
-      - Range: 1..10
-    - Radius
-      - Control: slider
-      - Default: 0.3
-      - Range: 0..0.7
-    - Radius random
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Ring radius multiplier
+    - Saturation
       - Control: slider
       - Default: 0.5
-      - Range: 0..2
-    - Angle random
-      - Control: slider
-      - Default: 0
       - Range: 0..1
-    - Spiral factor
+    - Luminosity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+- Levels (`sbs:levels`)
+  - Library: Core nodes
+  - Inputs: input1
+    - input1
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Level In Low
+      - Default: 0 0 0 0
+    - Level In Mid
+      - Default: 0.5 0.5 0.5 0.5
+    - Level In High
+      - Default: 1 1 1 1
+    - Level Out Low
+      - Default: 0 0 0 0
+    - Level Out High
+      - Default: 1 1 1 1
+    - Clamp Between Steps
+      - Default: 1
+- Normal (`sbs:normal`)
+  - Library: Core nodes
+  - Inputs: input1
+    - input1
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..3
+    - Normal Format
+      - Control: dropdown
+      - Default: DirectX
+      - Choices: DirectX / OpenGL
+    - Alpha From Input
+      - Control: dropdown
+      - Default: Alpha is 1
+      - Choices: Alpha is 1 / Input alpha
+- Sharpen (`sbs:sharpen`)
+  - Library: Core nodes
+  - Inputs: input1
+    - input1
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..10
+- Transformation 2D (`sbs:transformation`)
+  - Library: Core nodes
+  - Inputs: input1
+    - input1
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Transform Matrix
+      - Default: 1 0 0 1
+    - Offset
+      - Default: 0 0
+    - Mipmap Mode
+      - Control: dropdown
+      - Default: Automatic
+      - Choices: Automatic / Manual
+    - Mip Level
       - Control: slider
       - Default: 0
-      - Range: -2..2
-    - Spread
+      - Range: 0..12
+    - Matte Color
+      - Default: 0 0 0 0
+    - Filtering
+      - Control: dropdown
+      - Default: Bilinear
+      - Choices: Bilinear / Nearest
+- Warp (`sbs:warp`)
+  - Library: Core nodes
+  - Inputs: input1, inputgradient
+    - input1
+      - Left-edge socket
+    - inputgradient
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..20
+- Bitmap (`sbs:bitmap`)
+  - Library: Core nodes
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Color Mode
+      - Control: dropdown
+      - Default: Color
+      - Choices: Grayscale / Color
+    - Bitmap
+      - Default: 
+    - Resize Method
+      - Control: dropdown
+      - Default: Smooth stretch
+      - Choices: Smooth stretch / Nearest
+- FX-Map (`sbs:fxmaps`)
+  - Library: Core nodes
+  - Inputs: background, inputpattern
+    - background
+      - Left-edge socket
+    - inputpattern
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Color Mode
+      - Control: dropdown
+      - Default: Color
+      - Choices: Grayscale / Color
+    - Background
+      - Default: 0 0 0 0
+    - Render Region
+      - Default: 0 1 0 1
+    - Tiling Region
+      - Default: 0 1 0 1
+    - Hurst
       - Control: slider
       - Default: 1
       - Range: 0..1
-    - Size
+    - Opacity
       - Control: slider
-      - Default: 0.1
-      - Range: 0.005..0.5
-    - Size random
-      - Control: slider
-      - Default: 0
+      - Default: 1
       - Range: 0..1
-    - Scale by pattern number
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Invert pattern number
-      - Control: checkbox
-      - Default: off
-    - Scale by ring number
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Invert ring number
-      - Control: checkbox
-      - Default: off
-    - Pattern rotation
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Pattern rotation random
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Center orientation
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Ring rotation
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Ring rotation random
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Ring rotation offset
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Position random
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Symmetry random
+- Pixel Processor (`sbs:pixelprocessor`)
+  - Library: Core nodes
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Color Mode
       - Control: dropdown
-      - Default: None
-      - Choices: None / Horizontal / Vertical / Both
+      - Default: Color
+      - Choices: Grayscale / Color
+    - Per Pixel Function
+      - Default: 0 0 0 1
+- SVG (`sbs:svg`)
+  - Library: Core nodes
+  - Inputs: background
+    - background
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Color Mode
+      - Control: dropdown
+      - Default: Color
+      - Choices: Grayscale / Color
+    - Background
+      - Default: 0 0 0 0
+    - SVG
+      - Default: 
+- Text (`sbs:text`)
+  - Library: Core nodes
+  - Inputs: background
+    - background
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Color Mode
+      - Control: dropdown
+      - Default: Grayscale
+      - Choices: Grayscale / Color
+    - Background
+      - Default: 0 0 0 1
+    - Text
+      - Default: 
+    - Font
+      - Default: 
+    - Alignment
+      - Control: dropdown
+      - Default: Center
+      - Choices: Left / Center / Right
+    - Text Color
+      - Default: 1 1 1 1
+    - Font Size
+      - Control: slider
+      - Default: 0.25
+      - Range: 0..1
+    - Position
+      - Default: 0 0
+    - Transform Matrix
+      - Default: 1 0 0 1
+- Uniform Color (`sbs:uniform`)
+  - Library: Core nodes
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Color Mode
+      - Control: dropdown
+      - Default: Color
+      - Choices: Grayscale / Color
     - Color
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Luminance random
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Luminance by pattern number
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Luminance by ring number
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Random mask
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Background
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Blending mode
+      - Default: 0 0 0 1
+- Value Processor (`sbs:valueprocessor`)
+  - Library: Core nodes
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Color Mode
       - Control: dropdown
-      - Default: Max
-      - Choices: Max / Add / Alpha blend / Add / Sub
-    - Global opacity
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-- Clouds (`clouds`)
+      - Default: Color
+      - Choices: Grayscale / Color
+    - Function
+      - Default: 0 0 0 1
+
+### Generators > Noises (75)
+
+- Anisotropic Noise (`sbs:lib:noise_anisotropic_noise/anisotropic_noise`)
   - Library: Generators > Noises
-  - Tooltip: soft cloud noise
   - Inputs: none
-  - Outputs: output
+  - Outputs: Anisotropic_Noise
   - Properties:
-    - Scale
-      - Control: int
-      - Default: 3
-      - Range: 1..64
-    - Octaves
-      - Control: int
-      - Default: 6
-      - Range: 1..10
-    - Gain
+    - X Amount
       - Control: slider
-      - Default: 0.6
-      - Range: 0..1
-    - Disorder
+      - Default: 4
+      - Range: 1..512
+    - Y Amount
       - Control: slider
+      - Default: 256
+      - Range: 1..512
+    - Y Amount By Resolution
       - Default: 0
-      - Range: 0..1
-    - Random seed
-      - Control: int
+    - Rotate
       - Default: 0
-      - Range: 0..9999
-    - Contrast
+    - Smoothness
       - Control: slider
       - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-    - Disorder speed
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Disorder anisotropy
-      - Control: slider
-      - Default: 0
       - Range: 0..1
-    - Disorder anisotropy angle
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Tile offset X
-      - Control: slider
-      - Default: 0
-      - Range: -16..16
-    - Tile offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -16..16
-- Bnw Spots (`bnw_spots`)
-  - Library: Generators > Noises
-  - Tooltip: black and white spots
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Type
-      - Control: dropdown
-      - Default: Spots 1
-      - Choices: Spots 1 / Spots 2 / Spots 3
-    - Scale
-      - Control: int
-      - Default: 8
-      - Range: 1..64
-    - Disorder
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-    - Disorder speed
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Disorder anisotropy
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Disorder anisotropy angle
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Tile offset X
-      - Control: slider
-      - Default: 0
-      - Range: -16..16
-    - Tile offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -16..16
-- Crystal (`crystal`)
-  - Library: Generators > Noises
-  - Tooltip: faceted crystal cells
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Type
-      - Control: dropdown
-      - Default: Crystal 1
-      - Choices: Crystal 1 / Crystal 2
-    - Scale
-      - Control: int
-      - Default: 6
-      - Range: 1..64
-    - Disorder
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Directional Noise (`directional_noise`)
-  - Library: Generators > Noises
-  - Tooltip: streak noise, seamless at any angle
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Scale
-      - Control: slider
-      - Default: 6
-      - Range: 1..32
-    - Stretch
-      - Control: slider
-      - Default: 8
-      - Range: 1..32
-    - Angle
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-    - Disorder speed
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Disorder anisotropy
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Disorder anisotropy angle
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Tile offset X
-      - Control: slider
-      - Default: 0
-      - Range: -16..16
-    - Tile offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -16..16
-- Grunge (`grunge`)
-  - Library: Generators > Noises
-  - Tooltip: grunge masks
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Type
-      - Control: dropdown
-      - Default: Concrete
-      - Choices: Concrete / Scratches / Spots / Smudges
-    - Balance
+    - Smoothness Interpolation
       - Control: slider
       - Default: 0.5
       - Range: 0..1
-    - Large variation (Concrete)
-      - Control: slider
-      - Default: 0.55
-      - Range: 0..1
-    - Base noisiness (Concrete)
-      - Control: slider
-      - Default: 0.45
-      - Range: 0..1
-    - Dirt specks opacity (Concrete)
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Invert dirt (Concrete)
-      - Control: checkbox
-      - Default: off
-    - Scratches opacity (Concrete)
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Sharpen (Concrete)
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Scratch quantity (Scratches)
-      - Control: int
-      - Default: 3
-      - Range: 1..32
-    - Scratch width (Scratches)
-      - Control: slider
-      - Default: 0.4
-      - Range: 0.05..0.95
-    - Scratch length (Scratches)
-      - Control: slider
-      - Default: 0.45
-      - Range: 0..0.9
-    - Details (Spots)
-      - Control: int
-      - Default: 22
-      - Range: 2..128
-    - Coverage (Spots)
-      - Control: slider
-      - Default: 0.35
-      - Range: 0..0.9
-    - Coverage contrast (Spots)
-      - Control: slider
-      - Default: 0.25
-      - Range: 0.02..1
-    - Disorder
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
+    - Non Square Expansion
+      - Default: 1
+- Blue Noise Fast (`sbs:lib:blue_noise/blue_noise_fast`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Noise Control
       - Control: slider
       - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Plasma (`plasma`)
+      - Range: 0..1
+- Bnw Spots 1 (`sbs:lib:noise_bnw_spots_1/bnw_spots_1`)
   - Library: Generators > Noises
-  - Tooltip: smooth plasma waves
   - Inputs: none
   - Outputs: output
   - Properties:
     - Scale
-      - Control: int
-      - Default: 3
+      - Control: slider
+      - Default: 1
       - Range: 1..8
     - Disorder
       - Control: slider
       - Default: 0
       - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
+    - Roughness
       - Control: slider
       - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Stripes (`stripes`)
-  - Library: Generators > Patterns
-  - Tooltip: stripes
+      - Range: 0..2
+    - Non Square Expansion
+      - Default: 1
+- Bnw Spots 2 (`sbs:lib:noise_bnw_spots_2/bnw_spots_2`)
+  - Library: Generators > Noises
   - Inputs: none
   - Outputs: output
   - Properties:
-    - Count
-      - Control: int
-      - Default: 8
-      - Range: 1..64
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Bnw Spots 3 (`sbs:lib:noise_bnw_spots_3/bnw_spots_3`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Cells 1 (`sbs:lib:noise_cells_1/cells_1`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 32
+      - Range: 1..256
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Cells 2 (`sbs:lib:noise_cells_2/cells_2`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 32
+      - Range: 1..256
+    - Edge Width
+      - Control: slider
+      - Default: 2
+      - Range: 0..4
+    - Invert
+      - Default: 0
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Cells 3 (`sbs:lib:noise_cells_3/cells_3`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 32
+      - Range: 1..256
+    - Hardness
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Cells 4 (`sbs:lib:noise_cells_4/cells_4`)
+  - Library: Generators > Noises
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 32
+      - Range: 1..256
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Color Source
+      - Default: 0
+    - Pseudo Random Seed
+      - Control: slider
+      - Default: 0
+      - Range: 0..10
+    - Non Square Expansion
+      - Default: 1
+- Clouds 1 (`sbs:lib:noise_clouds_1/clouds_1`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Clouds 2 (`sbs:lib:noise_clouds_2/clouds_2`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Clouds 3 (`sbs:lib:noise_clouds_3/clouds_3`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Crystal 1 (`sbs:lib:noise_crystal_1/crystal_1`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 32
+      - Range: 1..256
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Crystal 2 (`sbs:lib:noise_crystal_2/crystal_2`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Directional Noise 1 (`sbs:lib:noise_directional_noise_1/directional_noise_1`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
     - Angle
       - Control: slider
       - Default: 0
       - Range: 0..1
-    - Edge softness
+    - Angle Random
       - Control: slider
-      - Default: 0.1
-      - Range: 0.001..0.5
-    - Stripe width
+      - Default: 0
+      - Range: 0..1
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Directional Noise 2 (`sbs:lib:noise_directional_noise_2/directional_noise_2`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..4
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Angle Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Directional Noise 3 (`sbs:lib:noise_directional_noise_3/directional_noise_3`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..4
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Angle Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Directional Noise 4 (`sbs:lib:noise_directional_noise_4/directional_noise_4`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Angle Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Fractal Sum 1 (`sbs:lib:noise_fractal_sum_1/fractal_sum_1`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Non Square Expansion
+      - Default: 1
+- Fractal Sum 2 (`sbs:lib:noise_fractal_sum_2/fractal_sum_2`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Non Square Expansion
+      - Default: 1
+- Fractal Sum 3 (`sbs:lib:noise_fractal_sum_3/fractal_sum_3`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Non Square Expansion
+      - Default: 1
+- Fractal Sum 4 (`sbs:lib:noise_fractal_sum_4/fractal_sum_4`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Non Square Expansion
+      - Default: 1
+- Fractal Sum Base (`sbs:lib:noise_fractal_sum_base/fractal_sum_base`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Roughness
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - GlobalOpacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - MinLevel
+      - Control: slider
+      - Default: 1
+      - Range: 1..12
+    - MaxLevel
+      - Control: slider
+      - Default: 11
+      - Range: 1..12
+    - Non Square Expansion
+      - Default: 1
+- Fractal Sum Base 2 (`sbs:lib:noise_fractal_sum_base/fractal_sum_base_2`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Roughness
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - GlobalOpacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - MinLevel
+      - Control: slider
+      - Default: 1
+      - Range: 1..12
+    - MaxLevel
+      - Control: slider
+      - Default: 11
+      - Range: 1..12
+    - Non Square Expansion
+      - Default: 1
+- Fur 1 (`sbs:lib:noise_fur_1/fur_1`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 2
+      - Range: 1..8
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Fur 2 (`sbs:lib:noise_fur_2/fur_2`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
+    - Waves Scale
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Waves Rotation
+      - Control: slider
+      - Default: 0.125
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Fur 3 (`sbs:lib:noise_fur_3/fur_3`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Waves Amount
+      - Control: slider
+      - Default: 2
+      - Range: 0..8
+    - Non Square Expansion
+      - Default: 1
+- Fur 4 (`sbs:lib:fur_4/fur_4`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: Fur_4
+  - Properties:
+    - Disorder
+      - Control: slider
+      - Default: 0.7
+      - Range: 0..1
+- Gaussian Noise (`sbs:lib:noise_gaussian_noise/gaussian_noise`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 32
+      - Range: 1..64
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Gaussian Spots 1 (`sbs:lib:noise_gaussian_spots_1/gaussian_spots_1`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Gaussian Spots 2 (`sbs:lib:noise_gaussian_spots_2/gaussian_spots_2`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Grunge Map 001 (`sbs:lib:noise_grunge_map_001/grunge_map_001`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
       - Control: slider
       - Default: 0.5
       - Range: 0..1
-    - Angle mode
-      - Control: dropdown
-      - Default: Seamless (snap to tileable angle)
-      - Choices: Exact angle (may not tile) / Seamless (snap to tileable angle)
-- Weave (`weave`)
-  - Library: Generators > Patterns
-  - Tooltip: woven threads
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Count
-      - Control: int
-      - Default: 6
-      - Range: 1..32
-    - Thread width
+    - Contrast
       - Control: slider
-      - Default: 0.8
-      - Range: 0.1..1
-- Star (`star`)
-  - Library: Generators > Shapes
-  - Tooltip: star shape
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Points
-      - Control: int
-      - Default: 5
-      - Range: 3..16
-    - Inner radius
-      - Control: slider
-      - Default: 0.45
+      - Default: 0.5
       - Range: 0..1
+    - Invert
+      - Default: 0
+    - Brush Pattern
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Grunge Map 002 (`sbs:lib:noise_grunge_map_002/grunge_map_002`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Brush Pattern
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Grunge Map 003 (`sbs:lib:noise_grunge_map_003/grunge_map_003`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Brush Pattern
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Grunge Map 004 (`sbs:lib:noise_grunge_map_004/grunge_map_004`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Brush Pattern
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Grunge Map 005 (`sbs:lib:noise_grunge_map_005/grunge_map_005`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Brush Pattern
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Grunge Map 006 (`sbs:lib:noise_grunge_map_006/grunge_map_006`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Brush Pattern
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Grunge Map 007 (`sbs:lib:noise_grunge_map_007/grunge_map_007`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Brush Pattern
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Grunge Map 008 (`sbs:lib:noise_grunge_map_008/grunge_map_008`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Brush Pattern
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Grunge Map 009 (`sbs:lib:noise_grunge_map_009/grunge_map_009`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Brush Pattern
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Grunge Map 010 (`sbs:lib:noise_grunge_map_010/grunge_map_010`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Cracks
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Brush Pattern
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Grunge Map 011 (`sbs:lib:noise_grunge_map_011/grunge_map_011`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Cracks
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Brush Pattern
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Grunge Map 012 (`sbs:lib:noise_grunge_map_012/grunge_map_012`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Brush Pattern
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Grunge Map 013 (`sbs:lib:noise_grunge_map_013/grunge_map_013`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Brush Pattern
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Grunge Map 014 (`sbs:lib:noise_grunge_map_014/grunge_map_014`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Brush Pattern
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Grunge Map 015 (`sbs:lib:noise_grunge_map_015/grunge_map_015`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Brush Pattern
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Microscope View (`sbs:lib:noise_microscope_view/microscope_view`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 32
+      - Range: 0..10
+    - Warp Intensity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Moisture Noise (`sbs:lib:noise_moisture_noise/moisture_noise`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Size
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..2
+    - Pattern Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Angle Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Global Opacity
+      - Control: slider
+      - Default: 1.6
+      - Range: 0..2
+    - Non Square Expansion
+      - Default: 1
+- Perlin Noise (`sbs:lib:noise_perlin_noise/perlin_noise`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 32
+      - Range: 1..64
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Perlin Noise 1 (`sbs:lib:perlin_noise_1/perlin_noise_1`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: Noise
+  - Properties:
+- Perlin Noise 2 (`sbs:lib:perlin_noise_2/perlin_noise_2`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: Noise_2
+  - Properties:
+- Perlin Noise Zoom (`sbs:lib:perlin_noise_zoom/perlin_noise_zoom`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: Noise_Zoom
+  - Properties:
+    - Distance
+      - Control: slider
+      - Default: 14
+      - Range: 0..64
+    - Disorder
+      - Control: slider
+      - Default: 50
+      - Range: 0..100
+- Plasma (`sbs:lib:noise_plasma/plasma`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 32
+      - Range: 1..128
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Voronoi (`sbs:lib:noise_voronoi/voronoi`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Invert
+      - Default: 0
+    - Scale
+      - Control: slider
+      - Default: 8
+      - Range: 0..32
     - Size
       - Control: slider
-      - Default: 0.4
-      - Range: 0..0.7
-    - Edge softness
+      - Default: 1 1 1
+      - Range: 0..1
+    - Offset
       - Control: slider
-      - Default: 0.01
+      - Default: 0 0 0
+      - Range: 0..1
+    - Disorder
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..1
+    - Distortion Intensity
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Distortion Scale Multiplier
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Rounded Curve
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Distance Scale
+      - Control: slider
+      - Default: 1
+      - Range: 0..1.5
+    - Distance Mode
+      - Control: dropdown
+      - Default: Euclidean
+      - Choices: Euclidean / Manhattan / Chebyshev / Minkowski
+    - Minkowski Number
+      - Control: slider
+      - Default: 1
+      - Range: 0.01..5
+    - Style
+      - Control: dropdown
+      - Default: F1 (distance)
+      - Choices: F1 (distance) / Random color / Edge / F2 / F2 - F1 / F1 * F2 / F1 / F2
+    - Edge Thickness
+      - Control: slider
+      - Default: 0.1
       - Range: 0..0.5
+    - Random Color Seed Mode
+      - Control: dropdown
+      - Default: Global (node seed)
+      - Choices: Global (node seed) / Manual
+    - Random Color Seed
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+    - Non Square Expansion
+      - Default: 1
+- Voronoi Fractal (`sbs:lib:noise_voronoi/voronoi_fractal`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Invert
+      - Default: 0
+    - Scale
+      - Control: slider
+      - Default: 8
+      - Range: 0..32
+    - Size
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..1
+    - Offset
+      - Control: slider
+      - Default: 0 0 0
+      - Range: 0..1
+    - Disorder
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..1
+    - Distortion Intensity
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Distortion Scale Multiplier
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Min Level
+      - Control: slider
+      - Default: 0
+      - Range: 0..4
+    - Max Level
+      - Control: slider
+      - Default: 4
+      - Range: 0..4
+    - Roughness
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Lacunarity
+      - Control: slider
+      - Default: 2
+      - Range: 1..4
+    - Global Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Rounded Curve
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Distance Scale
+      - Control: slider
+      - Default: 1
+      - Range: 0..1.5
+    - Distance Mode
+      - Control: dropdown
+      - Default: Euclidean
+      - Choices: Euclidean / Manhattan / Chebyshev / Minkowski
+    - Minkowski Number
+      - Control: slider
+      - Default: 1
+      - Range: 0.01..5
+    - Blend Mode
+      - Control: dropdown
+      - Default: Add
+      - Choices: Add / Max / Min
+    - Style
+      - Control: dropdown
+      - Default: F1 (distance)
+      - Choices: F1 (distance) / Random color / Edge / F2 / F2 - F1 / F1 * F2 / F1 / F2
+    - Edge Thickness
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..0.5
+    - Random Color Seed Mode
+      - Control: dropdown
+      - Default: Global (node seed)
+      - Choices: Global (node seed) / Manual
+    - Random Color Seed
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+    - Non Square Expansion
+      - Default: 1
+- Waveform 1 (`sbs:lib:waveform_1/waveform_1`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: Waveform
+  - Properties:
+    - Samples
+      - Control: slider
+      - Default: 256
+      - Range: 0..1024
+    - SizeMin
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - SizeMax
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - WaveNumber
+      - Control: slider
+      - Default: 2
+      - Range: 0..64
+    - Noise
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Pattern
+      - Control: slider
+      - Default: 6
+      - Range: 2..15
+- White Noise (`sbs:lib:white_noise/white_noise`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: White_Noise
+  - Properties:
+- Directionnal Noise (`sbs:lib:directionnal_noise/directionnal_noise`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: Directionnal_Noise
+  - Properties:
+- Grunge Concrete (`sbs:lib:grunge_concrete/grunge_concrete`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+    - Base Noisiness
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Dirt Specks Opacity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert Dirt
+      - Default: 0
+    - Scratches Opacity
+      - Control: slider
+      - Default: 0.215
+      - Range: 0..1
+    - Sharpen
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Large Variation Intensity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+- Grunge Damas (`sbs:lib:grunge_damas/grunge_damas`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+    - Distortion
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Divisions
+      - Control: slider
+      - Default: 16
+      - Range: 0..32
+    - Waves
+      - Control: slider
+      - Default: 1
+      - Range: 1..4
+    - Details
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Rotation Random
+      - Control: slider
+      - Default: 0.05
+      - Range: 0..1
+- Grunge Galvanic Large (`sbs:lib:grunge_galvanic_large/grunge_galvanic_large`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+    - Warp Intensity
+      - Control: slider
+      - Default: 64
+      - Range: 32..128
+    - Ridge Detail Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Sharpen Intensity
+      - Control: slider
+      - Default: 0.8
+      - Range: 0..1
+- Grunge Galvanic Small (`sbs:lib:grunge_galvanic_small/grunge_galvanic_small`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+    - Crispness
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Dirt
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Micro Distortion
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+- Grunge Leaks (`sbs:lib:grunge_leaks/grunge_leaks`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+    - Drip Length
+      - Control: slider
+      - Default: 64
+      - Range: 0..128
+    - Shape Contrast
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Drip Crispness
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Sharpen Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+- Grunge Leaky Paint (`sbs:lib:grunge_leaky_paint/grunge_leaky_paint`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+    - Leak Intensity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Leak Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
+    - Leak Angle Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Leak Crispness
+      - Control: slider
+      - Default: 0.9
+      - Range: 0..1
+- Grunge Rough Dirty (`sbs:lib:grunge_rough_dirty/grunge_rough_dirty`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+    - Main Grunge Intensity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert Scratches
+      - Default: 1
+    - Scratches Intensity
+      - Control: slider
+      - Default: 0.2
+      - Range: 0..1
+    - Grain Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+- Grunge Rust Fine (`sbs:lib:grunge_rust_fine/grunge_rust_fine`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+    - Base Grunge Contrast
+      - Control: slider
+      - Default: 0
+      - Range: -1..1
+    - Base Warp Intensity
+      - Control: slider
+      - Default: 128
+      - Range: 0..1
+    - Streaks Intensity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Noise Intensity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Sharpen Intensity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..3
+- Grunge Scratches Dirty (`sbs:lib:grunge_scratches_dirty/grunge_scratches_dirty`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+    - Base Grunge Intensity
+      - Control: slider
+      - Default: 0.25
+      - Range: 0..1
+    - Scratches Intensity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+- Grunge Scratches Fine (`sbs:lib:grunge_scratches_fine/grunge_scratches_fine`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+    - Scratches Amount
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Sharpen Intensity
+      - Control: slider
+      - Default: 0.25
+      - Range: 0..3
+    - Scratch Value Bias
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+- Grunge Scratches Rough (`sbs:lib:grunge_scratches_rough/grunge_scratches_rough`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Position
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+    - Scratch Quantity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Tile Scratch
+      - Control: slider
+      - Default: 1
+      - Range: 1..6
+    - Scratch Blur
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Scratch Width
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Scratch Length
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Scratch Masking
+      - Control: slider
+      - Default: 0.25
+      - Range: 0..1
+    - Scratch Dirtiness
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Double Scratch
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Spots Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Tile Spots
+      - Control: slider
+      - Default: 1
+      - Range: 1..6
+    - Dust
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Tile Grunge
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Sharpen Intensity
+      - Control: slider
+      - Default: 0.25
+      - Range: 0..3
+- Grunge Shavings (`sbs:lib:grunge_shavings/grunge_shavings`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+    - Scratch Spots Amount
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Scratch Spots Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..6
+    - Dust Intensity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Sharpen Intensity
+      - Control: slider
+      - Default: 0.25
+      - Range: 0..1
+- Grunge Splashes Dusty (`sbs:lib:grunge_splashes_dusty/grunge_splashes_dusty`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+    - Splines Quantity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Splines Distortion
+      - Control: slider
+      - Default: 0.75
+      - Range: 0..1
+    - Splash Dirt Ratio
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Dust Spread
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+- Grunge Spots (`sbs:lib:grunge_spots/grunge_spots`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+    - Details
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Density
+      - Control: slider
+      - Default: 0.65
+      - Range: 0..1
+    - Density Contrast
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+- Grunge Spots Dirty (`sbs:lib:grunge_spots_dirty/grunge_spots_dirty`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Balance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+    - Density
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
+- Vertical Noise (`sbs:lib:vertical_noise/vertical_noise`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: Vertical_Noise
+  - Properties:
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+- White Noise Fast (`sbs:lib:white_noise/white_noise_fast`)
+  - Library: Generators > Noises
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+
+### Generators > Patterns (67)
+
+- Arc Pavement (`sbs:lib:pattern_arc_pavement/arc_pavement`)
+  - Library: Generators > Patterns
+  - Inputs: pattern_input
+    - pattern_input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
+    - Pattern Amount
+      - Control: slider
+      - Default: 12
+      - Range: 1..32
+    - Pattern Amount Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Min Amount
+      - Control: slider
+      - Default: 1
+      - Range: 1..10
+    - Arcs Amount
+      - Control: slider
+      - Default: 14
+      - Range: 0..20
+    - Pattern
+      - Default: 2
+    - Input Image Filtering
+      - Default: 0
+    - Pattern Scale
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Pattern Width
+      - Control: slider
+      - Default: 0.8
+      - Range: 0..1
+    - Pattern Height
+      - Control: slider
+      - Default: 0.9
+      - Range: 0..1
+    - Pattern Width Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Height Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Global Pattern Width Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Height Decrease
+      - Control: slider
+      - Default: 0.25
+      - Range: 0..1
+    - Color Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Checker 1 (`sbs:lib:pattern_checker_1/checker_1`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Tiling
+      - Control: slider
+      - Default: 8
+      - Range: 1..16
+    - Rotate 45 Degrees
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+- Checker 2 (`sbs:lib:checker_2/checker_2`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Checker
+  - Properties:
+    - Luminance Variation
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+- Color (`sbs:lib:blend/color`)
+  - Library: Generators > Patterns
+  - Inputs: Foreground, Background, Mask
+    - Foreground
+      - Left-edge socket
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Color
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Directional Scratches (`sbs:lib:noise_directional_scratches/directional_scratches`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 4
+      - Range: 1..16
+    - Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Angle Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Amount
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Pattern Size
+      - Control: slider
+      - Default: 0.5 20
+      - Range: 0..40
+    - Pattern Size Random
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Fibers 1 (`sbs:lib:pattern_fibers_1/fibers_1`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Non Square Expansion
+      - Default: 1
+- Fibers 2 (`sbs:lib:pattern_fibers_2/fibers_2`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Non Square Expansion
+      - Default: 1
+- Gradient Axial (`sbs:lib:gradient_axial/gradient_axial`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Point 1
+      - Control: slider
+      - Default: 0.25 0.25
+      - Range: 0..1
+    - Point 2
+      - Control: slider
+      - Default: 0.75 0.75
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Gradient Axial Reflected (`sbs:lib:gradient_axial/gradient_axial_reflected`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Point 1
+      - Control: slider
+      - Default: 0.25 0.25
+      - Range: 0..1
+    - Point 2
+      - Control: slider
+      - Default: 0.75 0.75
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Gradient Circular (`sbs:lib:gradient_circular/gradient_circular`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Point 1
+      - Control: slider
+      - Default: 0.5 0.5
+      - Range: 0..1
+    - Point 2
+      - Control: slider
+      - Default: 1 0.5
+      - Range: 0..1
+    - Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Gradient Linear 1 (`sbs:lib:gradient_linear_1/gradient_linear_1`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Simple_Gradient
+  - Properties:
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Rotation
+      - Control: dropdown
+      - Default: 0 degrees
+      - Choices: 0 degrees / 90 degrees / 180 degrees / 270 degrees
+- Gradient Linear 2 (`sbs:lib:gradient_linear_2/gradient_linear_2`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Simple_Gradient_2
+  - Properties:
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Rotation
+      - Control: dropdown
+      - Default: 0 degrees
+      - Choices: 0 degrees / 90 degrees / 180 degrees / 270 degrees
+- Gradient Linear 3 (`sbs:lib:gradient_linear_3/gradient_linear_3`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Position
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Rotation
+      - Control: dropdown
+      - Default: 0 degrees
+      - Choices: 0 degrees / 90 degrees / 180 degrees / 270 degrees
+- Scratches 1 (`sbs:lib:scratches_1/scratches_1`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Scratches
+  - Properties:
+    - Pattern Size Width
+      - Control: slider
+      - Default: 100
+      - Range: 0..1000
+    - Pattern Size Height
+      - Control: slider
+      - Default: 100
+      - Range: 0..1000
+    - Rotation Var
+      - Control: slider
+      - Default: 35
+      - Range: 0..360
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+    - Rotation
+      - Control: slider
+      - Default: 15
+      - Range: -360..360
+- Scratches 2 (`sbs:lib:scratches_2/scratches_2`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Thorns
+  - Properties:
+    - Pattern Size Width
+      - Control: slider
+      - Default: 100
+      - Range: 0..100
+    - Pattern Size Height
+      - Control: slider
+      - Default: 100
+      - Range: 0..100
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+- Scratches 3 (`sbs:lib:scratches_3/scratches_3`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Thorns_2
+  - Properties:
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+- Scratches 4 (`sbs:lib:scratches_4/scratches_4`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Thorns_3
+  - Properties:
+- Splatter (`sbs:lib:splatter/splatter`)
+  - Library: Generators > Patterns
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Splatter_Grayscale
+  - Properties:
+    - Pattern Size Width
+      - Control: slider
+      - Default: 100
+      - Range: 0..1000
+    - Pattern Size Height
+      - Control: slider
+      - Default: 100
+      - Range: 0..1000
+    - Rotation
+      - Control: slider
+      - Default: 0
+      - Range: -360..360
+    - Rotation Var
+      - Control: slider
+      - Default: 0
+      - Range: 0..360
+    - Zoom
+      - Control: slider
+      - Default: 100
+      - Range: 100..10000
+    - Gain
+      - Control: slider
+      - Default: 1
+      - Range: 0..10
+    - Pan X
+      - Control: slider
+      - Default: 0
+      - Range: -100..100
+    - Pan Y
+      - Control: slider
+      - Default: 0
+      - Range: -100..100
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+    - Grid Number
+      - Control: slider
+      - Default: 4
+      - Range: 0..8
+    - Disorder Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..360
+    - Disorder Random
+      - Default: 0
+    - PatternSize
+      - Control: slider
+      - Default: 9
+      - Range: 5..12
+    - Size Var
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+    - Image Input Filtering
+      - Default: 0
+    - Output Min
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Output Max
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Background Color
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Lum Var
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Splatter Circular (`sbs:lib:pattern_splatter_circular/splatter_circular`)
+  - Library: Generators > Patterns
+  - Inputs: pattern_input_1, pattern_input_2, pattern_input_3, pattern_input_4, pattern_input_5, pattern_input_6, background
+    - pattern_input_1
+      - Left-edge socket
+    - pattern_input_2
+      - Left-edge socket
+    - pattern_input_3
+      - Left-edge socket
+    - pattern_input_4
+      - Left-edge socket
+    - pattern_input_5
+      - Left-edge socket
+    - pattern_input_6
+      - Left-edge socket
+    - background
+      - Left-edge socket
+  - Outputs: Splatter_Circular
+  - Properties:
+    - Pattern Amount
+      - Control: slider
+      - Default: 10
+      - Range: 1..64
+    - Pattern Amount Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Amount Random Min
+      - Control: slider
+      - Default: 1
+      - Range: 1..10
+    - Ring Amount
+      - Control: slider
+      - Default: 1
+      - Range: 1..10
+    - Non Square Expansion
+      - Default: 1
+    - Pattern
+      - Control: dropdown
+      - Default: Paraboloid
+      - Choices: None / Image input / Square / Disc / Paraboloid / Bell / Gaussian / Thorn / Pyramid / Brick / Gradation / Waves / Half Bell / Ridged Bell / Crescent / Capsule / Cone
+    - Pattern Input Number
+      - Control: slider
+      - Default: 1
+      - Range: 1..6
+    - Pattern Input Distribution
+      - Control: dropdown
+      - Default: By pattern number
+      - Choices: Random / By pattern number / By ring number
+    - Image Input Filtering
+      - Default: 0
+    - Pattern Specific
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Symmetry Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Symmetry Random Mode
+      - Control: dropdown
+      - Default: Horizontal
+      - Choices: Horizontal / Vertical / Horizontal and vertical
+    - Radius
+      - Control: slider
+      - Default: 0.25
+      - Range: 0..1
+    - Radius Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Ring Radius Mutliplier
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Angle Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Spiral Factor
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Spread
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Position Offset Direction
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Global Offset
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Connect Patterns
+      - Default: 0
+    - Pattern Size Connected
+      - Control: slider
+      - Default: 1 0.1
+      - Range: 0..1
+    - Pattern Size
+      - Control: slider
+      - Default: 0.1 0.1
+      - Range: 0..1
+    - Pattern Size Random
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Pattern Scale
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Pattern Scale Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Scale By Pattern Number
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Scale By Pattern Number Invert
+      - Default: 0
+    - Pattern Scale By Ring Number
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Scale By Ring Number Invert
+      - Default: 0
+    - Pattern Rotation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Rotation Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Rotation Pivot
+      - Default: 0
+    - Center Orientation
+      - Default: 1
+    - Ring Rotation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Ring Rotation Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Ring Rotation Offset
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Color
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Luminance Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Luminance By Scale
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Luminance By Pattern Number
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Luminance By Pattern Number Invert
+      - Default: 0
+    - Luminance By Ring Number
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Luminance By Ring Number Invert
+      - Default: 0
+    - Random Mask
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Background Color
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Blending Mode
+      - Control: dropdown
+      - Default: Max
+      - Choices: Add / Sub / Max / Add / Alpha blend
+    - Global Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+- Splatter Circular Color (`sbs:lib:pattern_splatter_circular/splatter_circular_color`)
+  - Library: Generators > Patterns
+  - Inputs: pattern_input_1, pattern_input_2, pattern_input_3, pattern_input_4, pattern_input_5, pattern_input_6, background
+    - pattern_input_1
+      - Left-edge socket
+    - pattern_input_2
+      - Left-edge socket
+    - pattern_input_3
+      - Left-edge socket
+    - pattern_input_4
+      - Left-edge socket
+    - pattern_input_5
+      - Left-edge socket
+    - pattern_input_6
+      - Left-edge socket
+    - background
+      - Left-edge socket
+  - Outputs: Splatter_Circular
+  - Properties:
+    - Pattern Amount
+      - Control: slider
+      - Default: 10
+      - Range: 1..64
+    - Pattern Amount Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Amount Random Min
+      - Control: slider
+      - Default: 1
+      - Range: 1..10
+    - Ring Amount
+      - Control: slider
+      - Default: 1
+      - Range: 1..10
+    - Non Square Expansion
+      - Default: 1
+    - Pattern
+      - Control: dropdown
+      - Default: Paraboloid
+      - Choices: None / Image input / Square / Disc / Paraboloid / Bell / Gaussian / Thorn / Pyramid / Brick / Gradation / Waves / Half Bell / Ridged Bell / Crescent / Capsule / Cone
+    - Pattern Input Number
+      - Control: slider
+      - Default: 1
+      - Range: 1..6
+    - Pattern Input Distribution
+      - Control: dropdown
+      - Default: By pattern number
+      - Choices: Random / By pattern number / By ring number
+    - Image Input Filtering
+      - Default: 0
+    - Pattern Specific
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Symmetry Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Symmetry Random Mode
+      - Control: dropdown
+      - Default: Horizontal
+      - Choices: Horizontal / Vertical / Horizontal and vertical
+    - Radius
+      - Control: slider
+      - Default: 0.25
+      - Range: 0..1
+    - Radius Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Ring Radius Mutliplier
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Angle Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Spiral Factor
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Spread
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Position Offset Direction
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Global Offset
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Connect Patterns
+      - Default: 0
+    - Pattern Size Connected
+      - Control: slider
+      - Default: 1 0.1
+      - Range: 0..1
+    - Pattern Size
+      - Control: slider
+      - Default: 0.1 0.1
+      - Range: 0..1
+    - Pattern Size Random
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Pattern Scale
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Pattern Scale Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Scale By Pattern Number
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Scale By Pattern Number Invert
+      - Default: 0
+    - Pattern Scale By Ring Number
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Scale By Ring Number Invert
+      - Default: 0
+    - Pattern Rotation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Rotation Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Rotation Pivot
+      - Default: 0
+    - Center Orientation
+      - Default: 1
+    - Ring Rotation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Ring Rotation Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Ring Rotation Offset
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Color
+      - Control: slider
+      - Default: 1 1 1 1
+      - Range: 0..1
+    - Pattern Color Random
+      - Control: slider
+      - Default: 0 0 0 0
+      - Range: 0..1
+    - Luminance By Scale
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Luminance By Pattern Number
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Luminance By Pattern Number Invert
+      - Default: 0
+    - Luminance By Ring Number
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert Ring Number
+      - Default: 0
+    - Random Mask
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Background Color
+      - Control: slider
+      - Default: 0 0 0 1
+      - Range: 0..1
+    - Blending Mode
+      - Control: dropdown
+      - Default: Max
+      - Choices: Add / Sub / Max / Add / Alpha blend
+    - Global Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+- Splatter Color (`sbs:lib:splatter_color/splatter_color`)
+  - Library: Generators > Patterns
+  - Inputs: Source, Source_alpha
+    - Source
+      - Left-edge socket
+    - Source_alpha
+      - Left-edge socket
+  - Outputs: Splatter
+  - Properties:
+    - Pattern Size Width
+      - Control: slider
+      - Default: 100
+      - Range: 0..1000
+    - Pattern Size Height
+      - Control: slider
+      - Default: 100
+      - Range: 0..1000
+    - Rotation
+      - Control: slider
+      - Default: 0
+      - Range: -360..360
+    - Rotation Var
+      - Control: slider
+      - Default: 0
+      - Range: 0..360
+    - Zoom
+      - Control: slider
+      - Default: 100
+      - Range: 100..10000
+    - Gain
+      - Control: slider
+      - Default: 1
+      - Range: 0..10
+    - Pan X
+      - Control: slider
+      - Default: 0
+      - Range: -100..100
+    - Pan Y
+      - Control: slider
+      - Default: 0
+      - Range: -100..100
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+    - Grid Number
+      - Control: slider
+      - Default: 4
+      - Range: 0..8
+    - Disorder Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..360
+    - Disorder Random
+      - Default: 0
+    - PatternSize
+      - Control: slider
+      - Default: 9
+      - Range: 5..12
+    - Size Var
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+    - Image Input Filtering
+      - Default: 0
+    - Output Min
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Output Max
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Background Color
+      - Control: slider
+      - Default: 0 0 0 1
+      - Range: 0..1
+    - Color Var
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Starburst (`sbs:lib:starburst/starburst`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Starburst
+  - Properties:
+    - Branches
+      - Control: slider
+      - Default: 20
+      - Range: 3..512
+    - BlurAmount
+      - Control: slider
+      - Default: 2
+      - Range: 0..32
+    - Randomness
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - SizeMin
+      - Control: slider
+      - Default: 0.05
+      - Range: 0..1
+    - SizeMax
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - SizeVariation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+- Stripes (`sbs:lib:pattern_stripes/stripes`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Stripes
+  - Properties:
+    - Stripes
+      - Control: slider
+      - Default: 10
+      - Range: 1..100
+    - Width
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Softness
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Shift
+      - Control: slider
+      - Default: 10
+      - Range: 0..20
+    - Align
+      - Default: 0
+    - Filtering
+      - Default: 1
+    - Non Square Expansion
+      - Default: 1
+- Tile Generator (`sbs:lib:pattern_tile_generator/tile_generator`)
+  - Library: Generators > Patterns
+  - Inputs: pattern_input_1, pattern_input_2, pattern_input_3, pattern_input_4, pattern_input_5, pattern_input_6, background
+    - pattern_input_1
+      - Left-edge socket
+    - pattern_input_2
+      - Left-edge socket
+    - pattern_input_3
+      - Left-edge socket
+    - pattern_input_4
+      - Left-edge socket
+    - pattern_input_5
+      - Left-edge socket
+    - pattern_input_6
+      - Left-edge socket
+    - background
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - X Amount
+      - Control: slider
+      - Default: 10
+      - Range: 1..64
+    - Y Amount
+      - Control: slider
+      - Default: 10
+      - Range: 1..64
+    - Non Square Expansion
+      - Default: 1
+    - Pattern
+      - Control: dropdown
+      - Default: Brick
+      - Choices: None / Image input / Square / Disc / Paraboloid / Bell / Gaussian / Thorn / Pyramid / Brick / Gradation / Waves / Half Bell / Ridged Bell / Crescent / Capsule / Cone
+    - Pattern Input Number
+      - Control: slider
+      - Default: 1
+      - Range: 1..6
+    - Pattern Input Distribution
+      - Control: dropdown
+      - Default: Random
+      - Choices: Random / By pattern number / By ring number
+    - Pattern Specific
+      - Control: slider
+      - Default: 0.2 0
+      - Range: 0..1
+    - Image Input Filtering
+      - Default: 0
+    - Pattern Rotation
+      - Control: dropdown
+      - Default: 0 degrees
+      - Choices: 0 degrees / 90 degrees / 180 degrees / 270 degrees
+    - Pattern Rotation Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Quincunx Flip
+      - Default: 0
+    - Pattern Symmetry Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Symmetry Random Mode
+      - Control: dropdown
+      - Default: Horizontal
+      - Choices: Horizontal / Vertical / Horizontal and vertical
+    - Size Mode
+      - Control: dropdown
+      - Default: Relative to the cell
+      - Choices: Relative to the cell / Absolute (fraction of the image) / Pixels
+    - Middle Size
+      - Control: slider
+      - Default: 0.5 0.5
+      - Range: 0..1
+    - Interstice
+      - Control: slider
+      - Default: 0 0 0 0
+      - Range: 0..1
+    - Pattern Size
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..1
+    - Pattern Size Absolute
+      - Control: slider
+      - Default: 0.1 0.1
+      - Range: 0..1
+    - Pattern Size Pixel
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..4
+    - Pattern Size Random
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Scale Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Scale Random Seed
+      - Control: slider
+      - Default: 0
+      - Range: 0..1000
+    - Position Offset
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Position Offset Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Offset Random Seed
+      - Control: slider
+      - Default: 0
+      - Range: 0..1000
+    - Vertical Offset
+      - Default: 0
+    - Position Random
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Global Offset
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
     - Rotation
       - Control: slider
       - Default: 0
       - Range: 0..1
-- Gradient Axial (`gradient_axial`)
-  - Library: Generators > Patterns
-  - Tooltip: symmetric gradient
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Angle
+    - Rotation Random
       - Control: slider
       - Default: 0
       - Range: 0..1
-- Gradient Circular (`gradient_circular`)
+    - Pattern Color
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Luminance Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Luminance By Number
+      - Default: 0
+    - Luminance By Scale
+      - Default: 0
+    - Checker Mask
+      - Default: 0
+    - Horizontal Mask
+      - Default: 0
+    - Vertical Mask
+      - Default: 0
+    - Random Mask
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert Mask
+      - Default: 0
+    - Blending Mode
+      - Control: dropdown
+      - Default: Add / Sub
+      - Choices: Add / Sub / Max / Add / Alpha blend
+    - Background Color
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Global Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Reverse Rendering Order
+      - Default: 0
+- Tile Generator Color (`sbs:lib:pattern_tile_generator/tile_generator_color`)
   - Library: Generators > Patterns
-  - Tooltip: angular gradient
-  - Inputs: none
+  - Inputs: pattern_input_1, pattern_input_2, pattern_input_3, pattern_input_4, pattern_input_5, pattern_input_6, background
+    - pattern_input_1
+      - Left-edge socket
+    - pattern_input_2
+      - Left-edge socket
+    - pattern_input_3
+      - Left-edge socket
+    - pattern_input_4
+      - Left-edge socket
+    - pattern_input_5
+      - Left-edge socket
+    - pattern_input_6
+      - Left-edge socket
+    - background
+      - Left-edge socket
   - Outputs: output
   - Properties:
+    - X Amount
+      - Control: slider
+      - Default: 10
+      - Range: 1..64
+    - Y Amount
+      - Control: slider
+      - Default: 10
+      - Range: 1..64
+    - Non Square Expansion
+      - Default: 1
+    - Pattern
+      - Control: dropdown
+      - Default: Brick
+      - Choices: None / Image input / Square / Disc / Paraboloid / Bell / Gaussian / Thorn / Pyramid / Brick / Gradation / Waves / Half Bell / Ridged Bell / Crescent / Capsule / Cone
+    - Pattern Input Number
+      - Control: slider
+      - Default: 1
+      - Range: 1..6
+    - Pattern Input Distribution
+      - Control: dropdown
+      - Default: Random
+      - Choices: Random / By pattern number / By ring number
+    - Pattern Specific
+      - Control: slider
+      - Default: 0.2 0
+      - Range: 0..1
+    - Image Input Filtering
+      - Default: 0
+    - Pattern Rotation
+      - Control: dropdown
+      - Default: 0 degrees
+      - Choices: 0 degrees / 90 degrees / 180 degrees / 270 degrees
+    - Pattern Rotation Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Quincunx Flip
+      - Default: 0
+    - Pattern Symmetry Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Symmetry Random Mode
+      - Control: dropdown
+      - Default: Horizontal
+      - Choices: Horizontal / Vertical / Horizontal and vertical
+    - Size Mode
+      - Control: dropdown
+      - Default: Relative to the cell
+      - Choices: Relative to the cell / Absolute (fraction of the image) / Pixels
+    - Middle Size
+      - Control: slider
+      - Default: 0.5 0.5
+      - Range: 0..1
+    - Interstice
+      - Control: slider
+      - Default: 0 0 0 0
+      - Range: 0..1
+    - Pattern Size
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..1
+    - Pattern Size Absolute
+      - Control: slider
+      - Default: 0.1 0.1
+      - Range: 0..1
+    - Pattern Size Pixel
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..4
+    - Pattern Size Random
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Scale Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Scale Random Seed
+      - Control: slider
+      - Default: 0
+      - Range: 0..1000
+    - Position Offset
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Position Offset Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Offset Random Seed
+      - Control: slider
+      - Default: 0
+      - Range: 0..1000
+    - Vertical Offset
+      - Default: 0
+    - Position Random
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Global Offset
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Rotation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Rotation Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Color
+      - Control: slider
+      - Default: 1 1 1 1
+      - Range: 0..1
+    - Pattern Color Random
+      - Control: slider
+      - Default: 0 0 0 0
+      - Range: 0..1
+    - Luminance By Number
+      - Default: 0
+    - Luminance By Scale
+      - Default: 0
+    - Checker Mask
+      - Default: 0
+    - Horizontal Mask
+      - Default: 0
+    - Vertical Mask
+      - Default: 0
+    - Random Mask
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert Mask
+      - Default: 0
+    - Blending Mode
+      - Control: dropdown
+      - Default: Add / Sub
+      - Choices: Add / Sub / Max / Add / Alpha blend
+    - Background Color
+      - Control: slider
+      - Default: 0 0 0 1
+      - Range: 0..1
+    - Global Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Reverse Rendering Order
+      - Default: 0
+    - By Number Parametrisation
+      - Default: 3
+    - By Scale Parametrisation
+      - Default: 3
+- Tile Sampler (`sbs:lib:pattern_tile_sampler/tile_sampler`)
+  - Library: Generators > Patterns
+  - Inputs: pattern_input, pattern_input_2, pattern_input_3, pattern_input_4, pattern_input_5, pattern_input_6, scale_map_input, displacement_map_input, rotation_map_input, vector_map_input, color_map_input, mask_map_input, pattern_distribution_map_input, background_input
+    - pattern_input
+      - Left-edge socket
+    - pattern_input_2
+      - Left-edge socket
+    - pattern_input_3
+      - Left-edge socket
+    - pattern_input_4
+      - Left-edge socket
+    - pattern_input_5
+      - Left-edge socket
+    - pattern_input_6
+      - Left-edge socket
+    - scale_map_input
+      - Left-edge socket
+    - displacement_map_input
+      - Left-edge socket
+    - rotation_map_input
+      - Left-edge socket
+    - vector_map_input
+      - Left-edge socket
+    - color_map_input
+      - Left-edge socket
+    - mask_map_input
+      - Left-edge socket
+    - pattern_distribution_map_input
+      - Left-edge socket
+    - background_input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - X Amount
+      - Control: slider
+      - Default: 16
+      - Range: 1..64
+    - Y Amount
+      - Control: slider
+      - Default: 16
+      - Range: 1..64
+    - Non Square Expansion
+      - Default: 1
+    - Pattern
+      - Control: dropdown
+      - Default: Square
+      - Choices: None / Image input / Square / Disc / Paraboloid / Bell / Gaussian / Thorn / Pyramid / Brick / Gradation / Waves / Half Bell / Ridged Bell / Crescent / Capsule / Cone
+    - Pattern Input Number
+      - Control: slider
+      - Default: 1
+      - Range: 1..6
+    - Pattern Input Distribution
+      - Control: dropdown
+      - Default: Random
+      - Choices: Random / By pattern number / By ring number
+    - Pattern Input Filtering
+      - Default: 0
+    - Pattern Specific
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Specific Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Rotation
+      - Control: dropdown
+      - Default: 0 degrees
+      - Choices: 0 degrees / 90 degrees / 180 degrees / 270 degrees
+    - Pattern Rotation Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Symmetry Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Symmetry Random Mode
+      - Control: dropdown
+      - Default: Horizontal
+      - Choices: Horizontal / Vertical / Horizontal and vertical
+    - Size Mode
+      - Control: dropdown
+      - Default: Relative to the cell
+      - Choices: Absolute (fraction of the image) / Relative to the cell / Pixels
+    - Size
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..1
+    - Size Absolute
+      - Control: slider
+      - Default: 0.1 0.1
+      - Range: 0..1
+    - Size Pixel
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..4
+    - Size Random
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Scale
+      - Control: slider
+      - Default: 0.8
+      - Range: 0..10
+    - Scale Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Scale Map Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Scale Vector Map Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Scale Parametrization Affect
+      - Default: 0
+    - Position Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..10
     - Offset
       - Control: slider
       - Default: 0
       - Range: 0..1
-- Cells (`cells`)
-  - Library: Generators > Noises
-  - Tooltip: cellular noise
-  - Inputs: color
-    - color
-      - Left-edge socket
-  - Outputs: output, cell_id, distance, edge
-    - output
-      - Right-edge socket
-    - cell_id
-      - Right-edge socket
-    - distance
-      - Right-edge socket
-    - edge
-      - Right-edge socket
-  - Properties:
-    - Type
+    - Offset Type
       - Control: dropdown
-      - Default: Cells 1
-      - Choices: Cells 1 / Cells 2 / Cells 3 / Cells 4
-    - Scale
-      - Control: int
-      - Default: 8
-      - Range: 1..64
-    - Randomness
+      - Default: Rows (horizontal)
+      - Choices: Rows (horizontal) / Columns (vertical)
+    - Global Offset
       - Control: slider
-      - Default: 1
+      - Default: 0 0
       - Range: 0..1
-    - Luminance random (Type 1)
+    - Displacement Map Intensity
       - Control: slider
       - Default: 0
       - Range: 0..1
-    - Color source (Type 2)
-      - Control: dropdown
-      - Default: Random
-      - Choices: Random / Pseudorandom / Image input
-    - Pseudorandom seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Edge width (Type 3)
-      - Control: slider
-      - Default: 0.25
-      - Range: 0.01..1
-    - Hardness (Type 4)
-      - Control: slider
-      - Default: 2
-      - Range: 0.1..16
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-    - Disorder speed
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Disorder anisotropy
+    - Displacement Angle
       - Control: slider
       - Default: 0
       - Range: 0..1
-    - Disorder anisotropy angle
+    - Vector Map Displacement
       - Control: slider
       - Default: 0
       - Range: 0..1
-    - Tile offset X
-      - Control: slider
-      - Default: 0
-      - Range: -16..16
-    - Tile offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -16..16
-- Fractal Sum (`fractal_sum`)
-  - Library: Generators > Noises
-  - Tooltip: sum of noise octaves
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Type
-      - Control: dropdown
-      - Default: Base
-      - Choices: Base / Turbulence / Creased
-    - Scale
-      - Control: int
-      - Default: 2
-      - Range: 1..32
-    - Min level
-      - Control: int
-      - Default: 0
-      - Range: 0..8
-    - Max level
-      - Control: int
-      - Default: 6
-      - Range: 0..8
-    - Roughness
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1.5
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-    - Disorder speed
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-- Waveform (`waveform`)
-  - Library: Generators > Noises
-  - Tooltip: tileable wave pattern
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Waveform
-      - Control: dropdown
-      - Default: Sine
-      - Choices: Sine / Triangle / Saw / Square
-    - Count
-      - Control: int
-      - Default: 8
-      - Range: 1..64
-    - Angle
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Warp
-      - Control: slider
-      - Default: 0.3
-      - Range: 0..4
-    - Warp scale
-      - Control: int
-      - Default: 4
-      - Range: 1..32
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-    - Disorder speed
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-- Gaussian Spots (`gaussian_spots`)
-  - Library: Generators > Noises
-  - Tooltip: soft gaussian spots
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Scale
-      - Control: int
-      - Default: 8
-      - Range: 1..64
-    - Size
-      - Control: slider
-      - Default: 0.5
-      - Range: 0.05..1
-    - Size variation
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-    - Disorder speed
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Disorder anisotropy
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Disorder anisotropy angle
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Tile offset X
-      - Control: slider
-      - Default: 0
-      - Range: -16..16
-    - Tile offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -16..16
-- Triangle Grid (`triangle_grid`)
-  - Library: Generators > Patterns
-  - Tooltip: grid of triangles
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Style
-      - Control: dropdown
-      - Default: Squares (legacy)
-      - Choices: Squares (legacy) / Jittered mesh
-    - Count (legacy)
-      - Control: int
-      - Default: 8
-      - Range: 1..64
-    - Border (legacy)
-      - Control: slider
-      - Default: 0.06
-      - Range: 0..0.5
-    - Variation (legacy)
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - X amount
-      - Control: int
-      - Default: 16
-      - Range: 1..64
-    - Y amount
-      - Control: int
-      - Default: 16
-      - Range: 1..64
-    - Random position
-      - Control: slider
-      - Default: 1
-      - Range: 0..2
-    - Quincunx offset X
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Quincunx offset Y
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Triangulation
-      - Control: dropdown
-      - Default: Fixed
-      - Choices: Fixed / Alternate / Random
-    - Output
-      - Control: dropdown
-      - Default: Smooth heights
-      - Choices: Smooth heights / Flat triangles / Edge distance
-    - Height random
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Thin lines
-      - Control: checkbox
-      - Default: off
-    - Line thickness
-      - Control: slider
-      - Default: 0.025
-      - Range: 0..0.1
-    - Line colour
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Line background
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Grunge Map (`grunge_map`)
-  - Library: Generators > Noises
-  - Tooltip: grunge map 1-24
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Grunge map
-      - Control: int
-      - Default: 1
-      - Range: 1..24
-    - Balance
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Contrast
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Brush pattern
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Cracks (maps 11, 13)
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Disorder
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Invert
-      - Control: checkbox
-      - Default: off
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-- Weave Generator (`weave_generator`)
-  - Library: Generators > Patterns
-  - Tooltip: woven threads with gaps
-  - Inputs: none
-  - Outputs: height, mask_1, mask_2, opacity
-    - height
-      - Right-edge socket
-    - mask_1
-      - Right-edge socket
-    - mask_2
-      - Right-edge socket
-    - opacity
-      - Right-edge socket
-  - Properties:
-    - Tile X
-      - Control: int
-      - Default: 1
-      - Range: 1..20
-    - Tile Y
-      - Control: int
-      - Default: 1
-      - Range: 1..20
-    - Weave
-      - Control: int
-      - Default: 2
-      - Range: 1..10
-    - Shape
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Gap X
-      - Control: slider
-      - Default: 0.1
-      - Range: 0..0.9
-    - Gap Y
-      - Control: slider
-      - Default: 0.1
-      - Range: 0..0.9
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Starburst (`starburst`)
-  - Library: Generators > Patterns
-  - Tooltip: star-like rays
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Count
-      - Control: int
-      - Default: 3
-      - Range: 1..32
-    - Rays
-      - Control: int
-      - Default: 8
-      - Range: 2..64
-    - Sharpness
-      - Control: slider
-      - Default: 2
-      - Range: 0.1..16
-    - Size
-      - Control: slider
-      - Default: 1
-      - Range: 0.05..2
     - Rotation
       - Control: slider
       - Default: 0
       - Range: 0..1
-    - Rotation random
+    - Rotation Random
       - Control: slider
       - Default: 0
       - Range: 0..1
-    - Random seed
-      - Control: int
+    - Rotation Map Multiplier
+      - Control: slider
       - Default: 0
-      - Range: 0..9999
-    - Contrast
+      - Range: 0..1
+    - Rotation Vector Map Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mask Map Threshold
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mask Map Invert
+      - Default: 0
+    - Mask Map Sampling Technique
+      - Default: 0
+    - Mask Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mask Invert
+      - Default: 0
+    - Blending Mode
+      - Control: dropdown
+      - Default: Max
+      - Choices: Add / Sub / Max / Add / Alpha blend
+    - Color
       - Control: slider
       - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Gradient Reflected (`gradient_reflected`)
+      - Range: 0..1
+    - Color Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Color Parametrization Mode
+      - Default: 0
+    - Color Parametrization Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Global Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Background Color
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Reverse Rendering Order
+      - Default: 0
+- Tile Sampler Color (`sbs:lib:pattern_tile_sampler/tile_sampler_color`)
   - Library: Generators > Patterns
-  - Tooltip: gradient that goes 0-1-0
+  - Inputs: pattern_input, pattern_input_2, pattern_input_3, pattern_input_4, pattern_input_5, pattern_input_6, scale_map_input, displacement_map_input, rotation_map_input, vector_map_input, color_map_input, mask_map_input, pattern_distribution_map_input, background_input
+    - pattern_input
+      - Left-edge socket
+    - pattern_input_2
+      - Left-edge socket
+    - pattern_input_3
+      - Left-edge socket
+    - pattern_input_4
+      - Left-edge socket
+    - pattern_input_5
+      - Left-edge socket
+    - pattern_input_6
+      - Left-edge socket
+    - scale_map_input
+      - Left-edge socket
+    - displacement_map_input
+      - Left-edge socket
+    - rotation_map_input
+      - Left-edge socket
+    - vector_map_input
+      - Left-edge socket
+    - color_map_input
+      - Left-edge socket
+    - mask_map_input
+      - Left-edge socket
+    - pattern_distribution_map_input
+      - Left-edge socket
+    - background_input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - X Amount
+      - Control: slider
+      - Default: 16
+      - Range: 1..64
+    - Y Amount
+      - Control: slider
+      - Default: 16
+      - Range: 1..64
+    - Non Square Expansion
+      - Default: 1
+    - Pattern
+      - Control: dropdown
+      - Default: Square
+      - Choices: None / Image input / Square / Disc / Paraboloid / Bell / Gaussian / Thorn / Pyramid / Brick / Gradation / Waves / Half Bell / Ridged Bell / Crescent / Capsule / Cone
+    - Pattern Input Number
+      - Control: slider
+      - Default: 1
+      - Range: 1..6
+    - Pattern Input Distribution
+      - Control: dropdown
+      - Default: Random
+      - Choices: Random / By pattern number / By ring number
+    - Pattern Input Filtering
+      - Default: 0
+    - Pattern Specific
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Specific Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Rotation
+      - Control: dropdown
+      - Default: 0 degrees
+      - Choices: 0 degrees / 90 degrees / 180 degrees / 270 degrees
+    - Pattern Rotation Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Symmetry Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Symmetry Random Mode
+      - Control: dropdown
+      - Default: Horizontal
+      - Choices: Horizontal / Vertical / Horizontal and vertical
+    - Size Mode
+      - Control: dropdown
+      - Default: Relative to the cell
+      - Choices: Absolute (fraction of the image) / Relative to the cell / Pixels
+    - Size
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..1
+    - Size Absolute
+      - Control: slider
+      - Default: 0.1 0.1
+      - Range: 0..1
+    - Size Pixel
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..4
+    - Size Random
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Scale
+      - Control: slider
+      - Default: 0.8
+      - Range: 0..10
+    - Scale Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Scale Map Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Scale Vector Map Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Scale Parametrization Affect
+      - Default: 0
+    - Position Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..10
+    - Offset
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Offset Type
+      - Control: dropdown
+      - Default: Rows (horizontal)
+      - Choices: Rows (horizontal) / Columns (vertical)
+    - Global Offset
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Displacement Map Intensity
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Displacement Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Vector Map Displacement
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Rotation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Rotation Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Rotation Map Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Rotation Vector Map Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mask Map Threshold
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mask Map Invert
+      - Default: 0
+    - Mask Map Sampling Technique
+      - Default: 0
+    - Mask Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mask Invert
+      - Default: 0
+    - Blending Mode
+      - Control: dropdown
+      - Default: Add
+      - Choices: Add / Sub / Max / Add / Alpha blend
+    - Color
+      - Control: slider
+      - Default: 1 1 1 1
+      - Range: 0..1
+    - Color Random
+      - Control: slider
+      - Default: 0 0 0 0
+      - Range: 0..1
+    - Color Parametrization Mode
+      - Default: 0
+    - Color Parametrization Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Color Parametrization Affect
+      - Default: 0
+    - Background Color
+      - Control: slider
+      - Default: 0 0 0 1
+      - Range: 0..1
+    - Reverse Rendering Order
+      - Default: 0
+- Triangle Grid Color (`sbs:lib:pattern_triangle_grid/triangle_grid_color`)
+  - Library: Generators > Patterns
+  - Inputs: height, vector_map, color_input
+    - height
+      - Left-edge socket
+    - vector_map
+      - Left-edge socket
+    - color_input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Color Output
+      - Control: dropdown
+      - Default: Smooth heights
+      - Choices: Smooth heights / Flat triangles / Edge distance
+    - Triangulation
+      - Default: 0
+    - X Amount
+      - Control: slider
+      - Default: 16
+      - Range: 1..64
+    - Y Amount
+      - Control: slider
+      - Default: 16
+      - Range: 1..64
+    - Random Position Multiplier
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Random Position
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..1
+    - Vector Map Displacement
+      - Control: slider
+      - Default: 0
+      - Range: 0..2
+    - Quincunx Offset X
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Quincunx Offset Y
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Rotation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Rotation Disorder
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Height Input Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Height Random
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Blend Mode
+      - Default: 0
+    - Thin Line Blend Mode
+      - Default: 0
+    - Distance Blend Mode
+      - Default: 0
+    - Color Source
+      - Default: 2
+    - Color Source Opacity
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Distance To Edge Thickness
+      - Control: slider
+      - Default: 0.025
+      - Range: 0..0.1
+    - Thin Line Color
+      - Control: slider
+      - Default: 1 1 1 1
+      - Range: 0..1
+    - Thin Line Background
+      - Control: slider
+      - Default: 0 0 0 1
+      - Range: 0..1
+    - Random Color Seed Mode
+      - Default: 0
+    - Random Color Seed
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+    - Non Square Expansion
+      - Default: 1
+- Triangle Grid Grayscale (`sbs:lib:pattern_triangle_grid/triangle_grid_grayscale`)
+  - Library: Generators > Patterns
+  - Inputs: height, vector_map, color_input
+    - height
+      - Left-edge socket
+    - vector_map
+      - Left-edge socket
+    - color_input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Color Output
+      - Control: dropdown
+      - Default: Smooth heights
+      - Choices: Smooth heights / Flat triangles / Edge distance
+    - Triangulation
+      - Default: 0
+    - X Amount
+      - Control: slider
+      - Default: 16
+      - Range: 1..64
+    - Y Amount
+      - Control: slider
+      - Default: 16
+      - Range: 1..64
+    - Random Position Multiplier
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Random Position
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..1
+    - Vector Map Displacement
+      - Control: slider
+      - Default: 0
+      - Range: 0..2
+    - Quincunx Offset X
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Quincunx Offset Y
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Rotation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Rotation Disorder
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Height Input Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Height Random
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Blend Mode
+      - Default: 0
+    - Thin Line Blend Mode
+      - Default: 0
+    - Distance Blend Mode
+      - Default: 0
+    - Color Source
+      - Default: 2
+    - Color Source Opacity
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Distance To Edge Thickness
+      - Control: slider
+      - Default: 0.025
+      - Range: 0..0.1
+    - Thin Line Color
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Thin Line Background
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Random Color Seed Mode
+      - Default: 0
+    - Random Color Seed
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+    - Non Square Expansion
+      - Default: 1
+- Weave 1 (`sbs:lib:pattern_weave_1/weave_1`)
+  - Library: Generators > Patterns
   - Inputs: none
   - Outputs: output
   - Properties:
-    - Count
-      - Control: int
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Rotate 45 Degrees
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+- Weave 2 (`sbs:lib:pattern_weave_2/weave_2`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 8
+      - Range: 1..64
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Rotate 45 Degrees
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+- Weave 3 (`sbs:lib:weave_3/weave_3`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Weave_3
+  - Properties:
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Rotation
+      - Default: 0
+- Weave 4 (`sbs:lib:weave_4/weave_4`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Weave_4
+  - Properties:
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Rotation
+      - Default: 0
+- Weave Generator (`sbs:lib:pattern_weave_generator/weave_generator`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Height, Opacity, Mask_1, Mask_2
+    - Height
+      - Right-edge socket
+    - Opacity
+      - Right-edge socket
+    - Mask_1
+      - Right-edge socket
+    - Mask_2
+      - Right-edge socket
+  - Properties:
+    - Tile X
+      - Control: slider
+      - Default: 1
+      - Range: 1..20
+    - Tile Y
+      - Control: slider
+      - Default: 1
+      - Range: 1..20
+    - Shape
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Weave
+      - Control: slider
+      - Default: 2
+      - Range: 1..10
+    - Gap
+      - Control: slider
+      - Default: 0.1 0.1
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Alveolus (`sbs:lib:pattern_alveolus/alveolus`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Gradient Filled Cells
+      - Default: 0
+    - Interstice Width
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Brick 1 (`sbs:lib:pattern_brick_1/brick_1`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 4
+      - Range: 1..16
+    - Edge Smoothness
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Interstice Width
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Brick 2 (`sbs:lib:pattern_brick_2/brick_2`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 2
+      - Range: 1..16
+    - Edge Smoothness
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Interstice Width
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Brick 3 (`sbs:lib:brick_3/brick_3`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Bricks
+  - Properties:
+    - Roundness
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..1
+    - Lum Var
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Lum Seed
+      - Control: slider
+      - Default: 1
+      - Range: 1..1000
+    - Random Position
+      - Control: slider
+      - Default: 1
+      - Range: 1..1000
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+- Brick Generator (`sbs:lib:pattern_brick_generator/brick_generator`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Bricks_Generator
+  - Properties:
+    - Bricks
+      - Control: slider
+      - Default: 4 8
+      - Range: 1..64
+    - Bevel
+      - Control: slider
+      - Default: 0.5 0.5 0 0
+      - Range: 0..1
+    - Keep Ratio
+      - Default: 1
+    - Gap
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Middle Size
+      - Control: slider
+      - Default: 0.5 0.5
+      - Range: 0..1
+    - Height
+      - Control: slider
+      - Default: 1 1 0 0
+      - Range: -1..1
+    - Slope
+      - Control: slider
+      - Default: 0 0 0 0
+      - Range: -1..1
+    - Offset
+      - Control: slider
+      - Default: 0.5 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Creased (`sbs:lib:noise_creased/creased`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Warp Intensity
+      - Control: slider
+      - Default: 0.25
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Dirt Gradient (`sbs:lib:noise_dirt_gradient/dirt_gradient`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Fluid (`sbs:lib:noise_fluid/fluid`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Warp Intensity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Pattern Size
+      - Control: slider
+      - Default: 0.5 1
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Gaussian 1 (`sbs:lib:pattern_gaussian_1/gaussian_1`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Non Square Expansion
+      - Default: 1
+- Gaussian 2 (`sbs:lib:pattern_gaussian_2/gaussian_2`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Non Square Expansion
+      - Default: 1
+- Gradient Radial (`sbs:lib:gradient_radial/gradient_radial`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Shape
+      - Control: dropdown
+      - Default: Round
+      - Choices: Round / Square
+    - Point 1
+      - Control: slider
+      - Default: 0.5 0.5
+      - Range: 0..1
+    - Point 2
+      - Control: slider
+      - Default: 0.8518 0.4213
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Herb 1 (`sbs:lib:herb_1/herb_1`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Herb
+  - Properties:
+- Horizontal Lines (`sbs:lib:horizontal_lines/horizontal_lines`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Horizontal_Lines
+  - Properties:
+- Liquid (`sbs:lib:noise_liquid/liquid`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 32
+      - Range: 1..128
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Warp Intensity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Mesh 1 (`sbs:lib:pattern_mesh_1/mesh_1`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Tiling
+      - Control: slider
+      - Default: 2
+      - Range: 1..16
+    - Rotate 45 Degrees
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+- Mesh 2 (`sbs:lib:pattern_mesh_2/mesh_2`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Rotation
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+- Messy Fibers 1 (`sbs:lib:noise_messy_fibers_1/messy_fibers_1`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..8
+    - Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Angle Random
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Lines Number
+      - Control: slider
+      - Default: 16
+      - Range: 3..32
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Messy Fibers 2 (`sbs:lib:noise_messy_fibers_2/messy_fibers_2`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
       - Default: 1
       - Range: 1..16
     - Angle
       - Control: slider
       - Default: 0
       - Range: 0..1
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Blue Noise (`blue_noise`)
-  - Library: Generators > Noises
-  - Tooltip: evenly spread grain with little low-frequency content
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Cells across
-      - Control: int
-      - Default: 256
-      - Range: 8..2048
-    - Smoothing
-      - Control: slider
-      - Default: 1.5
-      - Range: 0.3..6
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Fibers (`fibers`)
-  - Library: Generators > Patterns
-  - Tooltip: random curved hair-like strands
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Count
-      - Control: int
-      - Default: 600
-      - Range: 0..5000
-    - Length (px at 512)
-      - Control: slider
-      - Default: 90
-      - Range: 1..1024
-    - Thickness (px at 512)
-      - Control: slider
-      - Default: 1.4
-      - Range: 0.1..32
-    - Direction
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Direction variation
+    - Angle Random
       - Control: slider
       - Default: 0.5
       - Range: 0..1
-    - Curl
+    - Links Number
       - Control: slider
-      - Default: 0.6
-      - Range: -8..8
-    - Tapered tips
-      - Control: slider
-      - Default: 0.4
-      - Range: 0..1
-    - Brightness variation
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Scratches (`scratches`)
-  - Library: Generators > Patterns
-  - Tooltip: random thin scratches
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Count
-      - Control: int
-      - Default: 80
-      - Range: 0..5000
-    - Length (px at 512)
-      - Control: slider
-      - Default: 220
-      - Range: 1..1024
-    - Thickness (px at 512)
-      - Control: slider
-      - Default: 1
-      - Range: 0.1..32
-    - Direction
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Direction variation
-      - Control: slider
-      - Default: 0.2
-      - Range: 0..1
-    - Curl
-      - Control: slider
-      - Default: 0
-      - Range: -8..8
-    - Tapered tips
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Brightness variation
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Caustics (`caustics`)
-  - Library: Generators > Noises
-  - Tooltip: light patterns of water
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Scale
-      - Control: int
-      - Default: 4
-      - Range: 1..32
-    - Octaves
-      - Control: int
-      - Default: 3
-      - Range: 1..6
-    - Strength
-      - Control: slider
-      - Default: 1
-      - Range: 0..8
-    - Sharpness
-      - Control: slider
-      - Default: 1
-      - Range: 0.05..8
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Liquid Noise (`liquid_noise`)
-  - Library: Generators > Noises
-  - Tooltip: swirling warped noise
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Scale
-      - Control: int
-      - Default: 3
-      - Range: 1..32
-    - Octaves
-      - Control: int
-      - Default: 4
-      - Range: 1..8
-    - Warp
-      - Control: slider
-      - Default: 0.35
-      - Range: 0..2
-    - Style
-      - Control: dropdown
-      - Default: Liquid
-      - Choices: Liquid / Marble
-    - Marble bands
-      - Control: slider
-      - Default: 6
-      - Range: 1..32
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Perlin Noise 3D (`perlin_3d`)
-  - Library: Generators > Noises
-  - Tooltip: slice of 3D noise that loops in depth
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Scale
-      - Control: int
-      - Default: 4
-      - Range: 1..64
-    - Depth (loops at 1)
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Octaves
-      - Control: int
-      - Default: 4
-      - Range: 1..8
-    - Gain
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Paving (`paving`)
-  - Library: Generators > Patterns
-  - Tooltip: irregular paving stones (outputs
-  - Inputs: none
-  - Outputs: height, cell_id, gaps
-    - height
-      - Right-edge socket
-    - cell_id
-      - Right-edge socket
-    - gaps
-      - Right-edge socket
-  - Properties:
-    - Stones across
-      - Control: int
-      - Default: 6
-      - Range: 1..64
-    - Irregularity
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Gap width
-      - Control: slider
-      - Default: 0.04
-      - Range: 0..0.4
-    - Bevel
-      - Control: slider
-      - Default: 0.08
-      - Range: 0.001..0.5
-    - Height variation
-      - Control: slider
-      - Default: 0.3
-      - Range: 0..1
-    - Dome
-      - Control: slider
-      - Default: 0.3
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Wire Mesh (`wire_mesh`)
-  - Library: Generators > Patterns
-  - Tooltip: woven or chain-link wire
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Wires across
-      - Control: int
-      - Default: 8
-      - Range: 1..128
-    - Wires down
-      - Control: int
-      - Default: 8
-      - Range: 1..128
-    - Wire width
-      - Control: slider
-      - Default: 0.3
-      - Range: 0.02..0.95
-    - Weave depth
-      - Control: slider
-      - Default: 0.6
-      - Range: 0..1
-    - Layout
-      - Control: dropdown
-      - Default: Square weave
-      - Choices: Square weave / Diamond (chain-link)
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Path Stroke (`path_stroke`)
-  - Library: Generators > Paths
-  - Tooltip: line along a spline (dashes, taper, profile 0 flat,1 round,2 bevel)
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Built-in shape
-      - Control: dropdown
-      - Default: Wave
-      - Choices: Horizontal line / Diagonal line / Wave / Circle / Spiral / Zigzag / Figure eight
-    - Wave height
-      - Control: slider
-      - Default: 0.12
-      - Range: 0..0.5
-    - Wave count
-      - Control: slider
-      - Default: 2
-      - Range: 0.25..32
-    - Path (-1 = all)
-      - Control: int
-      - Default: -1
-      - Range: -1..63
-    - Paths from the chosen one (0 = rest)
-      - Control: int
-      - Default: 1
-      - Range: 0..63
-    - Path scale
-      - Control: slider
-      - Default: 1
-      - Range: 0.05..8
-    - Path rotation (turns)
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path mirror
-      - Control: dropdown
-      - Default: None
-      - Choices: None / Horizontal / Vertical / Both
-    - Reverse path direction
-      - Control: checkbox
-      - Default: off
-    - Width (px at 512)
-      - Control: slider
-      - Default: 12
-      - Range: 0.1..256
-    - Softness
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Profile
-      - Control: dropdown
-      - Default: Flat
-      - Choices: Flat / Round / Bevel
-    - Taper start
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Taper end
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Dash length (0 = solid)
-      - Control: slider
-      - Default: 0
-      - Range: 0..512
-    - Dash gap
-      - Control: slider
-      - Default: 8
-      - Range: 0..512
-    - Fit dashes to path length
-      - Control: checkbox
-      - Default: on
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Path Fill (`path_fill`)
-  - Library: Generators > Paths
-  - Tooltip: inside of closed splines
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Built-in shape
-      - Control: dropdown
-      - Default: Circle
-      - Choices: Horizontal line / Diagonal line / Wave / Circle / Spiral / Zigzag / Figure eight
-    - Wave height
-      - Control: slider
-      - Default: 0.12
-      - Range: 0..0.5
-    - Wave count
-      - Control: slider
-      - Default: 2
-      - Range: 0.25..32
-    - Path (-1 = all)
-      - Control: int
-      - Default: -1
-      - Range: -1..63
-    - Paths from the chosen one (0 = rest)
-      - Control: int
-      - Default: 1
-      - Range: 0..63
-    - Path scale
-      - Control: slider
-      - Default: 1
-      - Range: 0.05..8
-    - Path rotation (turns)
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path mirror
-      - Control: dropdown
-      - Default: None
-      - Choices: None / Horizontal / Vertical / Both
-    - Reverse path direction
-      - Control: checkbox
-      - Default: off
-    - Even-odd fill
-      - Control: checkbox
-      - Default: off
-    - Softness
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Path Distance (`path_distance`)
-  - Library: Generators > Paths
-  - Tooltip: distance to a spline
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Built-in shape
-      - Control: dropdown
-      - Default: Wave
-      - Choices: Horizontal line / Diagonal line / Wave / Circle / Spiral / Zigzag / Figure eight
-    - Wave height
-      - Control: slider
-      - Default: 0.12
-      - Range: 0..0.5
-    - Wave count
-      - Control: slider
-      - Default: 2
-      - Range: 0.25..32
-    - Path (-1 = all)
-      - Control: int
-      - Default: -1
-      - Range: -1..63
-    - Paths from the chosen one (0 = rest)
-      - Control: int
-      - Default: 1
-      - Range: 0..63
-    - Path scale
-      - Control: slider
-      - Default: 1
-      - Range: 0.05..8
-    - Path rotation (turns)
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path mirror
-      - Control: dropdown
-      - Default: None
-      - Choices: None / Horizontal / Vertical / Both
-    - Reverse path direction
-      - Control: checkbox
-      - Default: off
-    - Mode
-      - Control: dropdown
-      - Default: Falloff from the line
-      - Choices: Falloff from the line / Signed / Inward gradient / Outward gradient
-    - Range (px at 512)
-      - Control: slider
-      - Default: 64
-      - Range: 1..1024
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Path Border (`path_border`)
-  - Library: Generators > Paths
-  - Tooltip: border or bevel along closed splines (outputs
-  - Inputs: none
-  - Outputs: height, mask
-    - height
-      - Right-edge socket
-    - mask
-      - Right-edge socket
-  - Properties:
-    - Built-in shape
-      - Control: dropdown
-      - Default: Circle
-      - Choices: Horizontal line / Diagonal line / Wave / Circle / Spiral / Zigzag / Figure eight
-    - Wave height
-      - Control: slider
-      - Default: 0.12
-      - Range: 0..0.5
-    - Wave count
-      - Control: slider
-      - Default: 2
-      - Range: 0.25..32
-    - Path (-1 = all)
-      - Control: int
-      - Default: -1
-      - Range: -1..63
-    - Paths from the chosen one (0 = rest)
-      - Control: int
-      - Default: 1
-      - Range: 0..63
-    - Path scale
-      - Control: slider
-      - Default: 1
-      - Range: 0.05..8
-    - Path rotation (turns)
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path mirror
-      - Control: dropdown
-      - Default: None
-      - Choices: None / Horizontal / Vertical / Both
-    - Reverse path direction
-      - Control: checkbox
-      - Default: off
-    - Width (px at 512)
-      - Control: slider
-      - Default: 32
-      - Range: 0.5..512
-    - Side
-      - Control: dropdown
-      - Default: Inside
-      - Choices: Inside / Outside / Both
-    - Profile
-      - Control: dropdown
-      - Default: Linear
-      - Choices: Linear / Round / Smooth
-    - Flat part
-      - Control: slider
-      - Default: 0
-      - Range: 0..0.95
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Path Scatter (`path_scatter`)
-  - Library: Generators > Paths
-  - Tooltip: copies of a pattern along a spline
-  - Inputs: in, mask
-    - in
-      - Left-edge socket
-    - mask
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Built-in shape
-      - Control: dropdown
-      - Default: Wave
-      - Choices: Horizontal line / Diagonal line / Wave / Circle / Spiral / Zigzag / Figure eight
-    - Wave height
-      - Control: slider
-      - Default: 0.12
-      - Range: 0..0.5
-    - Wave count
-      - Control: slider
-      - Default: 2
-      - Range: 0.25..32
-    - Path (-1 = all)
-      - Control: int
-      - Default: -1
-      - Range: -1..63
-    - Paths from the chosen one (0 = rest)
-      - Control: int
-      - Default: 1
-      - Range: 0..63
-    - Path scale
-      - Control: slider
-      - Default: 1
-      - Range: 0.05..8
-    - Path rotation (turns)
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path mirror
-      - Control: dropdown
-      - Default: None
-      - Choices: None / Horizontal / Vertical / Both
-    - Reverse path direction
-      - Control: checkbox
-      - Default: off
-    - Spacing (px at 512)
-      - Control: slider
-      - Default: 24
-      - Range: 1..512
-    - Size (px at 512)
-      - Control: slider
-      - Default: 24
-      - Range: 1..512
-    - Size variation
-      - Control: slider
-      - Default: 0.2
-      - Range: 0..1
-    - Jitter along
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Jitter across (px)
-      - Control: slider
-      - Default: 0
-      - Range: 0..256
-    - Rotation
-      - Control: dropdown
-      - Default: Follow the path
-      - Choices: Follow the path / Fixed / Random
-    - Angle
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Angle variation
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Density
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Opacity variation
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Blend
-      - Control: dropdown
-      - Default: Max
-      - Choices: Max / Add
-    - Start offset (px)
-      - Control: slider
-      - Default: 0
-      - Range: 0..512
-    - Fit spacing to path length
-      - Control: checkbox
-      - Default: on
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Path Track (`path_track`)
-  - Library: Generators > Paths
-  - Tooltip: railway track along a spline (outputs
-  - Inputs: none
-  - Outputs: height, rails, sleepers
-    - height
-      - Right-edge socket
-    - rails
-      - Right-edge socket
-    - sleepers
-      - Right-edge socket
-  - Properties:
-    - Built-in shape
-      - Control: dropdown
-      - Default: Wave
-      - Choices: Horizontal line / Diagonal line / Wave / Circle / Spiral / Zigzag / Figure eight
-    - Wave height
-      - Control: slider
-      - Default: 0.12
-      - Range: 0..0.5
-    - Wave count
-      - Control: slider
-      - Default: 2
-      - Range: 0.25..32
-    - Path (-1 = all)
-      - Control: int
-      - Default: -1
-      - Range: -1..63
-    - Paths from the chosen one (0 = rest)
-      - Control: int
-      - Default: 1
-      - Range: 0..63
-    - Path scale
-      - Control: slider
-      - Default: 1
-      - Range: 0.05..8
-    - Path rotation (turns)
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path mirror
-      - Control: dropdown
-      - Default: None
-      - Choices: None / Horizontal / Vertical / Both
-    - Reverse path direction
-      - Control: checkbox
-      - Default: off
-    - Rail distance (px at 512)
-      - Control: slider
-      - Default: 60
-      - Range: 2..256
-    - Rail width
-      - Control: slider
-      - Default: 8
-      - Range: 0.5..64
-    - Sleeper spacing
-      - Control: slider
-      - Default: 28
-      - Range: 2..256
-    - Sleeper length
-      - Control: slider
-      - Default: 110
-      - Range: 2..512
-    - Sleeper width
-      - Control: slider
-      - Default: 14
-      - Range: 1..128
-    - Rail height
-      - Control: slider
-      - Default: 0.9
-      - Range: 0..1
-    - Sleeper height
-      - Control: slider
-      - Default: 0.55
-      - Range: 0..1
-    - Fit sleepers to path length
-      - Control: checkbox
-      - Default: on
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Path Cable (`path_cable`)
-  - Library: Generators > Paths
-  - Tooltip: twisted cable along a spline (outputs
-  - Inputs: none
-  - Outputs: height, mask, strand
-    - height
-      - Right-edge socket
-    - mask
-      - Right-edge socket
-    - strand
-      - Right-edge socket
-  - Properties:
-    - Built-in shape
-      - Control: dropdown
-      - Default: Wave
-      - Choices: Horizontal line / Diagonal line / Wave / Circle / Spiral / Zigzag / Figure eight
-    - Wave height
-      - Control: slider
-      - Default: 0.12
-      - Range: 0..0.5
-    - Wave count
-      - Control: slider
-      - Default: 2
-      - Range: 0.25..32
-    - Path (-1 = all)
-      - Control: int
-      - Default: -1
-      - Range: -1..63
-    - Paths from the chosen one (0 = rest)
-      - Control: int
-      - Default: 1
-      - Range: 0..63
-    - Path scale
-      - Control: slider
-      - Default: 1
-      - Range: 0.05..8
-    - Path rotation (turns)
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path mirror
-      - Control: dropdown
-      - Default: None
-      - Choices: None / Horizontal / Vertical / Both
-    - Reverse path direction
-      - Control: checkbox
-      - Default: off
-    - Width (px at 512)
-      - Control: slider
-      - Default: 40
-      - Range: 1..256
-    - Strands
-      - Control: int
-      - Default: 3
-      - Range: 2..8
-    - Strand size
-      - Control: slider
-      - Default: 0.5
-      - Range: 0.15..0.95
-    - Twists per 512 px
-      - Control: slider
-      - Default: 3
-      - Range: 0..32
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Path Seam (`path_seam`)
-  - Library: Generators > Paths
-  - Tooltip: stitched seam along a spline (outputs
-  - Inputs: none
-  - Outputs: height, stitches
-    - height
-      - Right-edge socket
-    - stitches
-      - Right-edge socket
-  - Properties:
-    - Built-in shape
-      - Control: dropdown
-      - Default: Wave
-      - Choices: Horizontal line / Diagonal line / Wave / Circle / Spiral / Zigzag / Figure eight
-    - Wave height
-      - Control: slider
-      - Default: 0.12
-      - Range: 0..0.5
-    - Wave count
-      - Control: slider
-      - Default: 2
-      - Range: 0.25..32
-    - Path (-1 = all)
-      - Control: int
-      - Default: -1
-      - Range: -1..63
-    - Paths from the chosen one (0 = rest)
-      - Control: int
-      - Default: 1
-      - Range: 0..63
-    - Path scale
-      - Control: slider
-      - Default: 1
-      - Range: 0.05..8
-    - Path rotation (turns)
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path mirror
-      - Control: dropdown
-      - Default: None
-      - Choices: None / Horizontal / Vertical / Both
-    - Reverse path direction
-      - Control: checkbox
-      - Default: off
-    - Stitch length (px at 512)
-      - Control: slider
-      - Default: 18
-      - Range: 1..256
-    - Stitch gap
-      - Control: slider
-      - Default: 10
-      - Range: 0..256
-    - Stitch width
-      - Control: slider
-      - Default: 5
-      - Range: 0.5..64
-    - Groove width
-      - Control: slider
-      - Default: 12
-      - Range: 0..128
-    - Groove depth
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Stitch height
-      - Control: slider
-      - Default: 0.7
-      - Range: 0..1
-    - Fit stitches to path length
-      - Control: checkbox
-      - Default: on
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Herringbone (`herringbone`)
-  - Library: Generators > Patterns
-  - Tooltip: herringbone pavement
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Bricks across (multiple of 4)
-      - Control: int
-      - Default: 8
-      - Range: 4..64
-    - Gap (px at 512)
-      - Control: slider
-      - Default: 3
-      - Range: 0..32
-    - Bevel (px at 512)
-      - Control: slider
-      - Default: 6
-      - Range: 0.5..64
-    - Height variation
-      - Control: slider
-      - Default: 0.3
-      - Range: 0..1
-    - Output
-      - Control: dropdown
-      - Default: Height
-      - Choices: Height / Brick id / Orientation
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Arc Pavement (`arc_pavement`)
-  - Library: Generators > Patterns
-  - Tooltip: fan-shaped arc pavement
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Fans across
-      - Control: int
-      - Default: 6
-      - Range: 2..64
-    - Stone rows per fan
-      - Control: int
-      - Default: 4
-      - Range: 1..12
-    - Stones on the outer row
-      - Control: slider
-      - Default: 9
-      - Range: 2..64
-    - Gap (px at 512)
-      - Control: slider
-      - Default: 2
-      - Range: 0..32
-    - Bevel (px at 512)
-      - Control: slider
-      - Default: 4
-      - Range: 0.5..64
-    - Height variation
-      - Control: slider
-      - Default: 0.3
-      - Range: 0..1
-    - Output
-      - Control: dropdown
-      - Default: Height
-      - Choices: Height / Stone id
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Anisotropic Noise (`anisotropic_noise`)
-  - Library: Generators > Noises
-  - Tooltip: noise stretched along any direction, still tiling
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Cells across
-      - Control: int
-      - Default: 8
-      - Range: 1..128
-    - Stretch
-      - Control: slider
-      - Default: 6
-      - Range: 1..64
-    - Direction
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Octaves
-      - Control: int
-      - Default: 3
-      - Range: 1..8
-    - Gain
-      - Control: slider
-      - Default: 0.5
-      - Range: 0.1..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Fur Noise (`fur_noise`)
-  - Library: Generators > Noises
-  - Tooltip: fur-like hairs
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Hairs
-      - Control: int
-      - Default: 2500
-      - Range: 1..20000
-    - Length (px at 512)
-      - Control: slider
-      - Default: 70
-      - Range: 2..512
-    - Thickness (px at 512)
-      - Control: slider
-      - Default: 2.2
-      - Range: 0.4..32
-    - Direction
-      - Control: slider
-      - Default: 0.25
-      - Range: 0..1
-    - Direction variation
-      - Control: slider
-      - Default: 0.25
-      - Range: 0..1
-    - Curl
-      - Control: slider
-      - Default: 0.8
-      - Range: -8..8
-    - Tapered tips
-      - Control: slider
-      - Default: 0.8
-      - Range: 0..1
-    - Root darkness
-      - Control: slider
-      - Default: 0.25
-      - Range: 0..1
-    - Brightness variation
-      - Control: slider
-      - Default: 0.35
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Moisture Noise (`moisture_noise`)
-  - Library: Generators > Noises
-  - Tooltip: damp patches with drips
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Patch scale
-      - Control: int
-      - Default: 4
-      - Range: 1..32
-    - Coverage
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Edge softness
-      - Control: slider
-      - Default: 0.15
-      - Range: 0.01..0.5
-    - Drips
-      - Control: slider
-      - Default: 0.7
-      - Range: 0..1
-    - Drip length (px at 512)
-      - Control: slider
-      - Default: 90
-      - Range: 1..512
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Microscope Noise (`microscope_noise`)
-  - Library: Generators > Noises
-  - Tooltip: cells seen through a microscope
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Cells across
-      - Control: int
-      - Default: 10
-      - Range: 1..64
-    - Irregularity
-      - Control: slider
-      - Default: 0.8
-      - Range: 0..1
-    - Membrane width
-      - Control: slider
-      - Default: 0.06
-      - Range: 0.005..0.5
-    - Nucleus size
-      - Control: slider
-      - Default: 0.28
-      - Range: 0.02..0.8
-    - Cytoplasm grain
-      - Control: slider
-      - Default: 0.25
-      - Range: 0..1
-    - Output
-      - Control: dropdown
-      - Default: Combined
-      - Choices: Combined / Membranes / Nuclei / Cell id
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Worley Noise 3D (`worley_3d`)
-  - Library: Generators > Noises
-  - Tooltip: cellular noise in 3D, one slice per z
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Cells across
-      - Control: int
-      - Default: 6
-      - Range: 1..64
-    - Slice (z)
-      - Control: slider
-      - Default: 0
-      - Range: 0..8
-    - Irregularity
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Output
-      - Control: dropdown
-      - Default: Nearest
-      - Choices: Nearest / Second nearest / Edges (f2 - f1) / Cell id
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Fractal Noise 3D (`fbm_3d`)
-  - Library: Generators > Noises
-  - Tooltip: fractal noise in 3D, one slice per z
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Scale
-      - Control: int
-      - Default: 4
-      - Range: 1..64
-    - Slice (z)
-      - Control: slider
-      - Default: 0
-      - Range: 0..8
-    - Octaves
-      - Control: int
-      - Default: 5
-      - Range: 1..10
-    - Gain
-      - Control: slider
-      - Default: 0.5
-      - Range: 0.1..0.95
-    - Style
-      - Control: dropdown
-      - Default: Fractal
-      - Choices: Fractal / Ridged / Turbulence
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Volume Mask (`volume_mask`)
-  - Library: Generators > Shapes
-  - Tooltip: slice through a repeated 3D shape as a mask
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Shape
-      - Control: dropdown
-      - Default: Sphere
-      - Choices: Sphere / Box / Cylinder / Torus / Cone
-    - Size
-      - Control: slider
-      - Default: 0.35
-      - Range: 0.01..0.5
-    - Repeat
-      - Control: int
-      - Default: 1
-      - Range: 1..64
-    - Slice height
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Corner roundness
-      - Control: slider
-      - Default: 0
-      - Range: 0..0.3
-    - Edge softness
-      - Control: slider
-      - Default: 0.02
-      - Range: 0..0.5
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Gradient 3D (`gradient_3d`)
-  - Library: Generators > Shapes
-  - Tooltip: distance gradient of a repeated 3D shape slice
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Shape
-      - Control: dropdown
-      - Default: Sphere
-      - Choices: Sphere / Box / Cylinder / Torus / Cone
-    - Size
-      - Control: slider
-      - Default: 0.35
-      - Range: 0.01..0.5
-    - Repeat
-      - Control: int
-      - Default: 1
-      - Range: 1..64
-    - Slice height
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Corner roundness
-      - Control: slider
-      - Default: 0
-      - Range: 0..0.3
-    - Gradient range
-      - Control: slider
-      - Default: 0.5
-      - Range: 0.01..2
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Shape Extrude (`shape_extrude`)
-  - Library: Filters > Effects
-  - Tooltip: extrude shapes along a direction (outputs
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: height, walls
-    - height
-      - Right-edge socket
-    - walls
-      - Right-edge socket
-  - Properties:
-    - Length (px at 512)
-      - Control: slider
-      - Default: 60
-      - Range: 1..512
-    - Direction
-      - Control: slider
-      - Default: 0.125
-      - Range: 0..1
-    - Top height
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Wall falloff
-      - Control: slider
-      - Default: 1
-      - Range: 0.1..8
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Shape Mapper (`shape_mapper`)
-  - Library: Filters > Masks and regions
-  - Tooltip: put a pattern into every flood-filled region
-  - Inputs: in, pattern
-    - in
-      - Left-edge socket
-    - pattern
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Pattern size
-      - Control: slider
-      - Default: 1
-      - Range: 0.1..4
-    - Random quarter turns
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Random flips
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Keep square
-      - Control: checkbox
-      - Default: off
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Path Splatter (`path_splatter`)
-  - Library: Generators > Paths
-  - Tooltip: several rows of copies of a pattern along a spline, thinned out by a mask
-  - Inputs: in, mask
-    - in
-      - Left-edge socket
-    - mask
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Built-in shape
-      - Control: dropdown
-      - Default: Wave
-      - Choices: Horizontal line / Diagonal line / Wave / Circle / Spiral / Zigzag / Figure eight
-    - Wave height
-      - Control: slider
-      - Default: 0.12
-      - Range: 0..0.5
-    - Wave count
-      - Control: slider
-      - Default: 2
-      - Range: 0.25..32
-    - Path (-1 = all)
-      - Control: int
-      - Default: -1
-      - Range: -1..63
-    - Paths from the chosen one (0 = rest)
-      - Control: int
-      - Default: 1
-      - Range: 0..63
-    - Path scale
-      - Control: slider
-      - Default: 1
-      - Range: 0.05..8
-    - Path rotation (turns)
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path mirror
-      - Control: dropdown
-      - Default: None
-      - Choices: None / Horizontal / Vertical / Both
-    - Reverse path direction
-      - Control: checkbox
-      - Default: off
-    - Rows
-      - Control: int
-      - Default: 3
-      - Range: 1..32
-    - Row spacing (px at 512)
-      - Control: slider
-      - Default: 24
-      - Range: 0..512
-    - Spacing (px at 512)
-      - Control: slider
-      - Default: 24
-      - Range: 1..512
-    - Size (px at 512)
-      - Control: slider
-      - Default: 24
-      - Range: 1..512
-    - Size variation
-      - Control: slider
-      - Default: 0.2
-      - Range: 0..1
-    - Jitter along
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Jitter across (px)
-      - Control: slider
-      - Default: 0
-      - Range: 0..256
-    - Rotation
-      - Control: dropdown
-      - Default: Follow the path
-      - Choices: Follow the path / Fixed / Random
-    - Angle
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Angle variation
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Density
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Opacity variation
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Blend
-      - Control: dropdown
-      - Default: Max
-      - Choices: Max / Add
-    - Start offset (px)
-      - Control: slider
-      - Default: 0
-      - Range: 0..512
-    - Fit spacing to path length
-      - Control: checkbox
-      - Default: on
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Path Sample (`path_sample`)
-  - Library: Generators > Paths
-  - Tooltip: maps from a spline (outputs
-  - Inputs: none
-  - Outputs: position, width, height, side
-    - position
-      - Right-edge socket
-    - width
-      - Right-edge socket
-    - height
-      - Right-edge socket
-    - side
-      - Right-edge socket
-  - Properties:
-    - Built-in shape
-      - Control: dropdown
-      - Default: Wave
-      - Choices: Horizontal line / Diagonal line / Wave / Circle / Spiral / Zigzag / Figure eight
-    - Wave height
-      - Control: slider
-      - Default: 0.12
-      - Range: 0..0.5
-    - Wave count
-      - Control: slider
-      - Default: 2
-      - Range: 0.25..32
-    - Path (-1 = all)
-      - Control: int
-      - Default: -1
-      - Range: -1..63
-    - Paths from the chosen one (0 = rest)
-      - Control: int
-      - Default: 1
-      - Range: 0..63
-    - Path scale
-      - Control: slider
-      - Default: 1
-      - Range: 0.05..8
-    - Path rotation (turns)
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path mirror
-      - Control: dropdown
-      - Default: None
-      - Choices: None / Horizontal / Vertical / Both
-    - Reverse path direction
-      - Control: checkbox
-      - Default: off
-    - Width (px at 512)
-      - Control: slider
-      - Default: 40
-      - Range: 0.5..256
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-
-### Filters nodes (101)
-
-- Curve (`curve`)
-  - Library: Filters > Adjustments
-  - Tooltip: tone curves
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Points
-      - Control: number box
-    - Points r
-      - Control: number box
-    - Points g
-      - Control: number box
-    - Points b
-      - Control: number box
-    - Points a
-      - Control: number box
-    - As
-      - Control: number box
-    - Lists
-      - Control: number box
-- Channel Shuffle (`channel_shuffle`)
-  - Library: Filters > Adjustments
-  - Tooltip: rebuild channels
-  - Inputs: in, in2
-    - in
-      - Left-edge socket
-    - in2
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Red from
-      - Control: dropdown
-      - Default: Input red
-      - Choices: Input red / Input green / Input blue / Input alpha / Second red / Second green / Second blue / Second alpha / Zero / One
-    - Green from
-      - Control: dropdown
-      - Default: Input green
-      - Choices: Input red / Input green / Input blue / Input alpha / Second red / Second green / Second blue / Second alpha / Zero / One
-    - Blue from
-      - Control: dropdown
-      - Default: Input blue
-      - Choices: Input red / Input green / Input blue / Input alpha / Second red / Second green / Second blue / Second alpha / Zero / One
-    - Alpha from
-      - Control: dropdown
-      - Default: Input alpha
-      - Choices: Input red / Input green / Input blue / Input alpha / Second red / Second green / Second blue / Second alpha / Zero / One
-    - Invert red
-      - Control: checkbox
-      - Default: off
-    - Invert green
-      - Control: checkbox
-      - Default: off
-    - Invert blue
-      - Control: checkbox
-      - Default: off
-    - Invert alpha
-      - Control: checkbox
-      - Default: off
-- Switch (`switch`)
-  - Library: Filters > Adjustments
-  - Tooltip: pass one of up to four inputs
-  - Inputs: a, b, c, d
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-    - c
-      - Left-edge socket
-    - d
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Index
-      - Control: int
-      - Default: 0
-      - Range: 0..3
-- Flood Fill (`flood_fill`)
-  - Library: Filters > Masks and regions
-  - Tooltip: label connected regions of a mask
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Threshold
-      - Control: slider
-      - Default: 0.05
-      - Range: 0..1
-- Flood Fill Random (`flood_fill_random`)
-  - Library: Filters > Masks and regions
-  - Tooltip: random grayscale per flood-fill region
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Minimum
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Maximum
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-- Flood Fill Color (`flood_fill_color`)
-  - Library: Filters > Masks and regions
-  - Tooltip: random color per flood-fill region
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-- Flood Fill To Index (`flood_fill_to_index`)
-  - Library: Filters > Adjustments
-  - Tooltip: region number of each flood-fill region as a gray level
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Flood Fill To Position (`flood_fill_to_position`)
-  - Library: Filters > Adjustments
-  - Tooltip: centre of each flood-fill region (outputs
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: position, x, y
-    - position
-      - Right-edge socket
-    - x
-      - Right-edge socket
-    - y
-      - Right-edge socket
-  - Properties:
-    - Position
-      - Control: number box
-    - X
-      - Control: number box
-- Flood Fill To Bbox Size (`flood_fill_to_bbox_size`)
-  - Library: Filters > Adjustments
-  - Tooltip: bounding-box size of each flood-fill region (outputs
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: size, width, height
-    - size
-      - Right-edge socket
-    - width
-      - Right-edge socket
-    - height
-      - Right-edge socket
-  - Properties:
-    - Size
-      - Control: number box
-    - Width
-      - Control: number box
-- Flood Fill Gradient (`flood_fill_gradient`)
-  - Library: Filters > Masks and regions
-  - Tooltip: gradient across each flood-fill region
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Angle
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Angle variation
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-- Vector Warp (`vector_warp`)
-  - Library: Filters > Blur and warp
-  - Tooltip: displace by a vector map
-  - Inputs: in, vector
-    - in
-      - Left-edge socket
-    - vector
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Intensity
-      - Control: slider
-      - Default: 0.05
-      - Range: 0..0.5
-    - Vector format
-      - Control: dropdown
-      - Default: OpenGL
-      - Choices: OpenGL / DirectX
-- Slope Blur (`slope_blur`)
-  - Library: Filters > Blur and warp
-  - Tooltip: blur along a slope map
-  - Inputs: in, slope
-    - in
-      - Left-edge socket
-    - slope
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Samples
-      - Control: int
       - Default: 16
-      - Range: 1..64
-    - Intensity
+      - Range: 3..32
+    - Disorder
       - Control: slider
-      - Default: 0.1
+      - Default: 0
       - Range: 0..1
-    - Mode
-      - Control: dropdown
-      - Default: Blur
-      - Choices: Blur / Min / Max
-- Blur Hq (`blur_hq`)
-  - Library: Filters > Blur and warp
-  - Tooltip: high quality blur
-  - Inputs: in
-    - in
-      - Left-edge socket
+    - Non Square Expansion
+      - Default: 1
+- Messy Fibers 3 (`sbs:lib:noise_messy_fibers_3/messy_fibers_3`)
+  - Library: Generators > Patterns
+  - Inputs: none
   - Outputs: output
   - Properties:
-    - Intensity
+    - Scale
       - Control: slider
-      - Default: 6
-      - Range: 0..64
-    - Quality
-      - Control: int
+      - Default: 1
+      - Range: 1..16
+    - Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Angle Random
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Color Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Messy Fibers 4 (`sbs:lib:messy_fibers_4/messy_fibers_4`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Sponge_Stains
+  - Properties:
+- Paper Path (`sbs:lib:paper_path/paper_path`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Paper_Path
+  - Properties:
+    - Pattern Size Width
+      - Control: slider
+      - Default: 100
+      - Range: 0..1000
+    - Pattern Size Height
+      - Control: slider
+      - Default: 100
+      - Range: 0..300
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+- Parquet 1 (`sbs:lib:parquet_1/parquet_1`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Parquet
+  - Properties:
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Luminance Variation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Pavement 1 (`sbs:lib:pavement_1/pavement_1`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Pavement
+  - Properties:
+    - Roudness
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+- Scratches Generator (`sbs:lib:pattern_scratches_generator/scratches_generator`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Spline Number
+      - Control: slider
+      - Default: 256
+      - Range: 1..512
+    - Max Segments Per Spline
+      - Control: slider
+      - Default: 128
+      - Range: 2..256
+    - Spline Rotation
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Spline Rotation Random
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Spline Scale
+      - Control: slider
+      - Default: 0.2
+      - Range: 0..1
+    - Spline Scale Random
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Spline Distortion
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Spline Distortion Random
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Spline Distortion Frequency
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Spline Width
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Spline Width Random
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Spline Position Random
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Spline Width In Pixel
+      - Default: 0
+    - Luminance Random
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Fade Mode
+      - Default: 1
+    - Fade Length
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Shape Base (`sbs:lib:pattern_shape/shape_base`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Pattern
+      - Control: dropdown
+      - Default: Dome
+      - Choices: None / Dome / Disc / Paraboloid / Bell / Gaussian / Thorn / Pyramid / Brick / Gradation / Waves / Half Bell / Ridged Bell / Crescent / Capsule / Cone
+    - Pattern Specific
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Size Xy
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..1
+    - Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square
+      - Default: 1
+- Wood Fibers 1 (`sbs:lib:wood_fibers_1/wood_fibers_1`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Wood_Fibers
+  - Properties:
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+- Wood Fibers 2 (`sbs:lib:wood_fibers_2/wood_fibers_2`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: Wood_Noise
+  - Properties:
+- Dirt 1 (`sbs:lib:noise_dirt_1/dirt_1`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
       - Default: 1
       - Range: 1..4
-- Histogram Range (`histogram_range`)
-  - Library: Filters > Adjustments
-  - Tooltip: select a range of values
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Position
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Range
-      - Control: slider
-      - Default: 0.2
-      - Range: 0..1
-    - Contrast
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Bevel (`bevel`)
-  - Library: Filters > Masks and regions
-  - Tooltip: bevel a shape
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Distance
-      - Control: slider
-      - Default: 0.05
-      - Range: 0..0.5
-    - Smoothing
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Shape threshold
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Output as normal
-      - Control: checkbox
-      - Default: off
-    - Normal intensity
-      - Control: slider
-      - Default: 4
-      - Range: 0..50
-    - Corner type
-      - Control: dropdown
-      - Default: Angular
-      - Choices: Round / Angular
-    - Normal format
-      - Control: dropdown
-      - Default: OpenGL
-      - Choices: OpenGL / DirectX
-- Distance (`distance`)
-  - Library: Filters > Masks and regions
-  - Tooltip: distance field of a mask
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Distance range
-      - Control: slider
-      - Default: 0.1
-      - Range: 0..1
-    - Shape threshold
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Mode
-      - Control: dropdown
-      - Default: Inside
-      - Choices: Inside / Outside / Both
-- Color Match (`color_match`)
-  - Library: Filters > Adjustments
-  - Tooltip: ,target_color recolour
-  - Inputs: in, reference, src_color
-    - in
-      - Left-edge socket
-    - reference
-      - Left-edge socket
-    - src_color
-      - Left-edge socket
-  - Outputs: output, mask
-    - output
-      - Right-edge socket
-    - mask
-      - Right-edge socket
-  - Properties:
-    - Method
-      - Control: dropdown
-      - Default: Statistics transfer
-      - Choices: Statistics transfer / Colour swap
-    - Strength
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Source colour mode
-      - Control: dropdown
-      - Default: Average
-      - Choices: Average / Colour / Input
-    - Source red
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Source green
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Source blue
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Target colour mode
-      - Control: dropdown
-      - Default: Colour
-      - Choices: Colour / Input
-    - Target red
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Target green
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Target blue
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Custom colour variation
-      - Control: checkbox
-      - Default: off
-    - Hue
+    - Disorder
       - Control: slider
       - Default: 0
-      - Range: 0..360
-    - Chrominance
-      - Control: slider
-      - Default: 1
-      - Range: 0..2
-    - Luminance
-      - Control: slider
-      - Default: 1
-      - Range: 0..2
-    - Use mask
-      - Control: checkbox
-      - Default: on
-    - Mask hue range
-      - Control: slider
-      - Default: 30
-      - Range: 0..180
-    - Mask chroma range
-      - Control: slider
-      - Default: 0.5
       - Range: 0..1
-    - Mask luma range
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Mask smoothness
-      - Control: slider
-      - Default: 0.3
-      - Range: 0..2
-- Make It Tile Photo (`make_it_tile_photo`)
-  - Library: Filters > Transform
-  - Tooltip: make a photo tile
-  - Inputs: in
-    - in
-      - Left-edge socket
+    - Non Square Expansion
+      - Default: 1
+- Dirt 2 (`sbs:lib:noise_dirt_2/dirt_2`)
+  - Library: Generators > Patterns
+  - Inputs: none
   - Outputs: output
   - Properties:
-    - Mask size H
+    - Scale
       - Control: slider
-      - Default: 0.6
-      - Range: 0.1..1
-    - Mask size V
+      - Default: 1
+      - Range: 1..4
+    - Disorder
       - Control: slider
-      - Default: 0.6
-      - Range: 0.1..1
-- Make It Tile Patch (`make_it_tile_patch`)
-  - Library: Filters > Transform
-  - Tooltip: make an image tile with random patches
-  - Inputs: in
-    - in
-      - Left-edge socket
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Dirt 3 (`sbs:lib:noise_dirt_3/dirt_3`)
+  - Library: Generators > Patterns
+  - Inputs: none
   - Outputs: output
   - Properties:
-    - Patches
-      - Control: int
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..4
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Dirt 4 (`sbs:lib:noise_dirt_4/dirt_4`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..4
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Dirt 5 (`sbs:lib:noise_dirt_5/dirt_5`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 1..4
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Dirt 6 (`sbs:lib:dirt_6/dirt_6`)
+  - Library: Generators > Patterns
+  - Inputs: none
+  - Outputs: White_Stains
+  - Properties:
+
+### Generators > Shapes (4)
+
+- Polygon 1 (`sbs:lib:pattern_polygon_1/polygon_1`)
+  - Library: Generators > Shapes
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Sides
+      - Control: slider
       - Default: 6
-      - Range: 2..32
-    - Softness
+      - Range: 3..32
+    - Explode
       - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Random seed
-      - Control: int
       - Default: 0
-      - Range: 0..9999
-- Clamp (`clamp`)
+      - Range: 0..1
+    - TriangleSize
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..1
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - AutoScale
+      - Default: 1
+    - Rotation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Gradient
+      - Default: 0
+    - GradientInvert
+      - Default: 0
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Non Square Expansion
+      - Default: 1
+    - Non Square Tiling
+      - Default: 0
+- Polygon 2 (`sbs:lib:pattern_polygon_2/polygon_2`)
+  - Library: Generators > Shapes
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..10
+    - Sides
+      - Control: slider
+      - Default: 6
+      - Range: 3..32
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Rotation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Curve
+      - Control: slider
+      - Default: 0
+      - Range: -1..1
+    - Gradient
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - InvertGradient
+      - Default: 0
+    - Autoscale
+      - Default: 1
+    - Non Square Expansion
+      - Default: 1
+- Shape (`sbs:lib:pattern_shape/shape`)
+  - Library: Generators > Shapes
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Tiling
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Pattern
+      - Control: dropdown
+      - Default: Dome
+      - Choices: None / Dome / Disc / Paraboloid / Bell / Gaussian / Thorn / Pyramid / Brick / Gradation / Waves / Half Bell / Ridged Bell / Crescent / Capsule / Cone
+    - Pattern Specific
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Size
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Size Xy
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..1
+    - Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Rotation
+      - Default: 0
+    - Non Square Expansion
+      - Default: 1
+    - Non Square Tiling
+      - Default: 0
+- Star (`sbs:lib:pattern_star/star`)
+  - Library: Generators > Shapes
+  - Inputs: none
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+
+### Filters > Adjustments (90)
+
+- Auto Levels (`sbs:lib:auto_levels/auto_levels`)
   - Library: Filters > Adjustments
-  - Tooltip: clamp values
-  - Inputs: in
-    - in
+  - Inputs: Input
+    - Input
+      - Left-edge socket
+  - Outputs: Output
+  - Properties:
+- Channel Mixer (`sbs:lib:channel_mixer/channel_mixer`)
+  - Library: Filters > Adjustments
+  - Inputs: Input
+    - Input
+      - Left-edge socket
+  - Outputs: Output
+  - Properties:
+    - Red Channel
+      - Control: slider
+      - Default: 100 0 0 0
+      - Range: -200..200
+    - Green Channel
+      - Control: slider
+      - Default: 0 100 0 0
+      - Range: -200..200
+    - Blue Channel
+      - Control: slider
+      - Default: 0 0 100 0
+      - Range: -200..200
+    - Monochrome
+      - Default: 0
+- Chrominance Extract (`sbs:lib:chrominance_extract/chrominance_extract`)
+  - Library: Filters > Adjustments
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Chrominance_Extract
+  - Properties:
+- Clamp (`sbs:lib:clamp/clamp`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
       - Left-edge socket
   - Outputs: output
   - Properties:
@@ -5556,164 +6251,239 @@
       - Control: slider
       - Default: 1
       - Range: 0..1
-    - Apply to alpha
-      - Control: checkbox
-      - Default: off
-- Highpass (`highpass`)
+    - Apply To Alpha
+      - Default: 1
+- Clamp Grayscale (`sbs:lib:clamp/clamp_grayscale`)
   - Library: Filters > Adjustments
-  - Tooltip: high-pass filter
-  - Inputs: in
-    - in
+  - Inputs: input
+    - input
       - Left-edge socket
   - Outputs: output
+  - Properties:
+    - Min
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Max
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+- Color Match (`sbs:lib:color_match/color_match`)
+  - Library: Filters > Adjustments
+  - Inputs: input, input_src_color, input_target_color, mask_input
+    - input
+      - Left-edge socket
+    - input_src_color
+      - Left-edge socket
+    - input_target_color
+      - Left-edge socket
+    - mask_input
+      - Left-edge socket
+  - Outputs: output, mask
+    - output
+      - Right-edge socket
+    - mask
+      - Right-edge socket
+  - Properties:
+    - Source Color Mode
+      - Default: 0
+    - Src Color
+      - Control: slider
+      - Default: 0.5 0.5 0.5
+      - Range: 0..1
+    - Target Color Mode
+      - Default: 0
+    - Target Color
+      - Control: slider
+      - Default: 0.5 0.5 0.5
+      - Range: 0..1
+    - Custom Color Variation
+      - Default: 0
+    - Variation Hue
+      - Control: slider
+      - Default: 0
+      - Range: 0..360
+    - Variation Chroma
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Variation Luma
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Use Mask
+      - Default: 1
+    - Mask Mode
+      - Default: 0
+    - Mask Hue Range
+      - Control: slider
+      - Default: 30
+      - Range: 0..360
+    - Mask Chroma Range
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Mask Luma Range
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Mask Blur
+      - Control: slider
+      - Default: 0
+      - Range: 0..2
+    - Mask Smoothness
+      - Control: slider
+      - Default: 0
+      - Range: 0..2
+- Color To Mask (`sbs:lib:color_to_mask/color_to_mask`)
+  - Library: Filters > Adjustments
+  - Inputs: Input
+    - Input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Color
+      - Control: slider
+      - Default: 0 1 0
+      - Range: 0..1
+    - Mask Range
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mask Softness
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Keying Type
+      - Default: 0
+    - Flatten Alpha
+      - Default: 0
+- Contrast Luminosity (`sbs:lib:contrast_luminosity/contrast_luminosity`)
+  - Library: Filters > Adjustments
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Contrast_Luminosity
+  - Properties:
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: -1..1
+    - Luminosity
+      - Control: slider
+      - Default: 0
+      - Range: -1..1
+- Contrast Luminosity Grayscale (`sbs:lib:contrast_luminosity/contrast_luminosity_grayscale`)
+  - Library: Filters > Adjustments
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Contrast_Luminosity
+  - Properties:
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: -1..1
+    - Luminosity
+      - Control: slider
+      - Default: 0
+      - Range: -1..1
+- Flood Fill To Bbox Size (`sbs:lib:flood_fill_2/flood_fill_to_bbox_size`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Output
+      - Default: 0
+- Flood Fill To Position (`sbs:lib:flood_fill_2/flood_fill_to_position`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Grayscale Conversion Advanced (`sbs:lib:grayscale_conversion_advanced/grayscale_conversion_advanced`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Grayscale Type
+      - Default: 0
+- Highpass (`sbs:lib:highpass/highpass`)
+  - Library: Filters > Adjustments
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Highpass
   - Properties:
     - Radius
       - Control: slider
       - Default: 6
       - Range: 0..64
-- Swirl (`swirl`)
-  - Library: Filters > Blur and warp
-  - Tooltip: swirl distortion
-  - Inputs: in
-    - in
+- Highpass Grayscale (`sbs:lib:highpass/highpass_grayscale`)
+  - Library: Filters > Adjustments
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Highpass
+  - Properties:
+    - Radius
+      - Control: slider
+      - Default: 6
+      - Range: 0..64
+- Histogram Equalize (`sbs:lib:histogram_tools/histogram_equalize`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
       - Left-edge socket
   - Outputs: output
   - Properties:
-    - Amount
+    - Histogram Resolution
+      - Default: 8
+    - Histogram Smoothing
       - Control: slider
-      - Default: 0.3
-      - Range: -2..2
-    - Radius
+      - Default: 0
+      - Range: 0..1
+- Histogram Range (`sbs:lib:histogram_range/histogram_range`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Range
       - Control: slider
       - Default: 0.5
       - Range: 0..1
-- Blur (`blur`)
-  - Library: Filters > Blur and warp
-  - Tooltip: gaussian blur
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Intensity
+    - Position
       - Control: slider
-      - Default: 4
-      - Range: 0..64
-- Directional Blur (`directional_blur`)
-  - Library: Filters > Blur and warp
-  - Tooltip: angle length
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Angle
-      - Control: slider
-      - Default: 0
+      - Default: 0.5
       - Range: 0..1
-    - Length
-      - Control: slider
-      - Default: 0.05
-      - Range: 0..0.3
-- Sharpen (`sharpen`)
-  - Library: Filters > Blur and warp
-  - Tooltip: radius amount
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Radius
-      - Control: slider
-      - Default: 2
-      - Range: 0..32
-    - Amount
-      - Control: slider
-      - Default: 1
-      - Range: 0..5
-- Levels (`levels`)
+- Histogram Scan (`sbs:lib:histogram_scan/histogram_scan`)
   - Library: Filters > Adjustments
-  - Tooltip: low high gamma out_low out_high
-  - Inputs: in
-    - in
+  - Inputs: Input_1
+    - Input_1
       - Left-edge socket
-  - Outputs: output
+  - Outputs: Output
   - Properties:
-    - Auto levels
-      - Control: checkbox
-      - Default: off
-    - Input low
+    - Position
       - Control: slider
       - Default: 0
       - Range: 0..1
-    - Input high
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Gamma
-      - Control: slider
-      - Default: 1
-      - Range: 0.1..4
-    - Output low
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Output high
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-- Adjust (`adjust`)
-  - Library: Filters > Adjustments
-  - Tooltip: brightness contrast
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Brightness
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
     - Contrast
       - Control: slider
-      - Default: 1
-      - Range: 0..3
-- Invert (`invert`)
-  - Library: Filters > Adjustments
-  - Tooltip: invert colours
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Invert
-      - Control: checkbox
-      - Default: on
-- Threshold (`threshold`)
-  - Library: Filters > Adjustments
-  - Tooltip: binary threshold
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Threshold
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Mode
-      - Control: dropdown
-      - Default: Greater
-      - Choices: Greater / Greater or equal / Lower / Lower or equal
-    - Edge softness
-      - Control: slider
       - Default: 0
       - Range: 0..1
-- Histogram Scan (`histogram_scan`)
+    - Invert Position
+      - Default: 0
+- Histogram Shift (`sbs:lib:histogram_shift/histogram_shift`)
   - Library: Filters > Adjustments
-  - Tooltip: position width
-  - Inputs: in
-    - in
+  - Inputs: input
+    - input
       - Left-edge socket
   - Outputs: output
   - Properties:
@@ -5721,289 +6491,206 @@
       - Control: slider
       - Default: 0.5
       - Range: 0..1
-    - Contrast
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
+- Invert (`sbs:lib:invert/invert`)
+  - Library: Filters > Adjustments
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Invert_Color
+  - Properties:
     - Invert
-      - Control: checkbox
-      - Default: off
-- Quantize (`quantize`)
+      - Default: 1
+- Invert Grayscale (`sbs:lib:invert/invert_grayscale`)
   - Library: Filters > Adjustments
-  - Tooltip: steps
-  - Inputs: in
-    - in
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Invert_Grayscale
+  - Properties:
+    - Invert
+      - Default: 1
+- Min Max (`sbs:lib:min_max/min_max`)
+  - Library: Filters > Adjustments
+  - Inputs: Input
+    - Input
+      - Left-edge socket
+  - Outputs: min, max
+    - min
+      - Right-edge socket
+    - max
+      - Right-edge socket
+  - Properties:
+- Multi Switch (`sbs:lib:blend_switch/multi_switch`)
+  - Library: Filters > Adjustments
+  - Inputs: input_1, input_2, input_3, input_4, input_5, input_6, input_7, input_8, input_9, input_10, input_11, input_12, input_13, input_14, input_15, input_16, input_17, input_18, input_19, input_20
+    - input_1
+      - Left-edge socket
+    - input_2
+      - Left-edge socket
+    - input_3
+      - Left-edge socket
+    - input_4
+      - Left-edge socket
+    - input_5
+      - Left-edge socket
+    - input_6
+      - Left-edge socket
+    - input_7
+      - Left-edge socket
+    - input_8
+      - Left-edge socket
+    - input_9
+      - Left-edge socket
+    - input_10
+      - Left-edge socket
+    - input_11
+      - Left-edge socket
+    - input_12
+      - Left-edge socket
+    - input_13
+      - Left-edge socket
+    - input_14
+      - Left-edge socket
+    - input_15
+      - Left-edge socket
+    - input_16
+      - Left-edge socket
+    - input_17
+      - Left-edge socket
+    - input_18
+      - Left-edge socket
+    - input_19
+      - Left-edge socket
+    - input_20
       - Left-edge socket
   - Outputs: output
   - Properties:
-    - Steps
-      - Control: int
+    - Input Number
+      - Control: slider
+      - Default: 2
+      - Range: 2..20
+    - Input Selection
+      - Control: slider
+      - Default: 1
+      - Range: 1..20
+- Multi Switch Grayscale (`sbs:lib:blend_switch/multi_switch_grayscale`)
+  - Library: Filters > Adjustments
+  - Inputs: input_1, input_2, input_3, input_4, input_5, input_6, input_7, input_8, input_9, input_10, input_11, input_12, input_13, input_14, input_15, input_16, input_17, input_18, input_19, input_20
+    - input_1
+      - Left-edge socket
+    - input_2
+      - Left-edge socket
+    - input_3
+      - Left-edge socket
+    - input_4
+      - Left-edge socket
+    - input_5
+      - Left-edge socket
+    - input_6
+      - Left-edge socket
+    - input_7
+      - Left-edge socket
+    - input_8
+      - Left-edge socket
+    - input_9
+      - Left-edge socket
+    - input_10
+      - Left-edge socket
+    - input_11
+      - Left-edge socket
+    - input_12
+      - Left-edge socket
+    - input_13
+      - Left-edge socket
+    - input_14
+      - Left-edge socket
+    - input_15
+      - Left-edge socket
+    - input_16
+      - Left-edge socket
+    - input_17
+      - Left-edge socket
+    - input_18
+      - Left-edge socket
+    - input_19
+      - Left-edge socket
+    - input_20
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Input Number
+      - Control: slider
+      - Default: 2
+      - Range: 2..20
+    - Input Selection
+      - Control: slider
+      - Default: 1
+      - Range: 1..20
+- Pow (`sbs:lib:pow/pow`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Exponent
+      - Control: slider
       - Default: 4
-      - Range: 2..32
-- To Gray (`to_gray`)
+      - Range: 0..10
+- Pow Grayscale (`sbs:lib:pow/pow_grayscale`)
   - Library: Filters > Adjustments
-  - Tooltip: luminance
-  - Inputs: in
-    - in
+  - Inputs: input
+    - input
       - Left-edge socket
   - Outputs: output
   - Properties:
-    - none
-- Channel (`channel`)
+    - Exponent
+      - Control: slider
+      - Default: 4
+      - Range: 0..10
+- Quantize (`sbs:lib:quantize/quantize`)
   - Library: Filters > Adjustments
-  - Tooltip: ch(0 r,1 g,2 b,3 a)
-  - Inputs: in
-    - in
+  - Inputs: Input
+    - Input
       - Left-edge socket
-  - Outputs: output
+  - Outputs: Quantize
   - Properties:
-    - Channel
-      - Control: dropdown
-      - Default: Red
-      - Choices: Red / Green / Blue / Alpha
-- Merge (`merge`)
+    - Quantize R
+      - Control: slider
+      - Default: 4
+      - Range: 2..256
+    - Quantize G
+      - Control: slider
+      - Default: 4
+      - Range: 2..256
+    - Quantize B
+      - Control: slider
+      - Default: 4
+      - Range: 2..256
+    - Quantize A
+      - Control: slider
+      - Default: 4
+      - Range: 2..256
+- Quantize Color (`sbs:lib:quantize_color/quantize_color`)
   - Library: Filters > Adjustments
-  - Tooltip: combine channels
-  - Inputs: r, g, b, a
-    - r
+  - Inputs: input
+    - input
       - Left-edge socket
-    - g
-      - Left-edge socket
-    - b
-      - Left-edge socket
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Tint (`tint`)
-  - Library: Filters > Adjustments
-  - Tooltip: multiply by colour
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Red
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Green
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Blue
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-- Colorize (`colorize`)
-  - Library: Filters > Adjustments
-  - Tooltip: gradient map
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Interpolation
-      - Control: dropdown
-      - Default: Linear
-      - Choices: Linear / Smooth / Step / Smoother
-    - Smoothness
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Gradient addressing
-      - Control: dropdown
-      - Default: Clamp
-      - Choices: Clamp / Repeat
-    - Use gradient alpha
-      - Control: checkbox
-      - Default: off
-- Hsl (`hsl`)
-  - Library: Filters > Adjustments
-  - Tooltip: hue sat val
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Hue
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Saturation
-      - Control: slider
-      - Default: 1
-      - Range: 0..2
-    - Lightness
-      - Control: slider
-      - Default: 1
-      - Range: 0..2
-- Transform (`transform`)
-  - Library: Filters > Transform
-  - Tooltip: offset_x offset_y scale_x scale_y rotation(turns)
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Scale X
-      - Control: slider
-      - Default: 1
-      - Range: 0.1..4
-    - Scale Y
-      - Control: slider
-      - Default: 1
-      - Range: 0.1..4
-    - Rotation
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Tiling mode
-      - Control: dropdown
-      - Default: H and V tiling
-      - Choices: H and V tiling / No tiling
-- Mirror (`mirror`)
-  - Library: Filters > Transform
-  - Tooltip: mirror an image
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Mode
-      - Control: dropdown
-      - Default: Mirror axis X
-      - Choices: Mirror axis X / Mirror axis Y / Both axes / Mirror corner
-    - Axis X offset
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Axis Y offset
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Invert axis X
-      - Control: checkbox
-      - Default: off
-    - Invert axis Y
-      - Control: checkbox
-      - Default: off
-    - Corner type
-      - Control: dropdown
-      - Default: Top left
-      - Choices: Top left / Top right / Bottom left / Bottom right
-- Warp (`warp`)
-  - Library: Filters > Blur and warp
-  - Tooltip: slope warp
-  - Inputs: in, warp
-    - in
-      - Left-edge socket
-    - warp
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Intensity
-      - Control: slider
-      - Default: 0.05
-      - Range: 0..0.5
-    - Input filtering
-      - Control: dropdown
-      - Default: Bicubic
-      - Choices: Bilinear / Nearest / Bicubic
-- Directional Warp (`directional_warp`)
-  - Library: Filters > Blur and warp
-  - Tooltip: warp in one direction
-  - Inputs: in, warp
-    - in
-      - Left-edge socket
-    - warp
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Warp angle
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Intensity
-      - Control: slider
-      - Default: 0.1
-      - Range: 0..0.5
-    - Intensity map offset
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Input filtering
-      - Control: dropdown
-      - Default: Bicubic
-      - Choices: Bilinear / Nearest / Bicubic
-- Blend (`blend`)
-  - Library: Filters > Adjustments
-  - Tooltip: blend two images
-  - Inputs: fg, bg, mask
-    - fg
-      - Left-edge socket
-    - bg
-      - Left-edge socket
-    - mask
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Blending mode
-      - Control: dropdown
-      - Default: Copy
-      - Choices: Copy / Add / Subtract / Multiply / Screen / Overlay / Max / Min / Difference / Soft light / Color dodge / Color burn / Linear burn / Hard light / Exclusion / Divide / Linear light / Color / Luminosity / Dissolve
-    - Opacity
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Alpha blending
-      - Control: dropdown
-      - Default: Ignore alpha
-      - Choices: Use source alpha / Ignore alpha / Straight alpha blending / Premultiplied alpha blending
-    - Cropping left
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Cropping top
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Cropping right
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Cropping bottom
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-- Quantize Color (`quantize_color`)
-  - Library: Filters > Adjustments
-  - Tooltip: reduce to few colours (k-means)
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output, id, palette
+  - Outputs: output, id, palette, palette_color_amount
     - output
       - Right-edge socket
     - id
       - Right-edge socket
     - palette
       - Right-edge socket
+    - palette_color_amount
+      - Right-edge socket
   - Properties:
-    - Max. colour amount
-      - Control: int
+    - Color Amount
+      - Control: slider
       - Default: 32
       - Range: 1..128
-    - Contour smoothing
+    - Contour Smoothing
       - Control: slider
       - Default: 0
       - Range: 0..8
@@ -6011,331 +6698,845 @@
       - Control: slider
       - Default: 0
       - Range: 0..1
-    - Dithering pattern
-      - Control: dropdown
-      - Default: Noise
-      - Choices: Noise / Bayer
-    - Ignore alpha
-      - Control: checkbox
-      - Default: off
-    - Distance colour space
-      - Control: dropdown
-      - Default: Lab
-      - Choices: Lab / RGB
-- Edge Detect (`edge_detect`)
-  - Library: Filters > Masks and regions
-  - Tooltip: edge lines
-  - Inputs: in
-    - in
+    - Dithering Pattern
+      - Default: 0
+    - Ignore Alpha
+      - Default: 0
+    - Distance Color Space
+      - Default: 0
+    - Id Sort Mode
+      - Default: 0
+    - Downscale Filtering
+      - Default: 0
+- Quantize Grayscale (`sbs:lib:quantize_2/quantize_grayscale`)
+  - Library: Filters > Adjustments
+  - Inputs: input, curve_input
+    - input
+      - Left-edge socket
+    - curve_input
       - Left-edge socket
   - Outputs: output
   - Properties:
-    - Method
-      - Control: dropdown
-      - Default: Edge lines
-      - Choices: Edge lines / Sobel (legacy)
-    - Edge width
+    - Steps
       - Control: slider
-      - Default: 2
-      - Range: 1..16
-    - Edge roundness
-      - Control: slider
-      - Default: 4
-      - Range: 0..16
-    - Invert
-      - Control: checkbox
-      - Default: off
-    - Tolerance
+      - Default: 6
+      - Range: 2..10
+    - Offset
       - Control: slider
       - Default: 0
       - Range: 0..1
-    - Intensity (Sobel)
+    - Slope
       - Control: slider
-      - Default: 2
-      - Range: 0..10
-- Emboss (`emboss`)
-  - Library: Filters > Masks and regions
-  - Tooltip: angle intensity
-  - Inputs: in
-    - in
+      - Default: 0
+      - Range: 0..1
+    - Slope Curve
+      - Default: 0
+- Replace Color (`sbs:lib:replace_color/replace_color`)
+  - Library: Filters > Adjustments
+  - Inputs: Input
+    - Input
+      - Left-edge socket
+  - Outputs: ToTargetColor
+  - Properties:
+    - SourceColor
+      - Control: slider
+      - Default: 0.500008 0.500008 0.500008
+      - Range: 0..1
+    - TargetColor
+      - Control: slider
+      - Default: 0.500008 0.500008 0.500008
+      - Range: 0..1
+- Rgba Merge (`sbs:lib:rgba_merge/rgba_merge`)
+  - Library: Filters > Adjustments
+  - Inputs: R, G, B, A
+    - R
+      - Left-edge socket
+    - G
+      - Left-edge socket
+    - B
+      - Left-edge socket
+    - A
+      - Left-edge socket
+  - Outputs: RGBA_Merge
+  - Properties:
+- Rgba Split (`sbs:lib:rgba_split/rgba_split`)
+  - Library: Filters > Adjustments
+  - Inputs: RGBA
+    - RGBA
+      - Left-edge socket
+  - Outputs: R, G, B, A
+    - R
+      - Right-edge socket
+    - G
+      - Right-edge socket
+    - B
+      - Right-edge socket
+    - A
+      - Right-edge socket
+  - Properties:
+- Switch (`sbs:lib:blend_switch/switch`)
+  - Library: Filters > Adjustments
+  - Inputs: input_1, input_2
+    - input_1
+      - Left-edge socket
+    - input_2
       - Left-edge socket
   - Outputs: output
   - Properties:
-    - Angle
+    - Switch
+      - Default: 1
+- Switch Grayscale (`sbs:lib:blend_switch/switch_grayscale`)
+  - Library: Filters > Adjustments
+  - Inputs: input_1, input_2
+    - input_1
+      - Left-edge socket
+    - input_2
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Switch
+      - Default: 1
+- Threshold (`sbs:lib:threshold/threshold`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Threshold
       - Control: slider
-      - Default: 0.125
+      - Default: 0.01
       - Range: 0..1
-    - Intensity
+    - Mode
+      - Control: dropdown
+      - Default: Greater
+      - Choices: Greater / Greater or equal / Lower / Lower or equal
+- 3D Perlin Noise (`sbs:lib:3d_perlin_noise/3D_perlin_noise`)
+  - Library: Filters > Adjustments
+  - Inputs: position
+    - position
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Invert
+      - Default: 0
+    - Scale
+      - Control: slider
+      - Default: 32
+      - Range: 0..64
+    - Size
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..2
+    - Offset
+      - Control: slider
+      - Default: 0 0 0
+      - Range: -1..1
+    - Distortion Intensity
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Distortion Scale Multiplier
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Baseline
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Absolute
+      - Default: 0
+    - Enable Tiling
+      - Default: 0
+- 3D Perlin Noise Fractal (`sbs:lib:3d_perlin_noise/3D_perlin_noise_fractal`)
+  - Library: Filters > Adjustments
+  - Inputs: position
+    - position
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Invert
+      - Default: 0
+    - Scale
+      - Control: slider
+      - Default: 32
+      - Range: 0..64
+    - Size
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..2
+    - Offset
+      - Control: slider
+      - Default: 0 0 0
+      - Range: -1..1
+    - Distortion Intensity
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Distortion Scale Multiplier
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Min Level
+      - Control: slider
+      - Default: 1
+      - Range: 1..7
+    - Max Level
+      - Control: slider
+      - Default: 7
+      - Range: 1..7
+    - Roughness
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Lacunarity
+      - Control: slider
+      - Default: 2
+      - Range: 1..4
+    - Global Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Baseline
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Absolute
+      - Default: 0
+    - Enable Tiling
+      - Default: 0
+- 3D Ridged Noise Fractal (`sbs:lib:3d_perlin_noise/3D_ridged_noise_fractal`)
+  - Library: Filters > Adjustments
+  - Inputs: position
+    - position
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Invert
+      - Default: 0
+    - Scale
+      - Control: slider
+      - Default: 32
+      - Range: 0..64
+    - Size
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..2
+    - Offset
+      - Control: slider
+      - Default: 0 0 0
+      - Range: -1..1
+    - Distortion Intensity
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Distortion Scale Multiplier
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Min Level
+      - Control: slider
+      - Default: 1
+      - Range: 1..7
+    - Max Level
+      - Control: slider
+      - Default: 7
+      - Range: 1..7
+    - Roughness
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..2
+    - Lacunarity
+      - Control: slider
+      - Default: 2
+      - Range: 1..4
+    - Global Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Baseline
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Enable Tiling
+      - Default: 0
+- 3D Worley Noise (`sbs:lib:3d_worley_noise/3D_worley_noise`)
+  - Library: Filters > Adjustments
+  - Inputs: position
+    - position
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 32
+      - Range: 1..64
+    - Size
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..1
+    - Mode
+      - Default: 0
+    - Minkowski Number
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..20
+    - Style
+      - Default: 0
+    - Border Width
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..1
+    - Roundness
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Invert
+      - Default: 0
+- 3d Simplex Noise (`sbs:lib:3d_simplex_noise/3d_simplex_noise`)
+  - Library: Filters > Adjustments
+  - Inputs: position
+    - position
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Scale
+      - Control: slider
+      - Default: 32
+      - Range: 0..64
+    - Size
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..2
+- 3d Voronoi (`sbs:lib:noise_voronoi/3d_voronoi`)
+  - Library: Filters > Adjustments
+  - Inputs: position
+    - position
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Invert
+      - Default: 0
+    - Scale
+      - Control: slider
+      - Default: 8
+      - Range: 0..32
+    - Size
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..1
+    - Offset
+      - Control: slider
+      - Default: 0 0 0
+      - Range: 0..1
+    - Disorder
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Distortion Intensity
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Distortion Scale Multiplier
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Rounded Curve
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Distance Scale
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Distance Mode
+      - Default: 0
+    - Minkowski Number
+      - Control: slider
+      - Default: 1
+      - Range: 0.01..5
+    - Style
+      - Default: 0
+    - Edge Thickness
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..0.5
+    - Random Color Seed Mode
+      - Default: 0
+    - Random Color Seed
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+    - Enable Tiling
+      - Default: 0
+- 3d Voronoi Fractal (`sbs:lib:noise_voronoi/3d_voronoi_fractal`)
+  - Library: Filters > Adjustments
+  - Inputs: position
+    - position
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Invert
+      - Default: 0
+    - Scale
+      - Control: slider
+      - Default: 8
+      - Range: 0..32
+    - Size
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..1
+    - Offset
+      - Control: slider
+      - Default: 0 0 0
+      - Range: 0..1
+    - Disorder
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Distortion Intensity
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Distortion Scale Multiplier
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Min Level
+      - Control: slider
+      - Default: 0
+      - Range: 0..4
+    - Max Level
       - Control: slider
       - Default: 4
-      - Range: 0..10
-- Non Uniform Blur (`non_uniform_blur`)
-  - Library: Filters > Blur and warp
-  - Tooltip: blur by a mask
-  - Inputs: in, mask
-    - in
+      - Range: 0..4
+    - Roughness
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Lacunarity
+      - Control: slider
+      - Default: 2
+      - Range: 1..4
+    - Global Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Rounded Curve
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Distance Scale
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Distance Mode
+      - Default: 0
+    - Minkowski Number
+      - Control: slider
+      - Default: 1
+      - Range: 0.01..5
+    - Blend Mode
+      - Default: 0
+    - Style
+      - Default: 0
+    - Edge Thickness
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..0.5
+    - Random Color Seed Mode
+      - Default: 0
+    - Random Color Seed
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+    - Enable Tiling
+      - Default: 0
+- Add (`sbs:lib:blend/add`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
+      - Left-edge socket
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Add
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Add Sub (`sbs:lib:blend/add_sub`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
+      - Left-edge socket
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Add_Sub
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Bevel Smooth (`sbs:lib:bevel_smooth/bevel_smooth`)
+  - Library: Filters > Adjustments
+  - Inputs: mask_input, source_input, distance_map
+    - mask_input
+      - Left-edge socket
+    - source_input
+      - Left-edge socket
+    - distance_map
+      - Left-edge socket
+  - Outputs: output, uv
+    - output
+      - Right-edge socket
+    - uv
+      - Right-edge socket
+  - Properties:
+    - Output Mode
+      - Default: 0
+    - Direction
+      - Default: 0
+    - Maximum Distance
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..1
+    - Mask Smoothness
+      - Control: slider
+      - Default: 2
+      - Range: 0..16
+    - Mask Offset
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mask Threshold
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Distance Metric
+      - Default: 0
+    - Scale
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..1
+    - Distance Map Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Color Burn (`sbs:lib:blend/color_burn`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
+      - Left-edge socket
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Color_Burn
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Color Dodge (`sbs:lib:blend/color_dodge`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
+      - Left-edge socket
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Color_Dodge
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Convert To Linear (`sbs:lib:linear_srgb_conversion/convert_to_linear`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Convert To Linear Grayscale (`sbs:lib:linear_srgb_conversion/convert_to_linear_grayscale`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Convert To Srgb (`sbs:lib:linear_srgb_conversion/convert_to_srgb`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Convert To Srgb Grayscale (`sbs:lib:linear_srgb_conversion/convert_to_srgb_grayscale`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Copy (`sbs:lib:blend/copy`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
+      - Left-edge socket
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Copy
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Difference (`sbs:lib:blend/difference`)
+  - Library: Filters > Adjustments
+  - Inputs: Background, Foreground, Mask
+    - Background
+      - Left-edge socket
+    - Foreground
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Difference
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Diffusion Uv (`sbs:lib:diffusion/diffusion_uv`)
+  - Library: Filters > Adjustments
+  - Inputs: input, mask
+    - input
       - Left-edge socket
     - mask
       - Left-edge socket
   - Outputs: output
   - Properties:
-    - Intensity
+    - Iterations
       - Control: slider
-      - Default: 8
+      - Default: 16
       - Range: 0..64
-- Radial Blur (`radial_blur`)
-  - Library: Filters > Blur and warp
-  - Tooltip: spin blur around a centre
-  - Inputs: in
-    - in
+- Dissolve (`sbs:lib:blend/dissolve`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
+      - Left-edge socket
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Dissolve
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Dissolve 2 (`sbs:lib:blend/dissolve_2`)
+  - Library: Filters > Adjustments
+  - Inputs: foreground, background, mask
+    - foreground
+      - Left-edge socket
+    - background
+      - Left-edge socket
+    - mask
       - Left-edge socket
   - Outputs: output
   - Properties:
-    - Blur type
-      - Control: dropdown
-      - Default: Spin
-      - Choices: Spin / Zoom (legacy)
-    - Samples
-      - Control: int
-      - Default: 64
-      - Range: 1..128
-    - Angle
+    - Opacity
       - Control: slider
-      - Default: 0.125
-      - Range: 0..0.5
-    - Center X
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Exclusion (`sbs:lib:blend/exclusion`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
+      - Left-edge socket
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Exclusion
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Flood Fill To Color (`sbs:lib:flood_fill_2/flood_fill_to_color`)
+  - Library: Filters > Adjustments
+  - Inputs: input, color_input
+    - input
+      - Left-edge socket
+    - color_input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Hsl Adjustement
+      - Control: slider
+      - Default: 0 0 0
+      - Range: -1..1
+    - Hsl Random
+      - Control: slider
+      - Default: 0 0 0
+      - Range: -1..1
+- Flood Fill To Grayscale (`sbs:lib:flood_fill_2/flood_fill_to_grayscale`)
+  - Library: Filters > Adjustments
+  - Inputs: input, grayscale_input
+    - input
+      - Left-edge socket
+    - grayscale_input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Luminance Adjustement
       - Control: slider
       - Default: 0
-      - Range: -0.5..0.5
-    - Center Y
+      - Range: -1..1
+    - Luminance Random
       - Control: slider
       - Default: 0
-      - Range: -0.5..0.5
-    - Zoom amount
+      - Range: -1..1
+- Floodfill To Index (`sbs:lib:floodfill_to_index/floodfill_to_index`)
+  - Library: Filters > Adjustments
+  - Inputs: bbox, special_shape_infos
+    - bbox
+      - Left-edge socket
+    - special_shape_infos
+      - Left-edge socket
+  - Outputs: shape_index, shape_data_table, shape_count, shape_data_table_size
+    - shape_index
+      - Right-edge socket
+    - shape_data_table
+      - Right-edge socket
+    - shape_count
+      - Right-edge socket
+    - shape_data_table_size
+      - Right-edge socket
+  - Properties:
+    - Output
+      - Default: 0
+    - Ignore Shape Smaller Than
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Show Floodfill Data Table
+      - Default: 0
+- Hard Light (`sbs:lib:blend/hard_light`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
+      - Left-edge socket
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Hard_Light
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Hbao (`sbs:lib:hbao_2/hbao`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Use World Units
+      - Default: 0
+    - Height Depth
       - Control: slider
       - Default: 0.1
       - Range: 0..1
-    - Zoom radius
+    - Surface Size
+      - Control: slider
+      - Default: 300
+      - Range: 0..1000
+    - Height Depth Cm
+      - Control: slider
+      - Default: 30
+      - Range: 0..1000
+    - Radius
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Samples
+      - Default: 8
+    - Non Square
+      - Default: 1
+    - Gpu Optim
+      - Default: 0
+- Histogram Scan Non Uniform (`sbs:lib:histogram_scan_non_uniform/histogram_scan_non_uniform`)
+  - Library: Filters > Adjustments
+  - Inputs: input, position_1, contrast_1
+    - input
+      - Left-edge socket
+    - position_1
+      - Left-edge socket
+    - contrast_1
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Custom Position
+      - Default: 1
+    - Position
       - Control: slider
       - Default: 0.5
-      - Range: 0.01..0.5
-- Anisotropic Blur (`anisotropic_blur`)
-  - Library: Filters > Blur and warp
-  - Tooltip: blur stretched in one direction
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Intensity
-      - Control: slider
-      - Default: 8
-      - Range: 0..64
-    - Anisotropy
-      - Control: slider
-      - Default: 0.8
       - Range: 0..1
-    - Angle
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-- Symmetry (`symmetry`)
-  - Library: Filters > Transform
-  - Tooltip: mirror the image around a line
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Symmetry mode
-      - Control: dropdown
-      - Default: Mirror X
-      - Choices: Mirror X / Mirror Y / Mirror X / Y / Diagonal left / Diagonal right / Eight-fold
-    - Transfer mode
-      - Control: dropdown
-      - Default: Copy
-      - Choices: Copy / Add / Subtract / Multiply / Add sub / Max / Min
-    - Offset
-      - Control: slider
-      - Default: 0
-      - Range: -0.5..0.5
-    - Flip side
-      - Control: checkbox
-      - Default: off
-- Skew (`skew`)
-  - Library: Filters > Transform
-  - Tooltip: shear that keeps tiling
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Skew X
-      - Control: int
+    - Custom Contrast
       - Default: 1
-      - Range: -8..8
-    - Skew Y
-      - Control: int
-      - Default: 0
-      - Range: -8..8
-    - Align
-      - Control: dropdown
-      - Default: Top left
-      - Choices: Center / Top left / Bottom right
-- Auto Levels (`auto_levels`)
+    - Contrast
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+- Histogram Select (`sbs:lib:histogram_select/histogram_select`)
   - Library: Filters > Adjustments
-  - Tooltip: stretch values to the full range
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Per channel
-      - Control: checkbox
-      - Default: off
-- Channel Mixer (`channel_mixer`)
-  - Library: Filters > Adjustments
-  - Tooltip: mix colour channels
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Red from red
-      - Control: slider
-      - Default: 1
-      - Range: -2..2
-    - Red from green
-      - Control: slider
-      - Default: 0
-      - Range: -2..2
-    - Red from blue
-      - Control: slider
-      - Default: 0
-      - Range: -2..2
-    - Green from red
-      - Control: slider
-      - Default: 0
-      - Range: -2..2
-    - Green from green
-      - Control: slider
-      - Default: 1
-      - Range: -2..2
-    - Green from blue
-      - Control: slider
-      - Default: 0
-      - Range: -2..2
-    - Blue from red
-      - Control: slider
-      - Default: 0
-      - Range: -2..2
-    - Blue from green
-      - Control: slider
-      - Default: 0
-      - Range: -2..2
-    - Blue from blue
-      - Control: slider
-      - Default: 1
-      - Range: -2..2
-    - Monochrome
-      - Control: checkbox
-      - Default: off
-- Alpha Merge (`alpha_merge`)
-  - Library: Filters > Adjustments
-  - Tooltip: put a grayscale image into the alpha channel
-  - Inputs: rgb, alpha
-    - rgb
-      - Left-edge socket
-    - alpha
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Color To Mask (`color_to_mask`)
-  - Library: Filters > Adjustments
-  - Tooltip: mask of pixels close to a colour
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Red
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Green
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Blue
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Range
-      - Control: slider
-      - Default: 0.2
-      - Range: 0..1
-    - Softness
-      - Control: slider
-      - Default: 0.1
-      - Range: 0..1
-- Replace Color (`replace_color`)
-  - Library: Filters > Adjustments
-  - Tooltip: replace one colour with another
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Source red
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Source green
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Source blue
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Target red
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Target green
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Target blue
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Range
-      - Control: slider
-      - Default: 0.25
-      - Range: 0..1
-    - Softness
-      - Control: slider
-      - Default: 0.15
-      - Range: 0..1
-- Pow (`pow`)
-  - Library: Filters > Adjustments
-  - Tooltip: raise values to a power
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Exponent
-      - Control: slider
-      - Default: 2
-      - Range: 0..8
-- Histogram Shift (`histogram_shift`)
-  - Library: Filters > Adjustments
-  - Tooltip: shift all values
-  - Inputs: in
-    - in
+  - Inputs: input
+    - input
       - Left-edge socket
   - Outputs: output
   - Properties:
@@ -6343,127 +7544,1008 @@
       - Control: slider
       - Default: 0.5
       - Range: 0..1
-- Grayscale Conversion (`grayscale_conversion`)
-  - Library: Filters > Adjustments
-  - Tooltip: weighted grayscale
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Red weight
+    - Range
       - Control: slider
-      - Default: 0.3
+      - Default: 0.25
       - Range: 0..1
-    - Green weight
-      - Control: slider
-      - Default: 0.59
-      - Range: 0..1
-    - Blue weight
-      - Control: slider
-      - Default: 0.11
-      - Range: 0..1
-- Sobel (`sobel`)
-  - Library: Filters > Effects
-  - Tooltip: sobel edge magnitude
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Intensity
-      - Control: slider
-      - Default: 1
-      - Range: 0..16
-- Glow (`glow`)
-  - Library: Filters > Effects
-  - Tooltip: glow around bright areas
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Glow size
-      - Control: slider
-      - Default: 8
-      - Range: 0..128
-    - Glow amount
-      - Control: slider
-      - Default: 1
-      - Range: 0..8
-    - Clear amount
+    - Constrast
       - Control: slider
       - Default: 0
       - Range: 0..1
-    - Glow color R
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Glow color G
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Glow color B
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-- Mosaic (`mosaic`)
-  - Library: Filters > Effects
-  - Tooltip: mosaic of the map regions (or a pixel grid without a map)
-  - Inputs: in, mosaic_map
-    - in
+- Linear Burn (`sbs:lib:blend/linear_burn`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
       - Left-edge socket
-    - mosaic_map
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Linear_Burn
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Linear Srgb To Srgb (`sbs:lib:color_space_conversion/linear_srgb_to_srgb`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
       - Left-edge socket
   - Outputs: output
   - Properties:
-    - Intensity (with map)
+- Linear Srgb To Srgb Grayscale (`sbs:lib:color_space_conversion/linear_srgb_to_srgb_grayscale`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Luminance Highpass (`sbs:lib:luminance_highpass/luminance_highpass`)
+  - Library: Filters > Adjustments
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Luminance_Highpass
+  - Properties:
+    - Radius
+      - Control: slider
+      - Default: 6
+      - Range: 0..64
+- Luminosity (`sbs:lib:blend/luminosity`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
+      - Left-edge socket
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Exclusion
+  - Properties:
+    - Opacity
       - Control: slider
       - Default: 1
       - Range: 0..1
-    - Cells per side (no map)
-      - Control: int
-      - Default: 16
-      - Range: 1..128
-- Non Uniform Directional Warp (`non_uniform_directional_warp`)
-  - Library: Filters > Blur and warp
-  - Tooltip: warp along a direction chosen per pixel
-  - Inputs: in, intensity, angle
-    - in
+    - Alpha Blending
+      - Default: 1
+- Max (`sbs:lib:blend/max`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
       - Left-edge socket
-    - intensity
+    - Background
       - Left-edge socket
-    - angle
+    - Mask
+      - Left-edge socket
+  - Outputs: Max
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Min (`sbs:lib:blend/min`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
+      - Left-edge socket
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Min
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Multiply (`sbs:lib:blend/multiply`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
+      - Left-edge socket
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Multiply
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Overlay (`sbs:lib:blend/overlay`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
+      - Left-edge socket
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Overlay
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Premult To Straight (`sbs:lib:pre_multiply_straight/premult_to_straight`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
       - Left-edge socket
   - Outputs: output
+  - Properties:
+- Replace Color Range (`sbs:lib:replace_color/replace_color_range`)
+  - Library: Filters > Adjustments
+  - Inputs: Input
+    - Input
+      - Left-edge socket
+  - Outputs: ToTargetColorRange
+  - Properties:
+    - SourceColor
+      - Control: slider
+      - Default: 0.501961 0.501961 0.501961
+      - Range: 0..1
+    - TargetColor
+      - Control: slider
+      - Default: 0.501961 0.501961 0.501961
+      - Range: 0..1
+    - SourceRange
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Threshold
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+- Rgb-a Merge (`sbs:lib:rgb-a_merge/rgb-a_merge`)
+  - Library: Filters > Adjustments
+  - Inputs: RGB, A
+    - RGB
+      - Left-edge socket
+    - A
+      - Left-edge socket
+  - Outputs: RGB-A_Merge
+  - Properties:
+- Rgb-a Split (`sbs:lib:rgb-a_split/rgb-a_split`)
+  - Library: Filters > Adjustments
+  - Inputs: RGBA
+    - RGBA
+      - Left-edge socket
+  - Outputs: RGB, A
+    - RGB
+      - Right-edge socket
+    - A
+      - Right-edge socket
+  - Properties:
+- Rt Ao (`sbs:lib:rt_ao_v2/rt_ao`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Use Physical Size
+      - Default: 0
+    - Physical Size
+      - Control: slider
+      - Default: 100 100 10
+      - Range: 0..200
+    - Samples
+      - Control: slider
+      - Default: 128
+      - Range: 1..256
+    - Height Scale
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..1
+    - Distribution
+      - Default: 0
+    - Max Distance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Spread Angle
+      - Control: slider
+      - Default: 1
+      - Range: 0.001..1
+- Rt Caustics Color (`sbs:lib:rt_caustics/rt_caustics_color`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Output Color Space
+      - Default: 1
+    - Photon Grid Size
+      - Default: 0
+    - Surface Height Scale
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..1
+    - Surface Height Position
+      - Control: slider
+      - Default: 0.2
+      - Range: 0..1
+    - Surface Ior
+      - Control: slider
+      - Default: 1.333
+      - Range: 1..2
+    - Photon Size
+      - Control: slider
+      - Default: 10
+      - Range: 1..50
+    - Dispersion
+      - Control: slider
+      - Default: 0.005
+      - Range: 0..0.01
+    - Jittering
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Light Position
+      - Control: slider
+      - Default: 0.5 0.5
+      - Range: 0..1
+    - Background Color
+      - Control: slider
+      - Default: 0 0 0
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Rt Caustics Grayscale (`sbs:lib:rt_caustics/rt_caustics_grayscale`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Output Color Space
+      - Default: 1
+    - Photon Grid Size
+      - Default: 0
+    - Surface Height Scale
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..1
+    - Surface Height Position
+      - Control: slider
+      - Default: 0.2
+      - Range: 0..1
+    - Surface Ior
+      - Control: slider
+      - Default: 1.333
+      - Range: 1..2
+    - Photon Size
+      - Control: slider
+      - Default: 10
+      - Range: 1..50
+    - Jittering
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Light Position
+      - Control: slider
+      - Default: 0.5 0.5
+      - Range: 0..1
+    - Non Square Expansion
+      - Default: 1
+- Screen (`sbs:lib:blend/screen`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
+      - Left-edge socket
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Screen
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Soft Light (`sbs:lib:blend/soft_light`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
+      - Left-edge socket
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Soft_Light
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Srgb To Linear Srgb (`sbs:lib:color_space_conversion/srgb_to_linear_srgb`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Srgb To Linear Srgb Grayscale (`sbs:lib:color_space_conversion/srgb_to_linear_srgb_grayscale`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Straight To Premult (`sbs:lib:pre_multiply_straight/straight_to_premult`)
+  - Library: Filters > Adjustments
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Subtract (`sbs:lib:blend/subtract`)
+  - Library: Filters > Adjustments
+  - Inputs: Foreground, Background, Mask
+    - Foreground
+      - Left-edge socket
+    - Background
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Substract
+  - Properties:
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Alpha Blending
+      - Default: 1
+- Tile Random (`sbs:lib:pattern_tile_random/tile_random`)
+  - Library: Filters > Adjustments
+  - Inputs: pattern_input, background_input
+    - pattern_input
+      - Left-edge socket
+    - background_input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - X Amount
+      - Control: slider
+      - Default: 4
+      - Range: 1..64
+    - Y Amount
+      - Control: slider
+      - Default: 4
+      - Range: 1..64
+    - Non Square Expansion
+      - Default: 1
+    - Pattern
+      - Default: 2
+    - Image Input Filtering
+      - Default: 0
+    - Pattern Specific
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Specific Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Rotation
+      - Default: 0
+    - Pattern Rotation Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Symmetry Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Symmetry Random Mode
+      - Default: 0
+    - Split Mode
+      - Default: 1
+    - Split Threshold
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Split Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..10
+    - Size Random X
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Size Random Y
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Interstice Mode
+      - Default: 1
+    - Interstice Amount
+      - Control: slider
+      - Default: 0.2
+      - Range: 0..1
+    - Shape Scale
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Shape Scale Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Shape Rotation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Shape Rotation Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Shape Rotation Constraint
+      - Default: 1
+    - Position Offset
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Position Offset Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Position Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Position Random Constraints
+      - Default: 1
+    - Pattern Color
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Pattern Color Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Color Parametrisation
+      - Default: 0
+    - Pattern Color Parametrisation Intensity
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Background Color
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Blending Mode
+      - Default: 0
+    - Mask Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mask Invert
+      - Default: 0
+- Tile Random 2 (`sbs:lib:pattern_tile_random_2/tile_random_2`)
+  - Library: Filters > Adjustments
+  - Inputs: random_size_map, random_slant_map, round_corners_radius_map, bevel_distance_map, mask_map
+    - random_size_map
+      - Left-edge socket
+    - random_slant_map
+      - Left-edge socket
+    - round_corners_radius_map
+      - Left-edge socket
+    - bevel_distance_map
+      - Left-edge socket
+    - mask_map
+      - Left-edge socket
+  - Outputs: output, flood_fill_data1
+    - output
+      - Right-edge socket
+    - flood_fill_data1
+      - Right-edge socket
+  - Properties:
+    - Amount X
+      - Control: slider
+      - Default: 10
+      - Range: 2..16
+    - Amount Y
+      - Control: slider
+      - Default: 10
+      - Range: 2..16
+    - Random Size Multiplier
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Random Size Input Map Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Random Size X
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Random Size Y
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Random Size Distribution
+      - Default: 0
+    - Interstice Thickness
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Random Position Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Round Corners Radius
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Round Corners Radius Input Map Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Shape Scale Multiplier
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Shape Scale Random Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Shape Rotation
+      - Control: slider
+      - Default: 0
+      - Range: 0..0.25
+    - Shape Rotation Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Shape Corners Position Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Random Slant Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Random Slant Input Map Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Random Slant X
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Random Slant Y
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Random Slant Distribution
+      - Default: 0
+    - Bevel Distance Mode
+      - Default: 0
+    - Bevel Distance Multiplier
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..1
+    - Bevel Distance Input Map Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Bevel Rounded Curve
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Enable Per Axis Bevel Control
+      - Default: 0
+    - Bevel Distance X
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Bevel Distance Y
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Mask Random Invert
+      - Default: 0
+    - Mask Random Start
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mask Random End
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mask By Cell Area Invert
+      - Default: 0
+    - Mask By Cell Area Start
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mask By Cell Area End
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mask Map Input Invert
+      - Default: 0
+    - Mask Map Input Start
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mask Map Input End
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Tile Random Color (`sbs:lib:pattern_tile_random/tile_random_color`)
+  - Library: Filters > Adjustments
+  - Inputs: pattern_input, background_input
+    - pattern_input
+      - Left-edge socket
+    - background_input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - X Amount
+      - Control: slider
+      - Default: 4
+      - Range: 1..64
+    - Y Amount
+      - Control: slider
+      - Default: 4
+      - Range: 1..64
+    - Non Square Expansion
+      - Default: 1
+    - Pattern
+      - Default: 2
+    - Image Input Filtering
+      - Default: 0
+    - Pattern Specific
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Specific Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Rotation
+      - Default: 0
+    - Pattern Rotation Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Symmetry Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Pattern Symmetry Random Mode
+      - Default: 0
+    - Split Mode
+      - Default: 1
+    - Split Threshold
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Split Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..10
+    - Size Random X
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Size Random Y
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Interstice Mode
+      - Default: 1
+    - Interstice Amount
+      - Control: slider
+      - Default: 0.2
+      - Range: 0..1
+    - Shape Scale
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Shape Scale Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Shape Rotation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Shape Rotation Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Shape Rotation Constraint
+      - Default: 1
+    - Position Offset
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Position Offset Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Position Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Position Random Constraints
+      - Default: 1
+    - Pattern Color
+      - Control: slider
+      - Default: 1 1 1 1
+      - Range: 0..1
+    - Pattern Color Random
+      - Control: slider
+      - Default: 0 0 0 0
+      - Range: 0..1
+    - Pattern Color Parametrisation
+      - Default: 0
+    - Pattern Color Parametrisation Intensity
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Color Parametrization Affect
+      - Default: 1
+    - Background Color
+      - Control: slider
+      - Default: 0 0 0 1
+      - Range: 0..1
+    - Blending Mode
+      - Default: 0
+    - Mask Random
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mask Invert
+      - Default: 0
+- Triangle Grid Base (`sbs:lib:pattern_triangle_grid/triangle_grid_base`)
+  - Library: Filters > Adjustments
+  - Inputs: height, vector_map, color_input
+    - height
+      - Left-edge socket
+    - vector_map
+      - Left-edge socket
+    - color_input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Color Output
+      - Control: dropdown
+      - Default: Smooth heights
+      - Choices: Smooth heights / Flat triangles / Edge distance
+    - Triangulation
+      - Default: 0
+    - X Amount
+      - Control: slider
+      - Default: 16
+      - Range: 1..64
+    - Y Amount
+      - Control: slider
+      - Default: 16
+      - Range: 1..64
+    - Random Position Multiplier
+      - Control: slider
+      - Default: 1
+      - Range: 0..2
+    - Random Position
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..1
+    - Vector Map Displacement
+      - Control: slider
+      - Default: 0
+      - Range: 0..2
+    - Quincunx Offset X
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Quincunx Offset Y
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Rotation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Rotation Disorder
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Height Input Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Height Random
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Blend Mode
+      - Default: 0
+    - Thin Line Blend Mode
+      - Default: 2
+    - Distance Blend Mode
+      - Default: 0
+    - Color Source
+      - Default: 2
+    - Color Source Opacity
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Distance To Edge Thickness
+      - Control: slider
+      - Default: 0.025
+      - Range: 0..0.1
+    - Thin Line Color
+      - Control: slider
+      - Default: 1 1 1 1
+      - Range: 0..1
+    - Thin Line Background
+      - Control: slider
+      - Default: 0 0 0 1
+      - Range: 0..1
+    - Random Color Seed Mode
+      - Default: 0
+    - Random Color Seed
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+    - Non Square Expansion
+      - Default: 1
+- Edge Wear (`sbs:lib:ma_edge_wear/edge_wear`)
+  - Library: Filters > Adjustments
+  - Inputs: Input_2, Input_4, Input_1, Input_3
+    - Input_2
+      - Left-edge socket
+    - Input_4
+      - Left-edge socket
+    - Input_1
+      - Left-edge socket
+    - Input_3
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Enable
+      - Default: 1
+    - Image Input
+      - Default: 0
+    - Color
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..1
+    - Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Level
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Radius
+      - Control: slider
+      - Default: 1
+      - Range: 0..10
+    - Amount
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+
+### Filters > Blur and warp (21)
+
+- Anisotropic Blur (`sbs:lib:anisotropic_blur/anisotropic_blur`)
+  - Library: Filters > Blur and warp
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Anisotropic_Blur
   - Properties:
     - Intensity
       - Control: slider
-      - Default: 0.1
-      - Range: -1..1
+      - Default: 10
+      - Range: 0..16
+    - Anisotropy
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
     - Angle
       - Control: slider
       - Default: 0
       - Range: 0..1
-- Multi Directional Warp (`multi_directional_warp`)
+    - Quality
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Anisotropic Blur Grayscale (`sbs:lib:anisotropic_blur/anisotropic_blur_grayscale`)
   - Library: Filters > Blur and warp
-  - Tooltip: warp in several directions at once
-  - Inputs: in, warp
-    - in
+  - Inputs: Source
+    - Source
       - Left-edge socket
-    - warp
+  - Outputs: Anisotropic_Blur
+  - Properties:
+    - Intensity
+      - Control: slider
+      - Default: 10
+      - Range: 0..16
+    - Anisotropy
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Quality
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Blur Hq (`sbs:lib:blur_hq/blur_hq`)
+  - Library: Filters > Blur and warp
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Blur_HQ
+  - Properties:
+    - Intensity
+      - Control: slider
+      - Default: 10
+      - Range: 0..16
+    - Quality
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Blur Hq Grayscale (`sbs:lib:blur_hq/blur_hq_grayscale`)
+  - Library: Filters > Blur and warp
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Blur_HQ
+  - Properties:
+    - Intensity
+      - Control: slider
+      - Default: 10
+      - Range: 0..16
+    - Quality
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Multi Directional Warp Color (`sbs:lib:multi_directional_warp/multi_directional_warp_color`)
+  - Library: Filters > Blur and warp
+  - Inputs: input, intensity_input
+    - input
+      - Left-edge socket
+    - intensity_input
       - Left-edge socket
   - Outputs: output
   - Properties:
     - Intensity
       - Control: slider
-      - Default: 0.1
-      - Range: -1..1
-    - Directions
-      - Control: dropdown
-      - Default: 4
-      - Choices: 1 / 2 / 4
-    - Warp angle
+      - Default: 10
+      - Range: 0..20
+    - Warp Angle
       - Control: slider
       - Default: 0
       - Range: 0..1
@@ -6471,100 +8553,1470 @@
       - Control: dropdown
       - Default: Average
       - Choices: Average / Max / Min / Chain
-- Rgba Split (`rgba_split`)
-  - Library: Filters > Adjustments
-  - Tooltip: split into R, G, B and A grayscale outputs
-  - Inputs: in
-    - in
+    - Directions
+      - Control: dropdown
+      - Default: 4 directions
+      - Choices: 1 1 direction / 2 2 directions / 4 4 directions
+- Multi Directional Warp Grayscale (`sbs:lib:multi_directional_warp/multi_directional_warp_grayscale`)
+  - Library: Filters > Blur and warp
+  - Inputs: input, intensity_input
+    - input
       - Left-edge socket
-  - Outputs: r, g, b, a
-    - r
-      - Right-edge socket
-    - g
-      - Right-edge socket
-    - b
-      - Right-edge socket
-    - a
-      - Right-edge socket
-  - Properties:
-    - none
-- Alpha Split (`alpha_split`)
-  - Library: Filters > Adjustments
-  - Tooltip: split into an RGB output and an alpha output
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: rgb, alpha
-    - rgb
-      - Right-edge socket
-    - alpha
-      - Right-edge socket
-  - Properties:
-    - none
-- Shape Stroke (`shape_stroke`)
-  - Library: Filters > Effects
-  - Tooltip: outline of a shape
-  - Inputs: in
-    - in
+    - intensity_input
       - Left-edge socket
   - Outputs: output
   - Properties:
-    - Width
+    - Intensity
       - Control: slider
-      - Default: 8
-      - Range: 0.5..256
-    - Offset
+      - Default: 10
+      - Range: 0..20
+    - Warp Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mode
+      - Control: dropdown
+      - Default: Average
+      - Choices: Average / Max / Min / Chain
+    - Directions
+      - Control: dropdown
+      - Default: 4 directions
+      - Choices: 1 1 direction / 2 2 directions / 4 4 directions
+- Non Uniform Blur (`sbs:lib:non_uniform_blur/non_uniform_blur`)
+  - Library: Filters > Blur and warp
+  - Inputs: Source, Effect
+    - Source
+      - Left-edge socket
+    - Effect
+      - Left-edge socket
+  - Outputs: Non_Uniform_Blur
+  - Properties:
+    - Intensity
+      - Control: slider
+      - Default: 10
+      - Range: 0..50
+    - Anisotropy
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Asymmetry
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Samples
+      - Control: slider
+      - Default: 4
+      - Range: 1..16
+    - Blades
+      - Control: slider
+      - Default: 5
+      - Range: 1..9
+- Non Uniform Blur Grayscale (`sbs:lib:non_uniform_blur/non_uniform_blur_grayscale`)
+  - Library: Filters > Blur and warp
+  - Inputs: Source, Effect
+    - Source
+      - Left-edge socket
+    - Effect
+      - Left-edge socket
+  - Outputs: Non_Uniform_Blur
+  - Properties:
+    - Intensity
+      - Control: slider
+      - Default: 10
+      - Range: 0..50
+    - Anisotropy
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Asymmetry
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Samples
+      - Control: slider
+      - Default: 4
+      - Range: 1..16
+    - Blades
+      - Control: slider
+      - Default: 5
+      - Range: 1..9
+- Non Uniform Directional Warp Color (`sbs:lib:non_uniform_directional_warp/non_uniform_directional_warp_color`)
+  - Library: Filters > Blur and warp
+  - Inputs: input, intensity_input, warp_angle_input
+    - input
+      - Left-edge socket
+    - intensity_input
+      - Left-edge socket
+    - warp_angle_input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Intensity
+      - Control: slider
+      - Default: 10
+      - Range: 0..20
+    - Warp Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Warp Angle Input Multiplier
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Trail Mode
+      - Default: 1
+    - Trail Length
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Trail Fade
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Trail Curve
       - Control: slider
       - Default: 0
       - Range: -1..1
-    - Softness
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Shape threshold
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Opacity
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Outline color R
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Outline color G
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Outline color B
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-- Shape Glow (`shape_glow`)
-  - Library: Filters > Effects
-  - Tooltip: glow around a shape
-  - Inputs: in
-    - in
+- Non Uniform Directional Warp Grayscale (`sbs:lib:non_uniform_directional_warp/non_uniform_directional_warp_grayscale`)
+  - Library: Filters > Blur and warp
+  - Inputs: input, intensity_input, warp_angle_input
+    - input
+      - Left-edge socket
+    - intensity_input
+      - Left-edge socket
+    - warp_angle_input
       - Left-edge socket
   - Outputs: output
   - Properties:
-    - Width
+    - Intensity
       - Control: slider
-      - Default: 16
-      - Range: 0.5..256
-    - Softness
+      - Default: 10
+      - Range: 0..20
+    - Warp Angle
       - Control: slider
-      - Default: 0.5
+      - Default: 0
       - Range: 0..1
+    - Warp Angle Input Multiplier
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Trail Mode
+      - Default: 1
+    - Trail Length
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Trail Fade
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Trail Curve
+      - Control: slider
+      - Default: 0
+      - Range: -1..1
+- Radial Blur (`sbs:lib:radial_blur/radial_blur`)
+  - Library: Filters > Blur and warp
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Samples
+      - Control: slider
+      - Default: 64
+      - Range: 1..128
+    - Angle
+      - Control: slider
+      - Default: 0.13
+      - Range: 0..0.5
+    - Center Position
+      - Control: slider
+      - Default: 0 0
+      - Range: -0.5..0.5
+- Radial Blur Grayscale (`sbs:lib:radial_blur/radial_blur_grayscale`)
+  - Library: Filters > Blur and warp
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Samples
+      - Control: slider
+      - Default: 64
+      - Range: 1..128
+    - Angle
+      - Control: slider
+      - Default: 0.125
+      - Range: 0..0.5
+    - Center Position
+      - Control: slider
+      - Default: 0 0
+      - Range: -0.5..0.5
+- Slope Blur (`sbs:lib:slope_blur/slope_blur`)
+  - Library: Filters > Blur and warp
+  - Inputs: Source, Effect
+    - Source
+      - Left-edge socket
+    - Effect
+      - Left-edge socket
+  - Outputs: Slope_Blur
+  - Properties:
+    - Samples
+      - Control: slider
+      - Default: 8
+      - Range: 0..32
+    - Intensity
+      - Control: slider
+      - Default: 10
+      - Range: 0..16
+    - Mode
+      - Control: dropdown
+      - Default: Blur
+      - Choices: 5 Max (assumed) / 6 Min (assumed) / 7 Blur
+- Slope Blur Grayscale (`sbs:lib:slope_blur/slope_blur_grayscale`)
+  - Library: Filters > Blur and warp
+  - Inputs: Source, Effect
+    - Source
+      - Left-edge socket
+    - Effect
+      - Left-edge socket
+  - Outputs: Slope_Blur
+  - Properties:
+    - Samples
+      - Control: slider
+      - Default: 8
+      - Range: 0..32
+    - Intensity
+      - Control: slider
+      - Default: 10
+      - Range: 0..16
+    - Mode
+      - Control: dropdown
+      - Default: Blur
+      - Choices: 5 Max (assumed) / 6 Min (assumed) / 7 Blur
+- Slope Blur Grayscale 2 (`sbs:lib:slope_blur/slope_blur_grayscale_2`)
+  - Library: Filters > Blur and warp
+  - Inputs: Source, Effect
+    - Source
+      - Left-edge socket
+    - Effect
+      - Left-edge socket
+  - Outputs: Slope_Blur
+  - Properties:
+    - Samples
+      - Control: slider
+      - Default: 8
+      - Range: 0..32
+    - Intensity
+      - Control: slider
+      - Default: 10
+      - Range: 0..16
+    - Mode
+      - Control: dropdown
+      - Default: Blur
+      - Choices: 5 Max (assumed) / 6 Min (assumed) / 7 Blur
+- Swirl (`sbs:lib:swirl/swirl`)
+  - Library: Filters > Blur and warp
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Transform Matrix
+      - Control: slider
+      - Default: 2 0 0 2
+      - Range: 0..1
+    - Offset
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Amount
+      - Control: slider
+      - Default: 8
+      - Range: -16..16
+- Swirl Grayscale (`sbs:lib:swirl/swirl_grayscale`)
+  - Library: Filters > Blur and warp
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Transform Matrix
+      - Control: slider
+      - Default: 2 0 0 2
+      - Range: 0..1
+    - Offset
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Amount
+      - Control: slider
+      - Default: 8
+      - Range: -16..16
+- Vector Morph (`sbs:lib:vector_morph/vector_morph`)
+  - Library: Filters > Blur and warp
+  - Inputs: input, vector_field
+    - input
+      - Left-edge socket
+    - vector_field
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Amount
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+- Vector Morph Grayscale (`sbs:lib:vector_morph/vector_morph_grayscale`)
+  - Library: Filters > Blur and warp
+  - Inputs: input, vector_field
+    - input
+      - Left-edge socket
+    - vector_field
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Amount
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+- Vector Warp (`sbs:lib:vector_warp/vector_warp`)
+  - Library: Filters > Blur and warp
+  - Inputs: input, vector_map
+    - input
+      - Left-edge socket
+    - vector_map
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
     - Intensity
       - Control: slider
       - Default: 1
-      - Range: 0..4
-    - Shape threshold
+      - Range: 0..1
+    - Vector Format
+      - Control: dropdown
+      - Default: DirectX
+      - Choices: DirectX / OpenGL
+- Vector Warp Grayscale (`sbs:lib:vector_warp/vector_warp_grayscale`)
+  - Library: Filters > Blur and warp
+  - Inputs: input, vector_map
+    - input
+      - Left-edge socket
+    - vector_map
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Vector Format
+      - Control: dropdown
+      - Default: DirectX
+      - Choices: DirectX / OpenGL
+
+### Filters > Transform (27)
+
+- Auto Crop Color (`sbs:lib:auto_crop/auto_crop_color`)
+  - Library: Filters > Transform
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Mode
+      - Default: 0
+    - Use Alpha
+      - Default: 0
+    - Filtering Mode
+      - Default: 2
+- Auto Crop Grayscale (`sbs:lib:auto_crop/auto_crop_grayscale`)
+  - Library: Filters > Transform
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Mode
+      - Default: 0
+    - Filtering Mode
+      - Default: 2
+- Cartesian To Polar (`sbs:lib:cartesian_polar_transformation/cartesian_to_polar`)
+  - Library: Filters > Transform
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Cartesian To Polar Grayscale (`sbs:lib:cartesian_polar_transformation/cartesian_to_polar_grayscale`)
+  - Library: Filters > Transform
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Clone Patch (`sbs:lib:clone_patch/clone_patch`)
+  - Library: Filters > Transform
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output, areas
+    - output
+      - Right-edge socket
+    - areas
+      - Right-edge socket
+  - Properties:
+    - Show Patch Areas
+      - Default: 1
+    - Is Normal
+      - Default: 0
+    - Shape
+      - Default: 2
+    - Edge Threshold
       - Control: slider
       - Default: 0.5
       - Range: 0..1
+    - Edge Blur
+      - Control: slider
+      - Default: 0
+      - Range: 0..2
+    - Edge Smoothness
+      - Control: slider
+      - Default: 0
+      - Range: 0..2
+    - Grid Resolution
+      - Control: slider
+      - Default: 9
+      - Range: 1..11
+    - Src Matrix
+      - Control: slider
+      - Default: 6 0 0 6
+      - Range: 0..1
+    - Src Offset
+      - Control: slider
+      - Default: 1 0
+      - Range: -0.5..0.5
+    - Tgt Matrix
+      - Control: slider
+      - Default: 3 0 0 3
+      - Range: 0..1
+    - Tgt Offset
+      - Control: slider
+      - Default: -0.5 0
+      - Range: -0.5..0.5
+- Clone Patch Grayscale (`sbs:lib:clone_patch/clone_patch_grayscale`)
+  - Library: Filters > Transform
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output, areas
+    - output
+      - Right-edge socket
+    - areas
+      - Right-edge socket
+  - Properties:
+    - Show Patch Areas
+      - Default: 1
+    - Shape
+      - Default: 2
+    - Edge Threshold
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Edge Blur
+      - Control: slider
+      - Default: 0
+      - Range: 0..2
+    - Edge Smoothness
+      - Control: slider
+      - Default: 0
+      - Range: 0..2
+    - Grid Resolution
+      - Control: slider
+      - Default: 9
+      - Range: 1..11
+    - Src Matrix
+      - Control: slider
+      - Default: 6 0 0 6
+      - Range: 0..1
+    - Src Offset
+      - Control: slider
+      - Default: 1 0
+      - Range: -0.5..0.5
+    - Tgt Matrix
+      - Control: slider
+      - Default: 3 0 0 3
+      - Range: 0..1
+    - Tgt Offset
+      - Control: slider
+      - Default: -0.5 0
+      - Range: -0.5..0.5
+- Make It Tile Patch (`sbs:lib:make_it_tile_patch/make_it_tile_patch`)
+  - Library: Filters > Transform
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Make_It_Tile_Patch
+  - Properties:
+    - Mask Size
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Mask Precision
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Mask Warping
+      - Control: slider
+      - Default: 0
+      - Range: -100..100
+    - Pattern Size Width
+      - Control: slider
+      - Default: 200
+      - Range: 0..1000
+    - Pattern Size Height
+      - Control: slider
+      - Default: 200
+      - Range: 0..1000
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Size Variation
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+    - Octave
+      - Control: slider
+      - Default: 3
+      - Range: 0..6
+    - Rotation
+      - Control: slider
+      - Default: 0
+      - Range: -360..360
+    - Rotation Variation
+      - Control: slider
+      - Default: 0
+      - Range: 0..360
+    - Background Color
+      - Control: slider
+      - Default: 0 0 0 0
+      - Range: 0..1
+    - Color Variation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Make It Tile Patch Grayscale (`sbs:lib:make_it_tile_patch_grayscale/make_it_tile_patch_grayscale`)
+  - Library: Filters > Transform
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Make_It_Tile_Patch
+  - Properties:
+    - Mask Size
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Mask Precision
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Mask Warping
+      - Control: slider
+      - Default: 0
+      - Range: -100..100
+    - Pattern Size Width
+      - Control: slider
+      - Default: 200
+      - Range: 0..1000
+    - Pattern Size Height
+      - Control: slider
+      - Default: 200
+      - Range: 0..1000
+    - Disorder
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Size Variation
+      - Control: slider
+      - Default: 0
+      - Range: 0..100
+    - Octave
+      - Control: slider
+      - Default: 3
+      - Range: 0..6
+    - Rotation
+      - Control: slider
+      - Default: 0
+      - Range: -360..360
+    - Rotation Variation
+      - Control: slider
+      - Default: 0
+      - Range: 0..360
+    - Background Color
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Luminosity Variation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Make It Tile Photo (`sbs:lib:make_it_tile_photo/make_it_tile_photo`)
+  - Library: Filters > Transform
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Make_It_Tile_Photo
+  - Properties:
+    - Mask Warping H
+      - Control: slider
+      - Default: 0
+      - Range: -100..100
+    - Mask Warping V
+      - Control: slider
+      - Default: 0
+      - Range: -100..100
+    - Mask Size H
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..1
+    - Mask Size V
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..1
+    - Mask Precision H
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Mask Precision V
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+- Make It Tile Photo Grayscale (`sbs:lib:make_it_tile_photo_grayscale/make_it_tile_photo_grayscale`)
+  - Library: Filters > Transform
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Make_It_Tile_Photo
+  - Properties:
+    - Mask Warping H
+      - Control: slider
+      - Default: 0
+      - Range: -100..100
+    - Mask Warping V
+      - Control: slider
+      - Default: 0
+      - Range: -100..100
+    - Mask Size H
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..1
+    - Mask Size V
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..1
+    - Mask Precision H
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Mask Precision V
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+- Mirror (`sbs:lib:mirror/mirror`)
+  - Library: Filters > Transform
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Mirror Type
+      - Control: dropdown
+      - Default: Mirror X axis
+      - Choices: Mirror X axis / Mirror Y axis / Mirror corner
+    - Axis X
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Axis Y
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert X
+      - Default: 0
+    - Invert Y
+      - Default: 0
+    - Corner Type
+      - Control: dropdown
+      - Default: Top left
+      - Choices: Top left / Top right / Bottom left / Bottom right
+- Mirror Grayscale (`sbs:lib:mirror/mirror_grayscale`)
+  - Library: Filters > Transform
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Mirror Type
+      - Control: dropdown
+      - Default: Mirror X axis
+      - Choices: Mirror X axis / Mirror Y axis / Mirror corner
+    - Axis X
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Axis Y
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Invert X
+      - Default: 0
+    - Invert Y
+      - Default: 0
+    - Corner Type
+      - Control: dropdown
+      - Default: Top left
+      - Choices: Top left / Top right / Bottom left / Bottom right
+- Noise Upscale 1 (`sbs:lib:noise_upscale_1/noise_upscale_1`)
+  - Library: Filters > Transform
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Noise_ResolutionX2
+  - Properties:
+    - Offset1X
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Offset1Y
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Offset2X
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Offset2Y
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Noise Upscale 2 (`sbs:lib:noise_upscale_2/noise_upscale_2`)
+  - Library: Filters > Transform
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Noise_ResolutionX2_2
+  - Properties:
+    - Offset1X
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Offset1Y
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Offset2X
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Offset2Y
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Noise Upscale 3 (`sbs:lib:noise_upscale_3/noise_upscale_3`)
+  - Library: Filters > Transform
+  - Inputs: Source, Mask
+    - Source
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Noise_ResolutionX2_3
+  - Properties:
+- Polar To Cartesian (`sbs:lib:cartesian_polar_transformation/polar_to_cartesian`)
+  - Library: Filters > Transform
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Polar To Cartesian Grayscale (`sbs:lib:cartesian_polar_transformation/polar_to_cartesian_grayscale`)
+  - Library: Filters > Transform
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Quad Transform (`sbs:lib:quad_transform/quad_transform`)
+  - Library: Filters > Transform
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - P00
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - P01
+      - Control: slider
+      - Default: 0 1
+      - Range: 0..1
+    - P10
+      - Control: slider
+      - Default: 1 0
+      - Range: 0..1
+    - P11
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..1
+    - Culling
+      - Default: 2
+    - Enable Tiling
+      - Default: 0
+    - Background Color
+      - Control: slider
+      - Default: 0 0 0 1
+      - Range: 0..1
+    - Sampling
+      - Default: 0
+- Quad Transform Grayscale (`sbs:lib:quad_transform/quad_transform_grayscale`)
+  - Library: Filters > Transform
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - P00
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - P01
+      - Control: slider
+      - Default: 0 1
+      - Range: 0..1
+    - P10
+      - Control: slider
+      - Default: 1 0
+      - Range: 0..1
+    - P11
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..1
+    - Culling
+      - Default: 2
+    - Enable Tiling
+      - Default: 0
+    - Background Color
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Sampling
+      - Default: 0
+- Safe Transform (`sbs:lib:safe_transform/safe_transform`)
+  - Library: Filters > Transform
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Tile
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Offset Mode
+      - Default: 0
+    - Offset
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Rotation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Tile Safe Rotation
+      - Default: 1
+    - Symmetry
+      - Default: 0
+    - Background Color
+      - Control: slider
+      - Default: 0 0 0 0
+      - Range: 0..1
+    - Mipmap Mode
+      - Default: 0
+    - Mip Level
+      - Control: slider
+      - Default: 0
+      - Range: 0..10
+- Safe Transform Grayscale (`sbs:lib:safe_transform/safe_transform_grayscale`)
+  - Library: Filters > Transform
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Tile
+      - Control: slider
+      - Default: 1
+      - Range: 1..16
+    - Offset Mode
+      - Default: 0
+    - Offset
+      - Control: slider
+      - Default: 0 0
+      - Range: 0..1
+    - Rotation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Tile Safe Rotation
+      - Default: 1
+    - Symmetry
+      - Default: 0
+    - Background Color
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Mipmap Mode
+      - Default: 0
+    - Mip Level
+      - Control: slider
+      - Default: 0
+      - Range: 0..10
+- Skew (`sbs:lib:skew/skew`)
+  - Library: Filters > Transform
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Skew
+  - Properties:
+    - Axis
+      - Default: 0
+    - Amount
+      - Control: slider
+      - Default: 0
+      - Range: -1..1
+    - Align
+      - Default: 1
+- Skew Grayscale (`sbs:lib:skew/skew_grayscale`)
+  - Library: Filters > Transform
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Skew
+  - Properties:
+    - Axis
+      - Default: 0
+    - Amount
+      - Control: slider
+      - Default: 0
+      - Range: -1..1
+    - Align
+      - Default: 1
+- Symmetry (`sbs:lib:symmetry/symmetry`)
+  - Library: Filters > Transform
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Symmetry
+  - Properties:
+    - Symmetry Mode
+      - Default: 8
+    - Transfer Mode
+      - Default: 0
+- Symmetry Slice (`sbs:lib:symmetry_slice/symmetry_slice`)
+  - Library: Filters > Transform
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Symmetry_Slice
+  - Properties:
+    - Symmetry Mode
+      - Control: slider
+      - Default: 5
+      - Range: 0..6
+    - Transfer Mode
+      - Control: slider
+      - Default: 0
+      - Range: 0..6
+    - Blend
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Flip Side
+      - Default: 0
+    - Flip Side2
+      - Default: 0
+- Trapezoid Transform (`sbs:lib:trapezoid_transform/trapezoid_transform`)
+  - Library: Filters > Transform
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Top Stretch
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Bottom Stretch
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Background Color
+      - Control: slider
+      - Default: 0 0 0 1
+      - Range: 0..1
+    - Sampling
+      - Default: 0
+- Trapezoid Transform Grayscale (`sbs:lib:trapezoid_transform/trapezoid_transform_grayscale`)
+  - Library: Filters > Transform
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Top Stretch
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Bottom Stretch
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Background Color
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Sampling
+      - Default: 0
+
+### Filters > Effects (20)
+
+- Cross Section (`sbs:lib:cross_section/cross_section`)
+  - Library: Filters > Effects
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Cross Section Coord
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Axis
+      - Default: 0
+    - Show Helper
+      - Default: 0
+    - Helper Scale
+      - Control: slider
+      - Default: 0.25
+      - Range: 0..1
+    - Helper Position
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..1
+    - Height Scale
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Height Offset
+      - Control: slider
+      - Default: 0
+      - Range: -1..1
+    - Drawing Style
+      - Default: 0
+    - Invert Gradient
+      - Default: 0
+    - Smooth Polygonal
+      - Default: 0
+    - Segment Amount
+      - Control: slider
+      - Default: 32
+      - Range: 2..256
+    - Line Thickness
+      - Control: slider
+      - Default: 0.01
+      - Range: 0..0.1
+    - Line Style
+      - Default: 0
+    - Line Smoothness
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Color
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Background Color
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Diffusion Color (`sbs:lib:diffusion/diffusion_color`)
+  - Library: Filters > Effects
+  - Inputs: input, mask, intensity
+    - input
+      - Left-edge socket
+    - mask
+      - Left-edge socket
+    - intensity
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Iterations
+      - Control: slider
+      - Default: 16
+      - Range: 0..64
+    - Distance
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Enable Dithering
+      - Default: 1
+    - Is Normal
+      - Default: 0
+    - Use Alpha As Mask
+      - Default: 0
+- Diffusion Grayscale (`sbs:lib:diffusion/diffusion_grayscale`)
+  - Library: Filters > Effects
+  - Inputs: input, mask, intensity
+    - input
+      - Left-edge socket
+    - mask
+      - Left-edge socket
+    - intensity
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Iterations
+      - Control: slider
+      - Default: 16
+      - Range: 0..64
+    - Distance
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Enable Dithering
+      - Default: 1
+- Fxaa Color (`sbs:lib:fxaa/fxaa_color`)
+  - Library: Filters > Effects
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Affect Alpha Channel
+      - Default: 0
+- Fxaa Grayscale (`sbs:lib:fxaa/fxaa_grayscale`)
+  - Library: Filters > Effects
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Glow (`sbs:lib:glow/glow`)
+  - Library: Filters > Effects
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Glow
+  - Properties:
+    - Glow Amount
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Clear Amount
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Glow Size
+      - Control: slider
+      - Default: 10
+      - Range: 0..20
+    - Glow Color
+      - Control: slider
+      - Default: 1 1 1 1
+      - Range: 0..1
+- Glow Grayscale (`sbs:lib:glow/glow_grayscale`)
+  - Library: Filters > Effects
+  - Inputs: Source
+    - Source
+      - Left-edge socket
+  - Outputs: Glow
+  - Properties:
+    - Glow Amount
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Clear Amount
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Glow Size
+      - Control: slider
+      - Default: 10
+      - Range: 0..20
+- Mosaic (`sbs:lib:mosaic/mosaic`)
+  - Library: Filters > Effects
+  - Inputs: Source, Effect
+    - Source
+      - Left-edge socket
+    - Effect
+      - Left-edge socket
+  - Outputs: Mosaic
+  - Properties:
+    - Samples
+      - Control: slider
+      - Default: 8
+      - Range: 0..16
+    - Intensity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+- Mosaic Grayscale (`sbs:lib:mosaic/mosaic_grayscale`)
+  - Library: Filters > Effects
+  - Inputs: Source, Effect
+    - Source
+      - Left-edge socket
+    - Effect
+      - Left-edge socket
+  - Outputs: Mosaic
+  - Properties:
+    - Samples
+      - Control: slider
+      - Default: 8
+      - Range: 0..16
+    - Intensity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+- Reaction Diffusion (`sbs:lib:reaction_diffusion/reaction_diffusion`)
+  - Library: Filters > Effects
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: Output
+  - Properties:
+    - Radius
+      - Control: slider
+      - Default: 1
+      - Range: 0..16
+    - Contrast
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Shape Drop Shadow Color (`sbs:lib:shape_shadow/shape_drop_shadow_color`)
+  - Library: Filters > Effects
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output, mask
+    - output
+      - Right-edge socket
+    - mask
+      - Right-edge socket
+  - Properties:
+    - Angle
+      - Control: slider
+      - Default: 0.25
+      - Range: 0..1
+    - Distance
+      - Control: slider
+      - Default: 0.02
+      - Range: -0.5..0.5
+    - Size
+      - Control: slider
+      - Default: 0.15
+      - Range: 0..1
+    - Spread
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Opacity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Glow Color
+      - Control: slider
+      - Default: 0 0 0
+      - Range: 0..1
+    - Input Is Premult
+      - Default: 1
+    - Pre Multiply Output
+      - Default: 0
+- Shape Drop Shadow Grayscale (`sbs:lib:shape_shadow/shape_drop_shadow_grayscale`)
+  - Library: Filters > Effects
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output, mask
+    - output
+      - Right-edge socket
+    - mask
+      - Right-edge socket
+  - Properties:
+    - Angle
+      - Control: slider
+      - Default: 0.25
+      - Range: 0..1
+    - Distance
+      - Control: slider
+      - Default: 0.02
+      - Range: -0.5..0.5
+    - Size
+      - Control: slider
+      - Default: 0.15
+      - Range: 0..1
+    - Spread
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Opacity
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Shadow Color
+      - Control: slider
+      - Default: 0 0 0
+      - Range: 0..1
+    - Mask Color
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..1
+    - Pre Multiply Output
+      - Default: 0
+- Shape Extrude (`sbs:lib:shape_extrude/shape_extrude`)
+  - Library: Filters > Effects
+  - Inputs: extrude_shape_input, profile_gradient, profile_mask
+    - extrude_shape_input
+      - Left-edge socket
+    - profile_gradient
+      - Left-edge socket
+    - profile_mask
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Extrude Height
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Extrude Depth
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Extrude Shape
+      - Default: 1
+    - Extrude Shape Size
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..1
+    - Scale
+      - Control: slider
+      - Default: 0.75
+      - Range: 0..1
+    - Profile Type
+      - Default: 0
+    - Bevel Height
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..1
+    - Bevel Intensity
+      - Control: slider
+      - Default: 0.25
+      - Range: 0..1
+    - Bevel Curve
+      - Control: slider
+      - Default: 0
+      - Range: -1..1
+    - Mirror Bevel
+      - Default: 0
+    - Downscale
+      - Control: slider
+      - Default: 0
+      - Range: 0..2
+    - Position
+      - Control: slider
+      - Default: 0.75 0.25
+      - Range: 0..1
+    - Output Range
+      - Default: 0
+- Shape Extrude 2 (`sbs:lib:shape_extrude/shape_extrude_2`)
+  - Library: Filters > Effects
+  - Inputs: extrude_shape_input, profile_gradient, profile_mask
+    - extrude_shape_input
+      - Left-edge socket
+    - profile_gradient
+      - Left-edge socket
+    - profile_mask
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Extrude Height
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Extrude Depth
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Extrude Shape
+      - Default: 1
+    - Extrude Shape Size
+      - Control: slider
+      - Default: 1 1
+      - Range: 0..1
+    - Scale
+      - Control: slider
+      - Default: 0.75
+      - Range: 0..1
+    - Profile Type
+      - Default: 0
+    - Bevel Height
+      - Control: slider
+      - Default: 0.1
+      - Range: 0..1
+    - Bevel Intensity
+      - Control: slider
+      - Default: 0.25
+      - Range: 0..1
+    - Bevel Curve
+      - Control: slider
+      - Default: 0
+      - Range: -1..1
+    - Mirror Bevel
+      - Default: 0
+    - Downscale
+      - Control: slider
+      - Default: 0
+      - Range: 0..2
+    - Position
+      - Control: slider
+      - Default: 0.75 0.25
+      - Range: 0..1
+    - Output Range
+      - Default: 0
+- Shape Glow Color (`sbs:lib:shape_glow/shape_glow_color`)
+  - Library: Filters > Effects
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output, mask
+    - output
+      - Right-edge socket
+    - mask
+      - Right-edge socket
+  - Properties:
+    - Mode
+      - Default: 0
+    - Width
+      - Control: slider
+      - Default: 0.25
+      - Range: -1..1
     - Spread
       - Control: slider
       - Default: 0
@@ -6573,3005 +10025,1947 @@
       - Control: slider
       - Default: 1
       - Range: 0..1
-    - Glow color R
+    - Glow Color
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..1
+    - Input Is Premult
+      - Default: 1
+    - Pre Multiply Output
+      - Default: 0
+- Shape Glow Grayscale (`sbs:lib:shape_glow/shape_glow_grayscale`)
+  - Library: Filters > Effects
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output, mask
+    - output
+      - Right-edge socket
+    - mask
+      - Right-edge socket
+  - Properties:
+    - Mode
+      - Default: 0
+    - Width
+      - Control: slider
+      - Default: 0.25
+      - Range: -1..1
+    - Spread
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Opacity
       - Control: slider
       - Default: 1
       - Range: 0..1
-    - Glow color G
+    - Glow Color
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..1
+    - Mask Color
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..1
+    - Pre Multiply Output
+      - Default: 0
+- Shape Stroke Color (`sbs:lib:shape_stroke/shape_stroke_color`)
+  - Library: Filters > Effects
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output, mask
+    - output
+      - Right-edge socket
+    - mask
+      - Right-edge socket
+  - Properties:
+    - Width
+      - Control: slider
+      - Default: 0.25
+      - Range: -1..1
+    - Opacity
       - Control: slider
       - Default: 1
       - Range: 0..1
-    - Glow color B
+    - Outline Color
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..1
+    - Input Is Premult
+      - Default: 1
+    - Premult Output
+      - Default: 0
+- Shape Stroke Grayscale (`sbs:lib:shape_stroke/shape_stroke_grayscale`)
+  - Library: Filters > Effects
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output, mask
+    - output
+      - Right-edge socket
+    - mask
+      - Right-edge socket
+  - Properties:
+    - Width
+      - Control: slider
+      - Default: 0.25
+      - Range: -1..1
+    - Opacity
       - Control: slider
       - Default: 1
       - Range: 0..1
-- Chrominance Extract (`chrominance_extract`)
-  - Library: Filters > Adjustments
-  - Tooltip: colour without brightness
-  - Inputs: in
-    - in
+    - Outline Color
+      - Control: slider
+      - Default: 1 1 1
+      - Range: 0..1
+    - Mask Color
+      - Control: slider
+      - Default: 0 0 0
+      - Range: 0..1
+    - Premult Output
+      - Default: 0
+- Summed Area Table (`sbs:lib:summed_area_table/summed_area_table`)
+  - Library: Filters > Effects
+  - Inputs: input
+    - input
       - Left-edge socket
   - Outputs: output
   - Properties:
-    - none
-- Shape Drop Shadow (`shape_drop_shadow`)
+- Uber Emboss (`sbs:lib:uber_emboss/uber_emboss`)
   - Library: Filters > Effects
-  - Tooltip: drop shadow of a mask
-  - Inputs: in
-    - in
+  - Inputs: Source, Height
+    - Source
+      - Left-edge socket
+    - Height
+      - Left-edge socket
+  - Outputs: Uber_Emboss
+  - Properties:
+    - Ambient Color
+      - Control: slider
+      - Default: 0 0 0 1
+      - Range: 0..1
+    - Diffuse Color
+      - Control: slider
+      - Default: 1 1 1 1
+      - Range: 0..1
+    - Specular Color
+      - Control: slider
+      - Default: 1 1 1 1
+      - Range: 0..1
+    - Light Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Light Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Specular Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Specular Glossiness
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Diffuse Roughness
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Shadows Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+
+### Filters > Masks and regions (9)
+
+- Bevel (`sbs:lib:bevel/bevel`)
+  - Library: Filters > Masks and regions
+  - Inputs: input, custom_curve
+    - input
+      - Left-edge socket
+    - custom_curve
+      - Left-edge socket
+  - Outputs: height, normal
+    - height
+      - Right-edge socket
+    - normal
+      - Right-edge socket
+  - Properties:
+    - Distance
+      - Control: slider
+      - Default: 0.5
+      - Range: -1..1
+    - Bevel Mode
+      - Control: dropdown
+      - Default: Round
+      - Choices: Round / Angular
+    - Smoothing
+      - Control: slider
+      - Default: 0
+      - Range: 0..5
+    - Non Uniform Blur
+      - Default: 1
+    - Use Custom Curve
+      - Default: 0
+    - Normal Intensity
+      - Control: slider
+      - Default: 10
+      - Range: 0..50
+    - Normal Format
+      - Control: dropdown
+      - Default: DirectX
+      - Choices: DirectX / OpenGL
+- Edge Detect (`sbs:lib:edge_detect/edge_detect`)
+  - Library: Filters > Masks and regions
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Edge Width
+      - Control: slider
+      - Default: 2
+      - Range: 1..16
+    - Edge Roundness
+      - Control: slider
+      - Default: 4
+      - Range: 0..16
+    - Invert
+      - Default: 0
+    - Tolerance
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Emboss With Gloss (`sbs:lib:emboss_with_gloss/emboss_with_gloss`)
+  - Library: Filters > Masks and regions
+  - Inputs: Source, Height
+    - Source
+      - Left-edge socket
+    - Height
+      - Left-edge socket
+  - Outputs: Emboss_With_Gloss
+  - Properties:
+    - HighlightColor
+      - Control: slider
+      - Default: 1 1 1 1
+      - Range: 0..1
+    - ShadowColor
+      - Control: slider
+      - Default: 0 0 0 1
+      - Range: 0..1
+    - Gloss
+      - Control: slider
+      - Default: 0.25
+      - Range: 0..0.5
+    - Intensity
+      - Control: slider
+      - Default: 5
+      - Range: 0..10
+    - LightAngle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Flood Fill (`sbs:lib:flood_fill_2/flood_fill`)
+  - Library: Filters > Masks and regions
+  - Inputs: mask
+    - mask
+      - Left-edge socket
+  - Outputs: output, referenceMap
+    - output
+      - Right-edge socket
+    - referenceMap
+      - Right-edge socket
+  - Properties:
+    - Profile
+      - Default: 70
+    - Advanced
+      - Default: 0
+    - ProfileOverride
+      - Control: slider
+      - Default: -1
+      - Range: -1..100
+- Flood Fill To Gradient (`sbs:lib:flood_fill_2/flood_fill_to_gradient`)
+  - Library: Filters > Masks and regions
+  - Inputs: input, angle_input, slope_input
+    - input
+      - Left-edge socket
+    - angle_input
+      - Left-edge socket
+    - slope_input
       - Left-edge socket
   - Outputs: output
   - Properties:
     - Angle
       - Control: slider
-      - Default: 0.125
+      - Default: 0
       - Range: 0..1
-    - Distance
-      - Control: slider
-      - Default: 0.03
-      - Range: 0..0.5
-    - Blur
-      - Control: slider
-      - Default: 6
-      - Range: 0..128
-    - Opacity
-      - Control: slider
-      - Default: 0.8
-      - Range: 0..1
-    - Spread
+    - Angle Variation
       - Control: slider
       - Default: 0
       - Range: 0..1
-- Contrast / Luminosity (`contrast_luminosity`)
-  - Library: Filters > Adjustments
-  - Tooltip: contrast around mid-gray and brightness shift
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: -4..4
-    - Luminosity
+    - Multiply By Bbox Size
       - Control: slider
       - Default: 0
-      - Range: -1..1
-- sRGB To Linear (`srgb_to_linear`)
-  - Library: Filters > Adjustments
-  - Tooltip: decode the sRGB curve (colour channels only)
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-- Linear To sRGB (`linear_to_srgb`)
-  - Library: Filters > Adjustments
-  - Tooltip: encode the sRGB curve (colour channels only)
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-- Premultiply (`premultiply`)
-  - Library: Filters > Adjustments
-  - Tooltip: alpha premultiplication
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Direction
-      - Control: dropdown
-      - Default: Straight to premultiplied
-      - Choices: Straight to premultiplied / Premultiplied to straight
-- Histogram Equalize (`histogram_equalize`)
-  - Library: Filters > Adjustments
-  - Tooltip: spread values evenly over 0..1
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Amount
+      - Range: 0..1
+    - Angle Image Input Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Slope Image Input Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Multiply By Slope Intensity
       - Control: slider
       - Default: 1
       - Range: 0..1
-    - Each colour channel separately
-      - Control: checkbox
-      - Default: off
-- Min Max (`min_max`)
-  - Library: Filters > Adjustments
-  - Tooltip: per-channel minimum or maximum of two images
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Operation
-      - Control: dropdown
-      - Default: Maximum
-      - Choices: Minimum / Maximum
-- Morphology (`morphology`)
-  - Library: Filters > Adjustments
-  - Tooltip: grow or shrink bright areas
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Operation
-      - Control: dropdown
-      - Default: Dilate (grow bright)
-      - Choices: Dilate (grow bright) / Erode (shrink bright) / Open / Close
-    - Radius (px at 512)
-      - Control: slider
-      - Default: 4
-      - Range: 0..128
-- Multi Switch (`multi_switch`)
-  - Library: Filters > Adjustments
-  - Tooltip: pass one of up to eight inputs
-  - Inputs: a, b, c, d, e, f, g, h
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-    - c
-      - Left-edge socket
-    - d
-      - Left-edge socket
-    - e
-      - Left-edge socket
-    - f
-      - Left-edge socket
-    - g
-      - Left-edge socket
-    - h
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Input (0 = a ... 7 = h)
-      - Control: int
-      - Default: 0
-      - Range: 0..7
-- Color LUT (`color_lut`)
-  - Library: Filters > Adjustments
-  - Tooltip: colour grade through a lookup table file (.cube, .3dl, or a strip / Hald image)
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Intensity
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-- Lookup Table (`lookup_table`)
-  - Library: Filters > Adjustments
-  - Tooltip: recolour through a lookup image
-  - Inputs: in, lut
-    - in
-      - Left-edge socket
-    - lut
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Lookup by
-      - Control: dropdown
-      - Default: Each channel
-      - Choices: Each channel / Luminance
-    - Row of the lookup image
+    - Flat Slope Color
       - Control: slider
       - Default: 0.5
       - Range: 0..1
-- Frequency Split (`frequency_split`)
-  - Library: Filters > Adjustments
-  - Tooltip: split into a blurred low band and a high band centred on gray (outputs
-  - Inputs: in
-    - in
+- Flood Fill To Gradient 2 (`sbs:lib:flood_fill_2/flood_fill_to_gradient_2`)
+  - Library: Filters > Masks and regions
+  - Inputs: input, angle_input, slope_input
+    - input
       - Left-edge socket
-  - Outputs: low, high
-    - low
-      - Right-edge socket
-    - high
-      - Right-edge socket
+    - angle_input
+      - Left-edge socket
+    - slope_input
+      - Left-edge socket
+  - Outputs: output
   - Properties:
-    - Split radius (px at 512)
+    - Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Angle Variation
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Multiply By Bbox Size
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Angle Image Input Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Slope Image Input Multiplier
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Multiply By Slope Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Flat Slope Color
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+- Flood Fill To Random Color (`sbs:lib:flood_fill_2/flood_fill_to_random_color`)
+  - Library: Filters > Masks and regions
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Flood Fill To Random Grayscale (`sbs:lib:flood_fill_2/flood_fill_to_random_grayscale`)
+  - Library: Filters > Masks and regions
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+- Shape Mapper (`sbs:lib:shape_mapper/shape_mapper`)
+  - Library: Filters > Masks and regions
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Shape
+      - Default: 0
+    - Pattern Amount
       - Control: slider
       - Default: 8
-      - Range: 0..128
-- Frequency Merge (`frequency_merge`)
-  - Library: Filters > Adjustments
-  - Tooltip: recombine the bands of frequency_split
-  - Inputs: low, high
-    - low
-      - Left-edge socket
-    - high
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Detail gain
-      - Control: slider
-      - Default: 1
-      - Range: 0..8
-- Auto Crop (`auto_crop`)
-  - Library: Filters > Transform
-  - Tooltip: stretch the non-black area to fill the image
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Threshold
-      - Control: slider
-      - Default: 0.001
-      - Range: 0..1
-    - Margin
-      - Control: slider
+      - Range: 0..10
+    - Link Segments Pattern Amount
       - Default: 0
-      - Range: 0..0.4
-    - Keep aspect ratio
-      - Control: checkbox
-      - Default: off
-- Polar Convert (`polar_convert`)
-  - Library: Filters > Transform
-  - Tooltip: mode(0 cartesian to polar,1 polar to cartesian) radius rotation tile
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Direction
-      - Control: dropdown
-      - Default: Cartesian to polar
-      - Choices: Cartesian to polar / Polar to cartesian
+    - Segments
+      - Control: slider
+      - Default: 8
+      - Range: 1..16
     - Radius
       - Control: slider
-      - Default: 1
-      - Range: 0.05..2
-    - Rotation
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Make tileable
-      - Control: checkbox
-      - Default: on
-- Clone Patch (`clone_patch`)
-  - Library: Filters > Transform
-  - Tooltip: copy a patch from one place to another
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Source X
-      - Control: slider
-      - Default: 0.25
-      - Range: 0..1
-    - Source Y
-      - Control: slider
-      - Default: 0.25
-      - Range: 0..1
-    - Target X
-      - Control: slider
-      - Default: 0.75
-      - Range: 0..1
-    - Target Y
-      - Control: slider
-      - Default: 0.75
+      - Default: 0.5
       - Range: 0..1
     - Width
       - Control: slider
-      - Default: 0.3
-      - Range: 0..1
-    - Height
-      - Control: slider
-      - Default: 0.3
-      - Range: 0..1
-    - Feather
-      - Control: slider
-      - Default: 0.25
-      - Range: 0..1
-    - Rotation
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Opacity
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-- Noise Upscale (`noise_upscale`)
-  - Library: Filters > Transform
-  - Tooltip: smoothly enlarge a coarse image
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Cells across
-      - Control: int
-      - Default: 16
-      - Range: 2..512
-    - Filtering
-      - Control: dropdown
-      - Default: Bicubic
-      - Choices: Bicubic / Bilinear / Nearest
-- Symmetry Slice (`symmetry_slice`)
-  - Library: Filters > Transform
-  - Tooltip: kaleidoscope of one slice around the centre
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Slices
-      - Control: int
-      - Default: 6
-      - Range: 1..64
-    - Mirror alternate slices
-      - Control: checkbox
-      - Default: on
-    - Rotation
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Make tileable
-      - Control: checkbox
-      - Default: on
-- Quad Transform (`quad_transform`)
-  - Library: Filters > Transform
-  - Tooltip: move the four corners
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Top-left X
-      - Control: slider
-      - Default: 0
-      - Range: -0.45..0.45
-    - Top-left Y
-      - Control: slider
-      - Default: 0
-      - Range: -0.45..0.45
-    - Top-right X
-      - Control: slider
-      - Default: 0
-      - Range: -0.45..0.45
-    - Top-right Y
-      - Control: slider
-      - Default: 0
-      - Range: -0.45..0.45
-    - Bottom-right X
-      - Control: slider
-      - Default: 0
-      - Range: -0.45..0.45
-    - Bottom-right Y
-      - Control: slider
-      - Default: 0
-      - Range: -0.45..0.45
-    - Bottom-left X
-      - Control: slider
-      - Default: 0
-      - Range: -0.45..0.45
-    - Bottom-left Y
-      - Control: slider
-      - Default: 0
-      - Range: -0.45..0.45
-    - Make tileable
-      - Control: checkbox
-      - Default: on
-- Trapezoid Transform (`trapezoid_transform`)
-  - Library: Filters > Transform
-  - Tooltip: perspective taper
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Top width
-      - Control: slider
-      - Default: 0.6
-      - Range: 0.05..2
-    - Bottom width
-      - Control: slider
-      - Default: 1
-      - Range: 0.05..2
-    - Skew
-      - Control: slider
-      - Default: 0
-      - Range: -0.5..0.5
-    - Make tileable
-      - Control: checkbox
-      - Default: on
-- Palette Extract (`palette_extract`)
-  - Library: Filters > Adjustments
-  - Tooltip: strip of the dominant colours of an image
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Colours
-      - Control: int
-      - Default: 5
-      - Range: 2..16
-- Palette Apply (`palette_apply`)
-  - Library: Filters > Adjustments
-  - Tooltip: snap colours to the nearest palette colour
-  - Inputs: in, palette
-    - in
-      - Left-edge socket
-    - palette
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Colours in palette
-      - Control: int
-      - Default: 5
-      - Range: 2..16
-    - Amount
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-- Make It Tile Mirror (`make_it_tile_mirror`)
-  - Library: Filters > Transform
-  - Tooltip: make an image tile by mirroring
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Mirror
-      - Control: dropdown
-      - Default: Both axes
-      - Choices: Both axes / Horizontal / Vertical
-- Halftone (`halftone`)
-  - Library: Filters > Effects
-  - Tooltip: dots whose size follows brightness
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Dots across
-      - Control: int
-      - Default: 16
-      - Range: 2..256
-    - Layout
-      - Control: dropdown
-      - Default: Grid
-      - Choices: Grid / Diagonal
-    - Softness
-      - Control: slider
-      - Default: 0.1
-      - Range: 0..1
-    - Brightness gain
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-- Reaction Diffusion (`reaction_diffusion`)
-  - Library: Filters > Effects
-  - Tooltip: growing spots and stripes seeded by the input
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Simulation size
-      - Control: int
-      - Default: 160
-      - Range: 32..512
-    - Iterations
-      - Control: int
-      - Default: 600
-      - Range: 1..6000
-    - Feed
-      - Control: slider
-      - Default: 0.037
-      - Range: 0..0.1
-    - Kill
-      - Control: slider
-      - Default: 0.06
-      - Range: 0..0.1
-    - Random seeds
-      - Control: slider
-      - Default: 0.01
-      - Range: 0..1
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-- FXAA (`fxaa`)
-  - Library: Filters > Effects
-  - Tooltip: smooth jagged edges
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Strength
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Edge threshold
-      - Control: slider
-      - Default: 0.05
-      - Range: 0..1
-- Bilateral Blur (`bilateral_blur`)
-  - Library: Filters > Blur and warp
-  - Tooltip: blur that keeps edges
-  - Inputs: in, guide
-    - in
-      - Left-edge socket
-    - guide
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Radius (px at 512)
-      - Control: slider
-      - Default: 4
-      - Range: 0..32
-    - Colour tolerance
-      - Control: slider
-      - Default: 0.1
-      - Range: 0.005..2
-- Path Warp (`path_warp`)
-  - Library: Filters > Blur and warp
-  - Tooltip: push, slide or swirl a picture near a spline
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Built-in shape
-      - Control: dropdown
-      - Default: Wave
-      - Choices: Horizontal line / Diagonal line / Wave / Circle / Spiral / Zigzag / Figure eight
-    - Wave height
-      - Control: slider
-      - Default: 0.12
-      - Range: 0..0.5
-    - Wave count
-      - Control: slider
-      - Default: 2
-      - Range: 0.25..32
-    - Path (-1 = all)
-      - Control: int
-      - Default: -1
-      - Range: -1..63
-    - Paths from the chosen one (0 = rest)
-      - Control: int
-      - Default: 1
-      - Range: 0..63
-    - Path scale
-      - Control: slider
-      - Default: 1
-      - Range: 0.05..8
-    - Path rotation (turns)
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Path mirror
-      - Control: dropdown
-      - Default: None
-      - Choices: None / Horizontal / Vertical / Both
-    - Reverse path direction
-      - Control: checkbox
-      - Default: off
-    - Reach (px at 512)
-      - Control: slider
-      - Default: 80
-      - Range: 1..512
-    - Amount (px at 512)
-      - Control: slider
-      - Default: 24
-      - Range: -256..256
-    - Mode
-      - Control: dropdown
-      - Default: Push away
-      - Choices: Push away / Slide along / Swirl
-- Cross Section (`cross_section`)
-  - Library: Filters > Effects
-  - Tooltip: plot of the values along one row
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Row
-      - Control: slider
       - Default: 0.5
       - Range: 0..1
-    - Height scale
-      - Control: slider
-      - Default: 1
-      - Range: 0..8
-    - Line width (px at 512)
-      - Control: slider
-      - Default: 3
-      - Range: 0.5..32
-    - Fill under the line
-      - Control: checkbox
-      - Default: on
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Uber Emboss (`uber_emboss`)
-  - Library: Filters > Effects
-  - Tooltip: emboss with gloss (outputs
-  - Inputs: height, mask, gloss
-    - height
-      - Left-edge socket
-    - mask
-      - Left-edge socket
-    - gloss
-      - Left-edge socket
-  - Outputs: emboss, highlight, shadow
-    - emboss
-      - Right-edge socket
-    - highlight
-      - Right-edge socket
-    - shadow
-      - Right-edge socket
-  - Properties:
-    - Intensity
-      - Control: slider
-      - Default: 3
-      - Range: 0..64
-    - Light direction
-      - Control: slider
-      - Default: 0.125
-      - Range: 0..1
-    - Light height
-      - Control: slider
-      - Default: 0.45
-      - Range: 0.05..1
-    - Gloss
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Highlight strength
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Gain
-      - Control: slider
-      - Default: 1
-      - Range: 0..8
-- Diffusion (`diffusion`)
-  - Library: Filters > Effects
-  - Tooltip: fill unknown pixels from the known ones (alpha or mask)
-  - Inputs: in, mask
-    - in
-      - Left-edge socket
-    - mask
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Smoothing (px at 512)
-      - Control: slider
-      - Default: 0
-      - Range: 0..64
-    - Grayscale result
-      - Control: checkbox
-      - Default: off
-- Summed Area Table (`summed_area_table`)
-  - Library: Filters > Effects
-  - Tooltip: running sums of the image
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Per colour channel
-      - Control: checkbox
-      - Default: off
-    - Normalize to 0-1
-      - Control: checkbox
-      - Default: on
-- Vector Morph (`vector_morph`)
-  - Library: Filters > Blur and warp
-  - Tooltip: move pixels along a vector map and fill the holes
-  - Inputs: in, vector
-    - in
-      - Left-edge socket
-    - vector
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Amount (px at 512)
-      - Control: slider
-      - Default: 40
-      - Range: 0..512
-    - Flip Y of the vectors
-      - Control: checkbox
-      - Default: off
-- Safe Transform (`safe_transform`)
-  - Library: Filters > Transform
-  - Tooltip: transform that stays seamless
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Mode
-      - Control: dropdown
-      - Default: Tile-safe (integer)
-      - Choices: Tile-safe (integer) / Free
     - Rotation
       - Control: slider
       - Default: 0
       - Range: 0..1
-    - Scale X
-      - Control: slider
-      - Default: 1
-      - Range: 0.01..32
-    - Scale Y
-      - Control: slider
-      - Default: 1
-      - Range: 0.01..32
-    - Offset X
-      - Control: slider
+    - Flip 1on 2
       - Default: 0
-      - Range: -1..1
-    - Offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Filtering
-      - Control: dropdown
-      - Default: Bilinear
-      - Choices: Nearest / Bilinear / Bicubic
-    - Edges (free mode)
-      - Control: dropdown
-      - Default: Repeat
-      - Choices: Repeat / Mirror / Clamp / Empty
-    - Rotate after scaling
-      - Control: checkbox
-      - Default: off
+    - Non Square Expansion
+      - Default: 1
 
-### Material nodes (30)
+### Material tools (26)
 
-- Curvature Smooth (`curvature_smooth`)
+- Curvature Smooth V2 (`sbs:lib:curvature_smooth_v2/curvature_smooth_v2`)
   - Library: Material tools
-  - Tooltip: smooth curvature from a normal map
-  - Inputs: in
-    - in
+  - Inputs: input
+    - input
       - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Smoothing
-      - Control: slider
-      - Default: 2
-      - Range: 0..32
-    - Intensity
-      - Control: slider
-      - Default: 6
-      - Range: 0..20
-- Height Blend (`height_blend`)
-  - Library: Material tools
-  - Tooltip: blend two height maps
-  - Inputs: bg, fg, mask
-    - bg
-      - Left-edge socket
-    - fg
-      - Left-edge socket
-    - mask
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Opacity
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Height transition
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..2
-    - Output
-      - Control: dropdown
-      - Default: Height
-      - Choices: Height / Blend mask
-- Edge Wear (`edge_wear`)
-  - Library: Mesh-driven
-  - Tooltip: edge wear mask from a height map
-  - Inputs: in, noise
-    - in
-      - Left-edge socket
-    - noise
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Amount
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Edge width
-      - Control: slider
-      - Default: 2
-      - Range: 0..16
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0.1..4
-- Dirt (`dirt`)
-  - Library: Mesh-driven
-  - Tooltip: dirt mask from an ambient occlusion map
-  - Inputs: in, noise
-    - in
-      - Left-edge socket
-    - noise
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Amount
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0.1..4
-- Dust (`dust`)
-  - Library: Mesh-driven
-  - Tooltip: dust mask from a normal map
-  - Inputs: in, noise
-    - in
-      - Left-edge socket
-    - noise
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Amount
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0.1..4
-- Baked Map (`baked_map`)
-  - Library: Mesh-driven
-  - Tooltip: map baked from meshes and stored in the package
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Bake set
-      - Control: dropdown of the sets stored in this package
-    - Map
-      - Control: dropdown of the map names
-    - Text when the package has no baked maps: "No baked maps in this package yet: use Tools > Mesh map baker."
-    - Button "Open the mesh map baker"
-    - Flip green (DirectX / OpenGL)
-      - Control: checkbox
-      - Default: off
-    - Invert
-      - Control: checkbox
-      - Default: off
-    - Convert to grayscale
-      - Control: checkbox
-      - Default: off
-- Mesh Weathering (`mesh_weathering`)
-  - Library: Mesh-driven
-  - Tooltip: wear, dirt and dust masks from baked maps
-  - Inputs: curvature, ao, normal, noise
+  - Outputs: curvature, convexity, concavity
     - curvature
-      - Left-edge socket
-    - ao
-      - Left-edge socket
-    - normal
-      - Left-edge socket
-    - noise
-      - Left-edge socket
-  - Outputs: output
+      - Right-edge socket
+    - convexity
+      - Right-edge socket
+    - concavity
+      - Right-edge socket
   - Properties:
-    - Edge wear
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Cavity dirt
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Dust on top
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Up direction tilt (degrees)
-      - Control: slider
-      - Default: 0
-      - Range: -180..180
-    - Dust spread (degrees)
-      - Control: slider
-      - Default: 60
-      - Range: 1..179
-    - Breakup
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Breakup scale
-      - Control: int
-      - Default: 8
-      - Range: 1..64
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-    - Contrast
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Invert
-      - Control: checkbox
-      - Default: off
-- Normal (`normal`)
-  - Library: Material tools
-  - Tooltip: height->normal (OpenGL +Y)
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Intensity
-      - Control: slider
-      - Default: 2
-      - Range: 0..10
-    - DirectX format
-      - Control: checkbox
-      - Default: off
-    - Fill alpha with input
-      - Control: checkbox
-      - Default: off
-- Normal Blend (`normal_blend`)
-  - Library: Material tools
-  - Tooltip: blend normal maps (a = background, b = foreground)
-  - Inputs: a, b, mask
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-    - mask
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Opacity
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-- Ao (`ao`)
-  - Library: Material tools
-  - Tooltip: ambient occlusion
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Method
-      - Control: dropdown
-      - Default: Blur (legacy)
-      - Choices: Blur (legacy) / Horizon (HBAO)
-    - Spread (legacy)
-      - Control: slider
-      - Default: 6
-      - Range: 0..64
-    - Height depth (legacy)
-      - Control: slider
-      - Default: 2
-      - Range: 0..10
     - Radius
       - Control: slider
       - Default: 1
       - Range: 0..1
+    - Normal Format
+      - Control: dropdown
+      - Default: DirectX
+      - Choices: DirectX / OpenGL
+- Curvature Sobel (`sbs:lib:curvature_sobel/curvature_sobel`)
+  - Library: Material tools
+  - Inputs: normal
+    - normal
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
     - Intensity
       - Control: slider
-      - Default: 1
-      - Range: 0..2
-    - Quality
-      - Control: dropdown
-      - Default: 8 samples
-      - Choices: 4 samples / 8 samples / 16 samples
-    - Use world units
-      - Control: checkbox
-      - Default: off
-    - Height depth (screen)
-      - Control: slider
-      - Default: 0.1
+      - Default: 0.5
       - Range: 0..1
-    - Surface size (cm)
+    - Input Normal Type
+      - Control: dropdown
+      - Default: DirectX
+      - Choices: DirectX / OpenGL
+- Facing Normal (`sbs:lib:facing_normal/facing_normal`)
+  - Library: Material tools
+  - Inputs: Normal
+    - Normal
+      - Left-edge socket
+  - Outputs: Facing_Normal
+  - Properties:
+- Height To Normal World Units (`sbs:lib:height_to_normal_world_units/height_to_normal_world_units`)
+  - Library: Material tools
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Surface Size
       - Control: slider
       - Default: 300
-      - Range: 1..1000
-    - Height depth (cm)
-      - Control: slider
-      - Default: 30
       - Range: 0..1000
-- Curvature (`curvature`)
-  - Library: Material tools
-  - Tooltip: curvature of a normal map
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Input
-      - Control: dropdown
-      - Default: Normal map
-      - Choices: Normal map / Height map (legacy)
-    - Normal format
+    - Height Depth
+      - Control: slider
+      - Default: 16
+      - Range: 0..100
+    - Normal Format
       - Control: dropdown
       - Default: OpenGL
-      - Choices: OpenGL / DirectX
-    - Intensity
-      - Control: slider
-      - Default: 4
-      - Range: 0..10
-    - Radius (height input)
-      - Control: slider
-      - Default: 3
-      - Range: 0..64
-- Normal Invert (`normal_invert`)
-  - Library: Material tools
-  - Tooltip: flip normal map channels
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Invert red (X)
-      - Control: checkbox
-      - Default: off
-    - Invert green (Y)
-      - Control: checkbox
-      - Default: on
-    - Invert blue (Z)
-      - Control: checkbox
-      - Default: off
-    - Invert alpha
-      - Control: checkbox
-      - Default: off
-- Normal Normalize (`normal_normalize`)
-  - Library: Material tools
-  - Tooltip: renormalise a normal map
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Normal Vector Rotation (`normal_vector_rotation`)
-  - Library: Material tools
-  - Tooltip: rotate normal vectors
-  - Inputs: in, rotation
-    - in
-      - Left-edge socket
-    - rotation
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Rotation angle
-      - Control: slider
+      - Choices: DirectX / OpenGL
+    - Sampling
       - Default: 0
-      - Range: 0..1
-    - Normal format
-      - Control: dropdown
-      - Default: OpenGL
-      - Choices: OpenGL / DirectX
-- Normal To Height (`normal_to_height`)
+- Height To Normal World Units 2 (`sbs:lib:height_to_normal_world_units/height_to_normal_world_units_2`)
   - Library: Material tools
-  - Tooltip: integrate a normal map into a height map
-  - Inputs: in
-    - in
+  - Inputs: input
+    - input
       - Left-edge socket
   - Outputs: output
   - Properties:
-    - Relief balance
+    - Surface Size
+      - Control: slider
+      - Default: 300
+      - Range: 0..1000
+    - Height Depth
+      - Control: slider
+      - Default: 16
+      - Range: 0..100
+    - Normal Format
+      - Control: dropdown
+      - Default: OpenGL
+      - Choices: DirectX / OpenGL
+    - Sampling
+      - Default: 0
+- Normal Add (`sbs:lib:normal_add/normal_add`)
+  - Library: Material tools
+  - Inputs: Normal, Normal_1
+    - Normal
+      - Left-edge socket
+    - Normal_1
+      - Left-edge socket
+  - Outputs: Normal
+  - Properties:
+- Normal To Height Hq (`sbs:lib:normal_to_height_hq/normal_to_height_hq`)
+  - Library: Material tools
+  - Inputs: normal
+    - normal
+      - Left-edge socket
+  - Outputs: height
+  - Properties:
+    - Normal Format
+      - Control: dropdown
+      - Default: DirectX
+      - Choices: DirectX / OpenGL
+    - Relief Balance
       - Control: slider
       - Default: 0.5
       - Range: 0..1
-    - Normal format
-      - Control: dropdown
-      - Default: OpenGL
-      - Choices: OpenGL / DirectX
-    - Global opacity
+    - Height Intensity
       - Control: slider
       - Default: 1
       - Range: 0..1
-- Normal Combine (`normal_combine`)
+    - Height Normalize
+      - Default: 0
+    - Sample Quality
+      - Default: 0
+- Rt Bent Normal (`sbs:lib:rt_bent_normal_v2/rt_bent_normal`)
   - Library: Material tools
-  - Tooltip: combine two normal maps
-  - Inputs: base, detail
-    - base
-      - Left-edge socket
-    - detail
+  - Inputs: input
+    - input
       - Left-edge socket
   - Outputs: output
   - Properties:
-    - Technique
-      - Control: dropdown
-      - Default: Detail oriented
-      - Choices: Whiteout / Channel mixer / Detail oriented
-- Bent Normal (`bent_normal`)
-  - Library: Material tools
-  - Tooltip: bent normal of a height map (outputs
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: normal, ao
-    - normal
-      - Right-edge socket
-    - ao
-      - Right-edge socket
-  - Properties:
-    - Radius (px at 512)
+    - Use Physical Size
+      - Default: 0
+    - Physical Size
       - Control: slider
-      - Default: 16
+      - Default: 100 100 10
+      - Range: 0..200
+    - Samples
+      - Control: slider
+      - Default: 128
       - Range: 1..256
-    - Relief
+    - Height Scale
       - Control: slider
       - Default: 0.1
-      - Range: 0..2
-    - Directions
-      - Control: int
-      - Default: 16
-      - Range: 4..32
-    - Steps
-      - Control: int
-      - Default: 8
-      - Range: 2..16
-    - DirectX normal (Y down)
-      - Control: checkbox
-      - Default: off
-- Normal Facing (`normal_facing`)
-  - Library: Material tools
-  - Tooltip: mask of surfaces that face a direction
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Direction
-      - Control: slider
+      - Range: 0..1
+    - Distribution
       - Default: 0
-      - Range: 0..1
-    - Tilt from facing up
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Sharpness
-      - Control: slider
-      - Default: 1
-      - Range: 0.05..16
-- Height Normal Blend (`height_normal_blend`)
-  - Library: Material tools
-  - Tooltip: add the relief of a height map to a normal map
-  - Inputs: normal, height
-    - normal
-      - Left-edge socket
-    - height
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Height strength
-      - Control: slider
-      - Default: 2
-      - Range: 0..16
-    - Blend method
-      - Control: dropdown
-      - Default: Reoriented
-      - Choices: Reoriented / Whiteout / Partial derivative
-    - Opacity
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - DirectX normal (Y down)
-      - Control: checkbox
-      - Default: off
-- Height To Normal World (`height_to_normal_world`)
-  - Library: Material tools
-  - Tooltip: normal map from real-world sizes
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Texture width (cm)
-      - Control: slider
-      - Default: 100
-      - Range: 0.1..10000
-    - Height of white (cm)
-      - Control: slider
-      - Default: 1
-      - Range: 0..1000
-    - DirectX normal (Y down)
-      - Control: checkbox
-      - Default: off
-- Normal Transform (`normal_transform`)
-  - Library: Material tools
-  - Tooltip: transform a normal map and turn its vectors with it
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Scale X
-      - Control: slider
-      - Default: 1
-      - Range: 0.1..8
-    - Scale Y
-      - Control: slider
-      - Default: 1
-      - Range: 0.1..8
-    - Rotation
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Turn the normals with the image
-      - Control: checkbox
-      - Default: on
-    - DirectX normal (Y down)
-      - Control: checkbox
-      - Default: off
-- Normal Sobel (`normal_sobel`)
-  - Library: Material tools
-  - Tooltip: edges or curvature of a normal map
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Result
-      - Control: dropdown
-      - Default: Edges
-      - Choices: Edges / Curvature
-    - Intensity
-      - Control: slider
-      - Default: 4
-      - Range: 0..64
-    - DirectX normal (Y down)
-      - Control: checkbox
-      - Default: off
-- Metal/Rough To Spec/Gloss (`metal_rough_to_spec_gloss`)
-  - Library: Material tools
-  - Tooltip: convert a metal / roughness material (outputs
-  - Inputs: base_color, metallic, roughness
-    - base_color
-      - Left-edge socket
-    - metallic
-      - Left-edge socket
-    - roughness
-      - Left-edge socket
-  - Outputs: diffuse, specular, glossiness
-    - diffuse
-      - Right-edge socket
-    - specular
-      - Right-edge socket
-    - glossiness
-      - Right-edge socket
-  - Properties:
-- Spec/Gloss To Metal/Rough (`spec_gloss_to_metal_rough`)
-  - Library: Material tools
-  - Tooltip: convert a specular / glossiness material (outputs
-  - Inputs: diffuse, specular, glossiness
-    - diffuse
-      - Left-edge socket
-    - specular
-      - Left-edge socket
-    - glossiness
-      - Left-edge socket
-  - Outputs: base_color, metallic, roughness
-    - base_color
-      - Right-edge socket
-    - metallic
-      - Right-edge socket
-    - roughness
-      - Right-edge socket
-  - Properties:
-- Material Blend (`material_blend`)
-  - Library: Material tools
-  - Tooltip: blend two complete materials (outputs
-  - Inputs: bg_base, bg_normal, bg_height, bg_rough, bg_metal, bg_ao, fg_base, fg_normal, fg_height, fg_rough, fg_metal, fg_ao, mask
-    - bg_base
-      - Left-edge socket
-    - bg_normal
-      - Left-edge socket
-    - bg_height
-      - Left-edge socket
-    - bg_rough
-      - Left-edge socket
-    - bg_metal
-      - Left-edge socket
-    - bg_ao
-      - Left-edge socket
-    - fg_base
-      - Left-edge socket
-    - fg_normal
-      - Left-edge socket
-    - fg_height
-      - Left-edge socket
-    - fg_rough
-      - Left-edge socket
-    - fg_metal
-      - Left-edge socket
-    - fg_ao
-      - Left-edge socket
-    - mask
-      - Left-edge socket
-  - Outputs: base_color, normal, height, roughness, metallic, ao
-    - base_color
-      - Right-edge socket
-    - normal
-      - Right-edge socket
-    - height
-      - Right-edge socket
-    - roughness
-      - Right-edge socket
-    - metallic
-      - Right-edge socket
-    - ao
-      - Right-edge socket
-  - Properties:
-    - Opacity
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Height influence
-      - Control: slider
-      - Default: 1
-      - Range: 0..8
-    - Edge sharpness
-      - Control: slider
-      - Default: 1
-      - Range: 0.1..32
-- Height Combine (`height_combine`)
-  - Library: Material tools
-  - Tooltip: combine two height maps
-  - Inputs: a, b, mask
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-    - mask
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Operation
-      - Control: dropdown
-      - Default: Maximum
-      - Choices: Maximum / Minimum / Add / Difference
-    - Amount (add)
-      - Control: slider
-      - Default: 1
-      - Range: 0..8
-- Convex Concave (`convex_concave`)
-  - Library: Material tools
-  - Tooltip: ridge and cavity masks of a height map (outputs
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: convex, concave
-    - convex
-      - Right-edge socket
-    - concave
-      - Right-edge socket
-  - Properties:
-    - Radius (px at 512)
-      - Control: slider
-      - Default: 4
-      - Range: 0..128
-    - Gain
-      - Control: slider
-      - Default: 4
-      - Range: 0..64
-- Leak Streaks (`leak_streaks`)
-  - Library: Material tools
-  - Tooltip: streaks that run on from a mask like drips
-  - Inputs: in, noise
-    - in
-      - Left-edge socket
-    - noise
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Length (px at 512)
-      - Control: slider
-      - Default: 120
-      - Range: 0..1024
-    - Direction
-      - Control: slider
-      - Default: 0.25
-      - Range: 0..1
-    - Intensity
-      - Control: slider
-      - Default: 1
-      - Range: 0..8
-    - Breakup by noise
+    - Max Distance
       - Control: slider
       - Default: 0.5
       - Range: 0..1
-- Settled Dust (`settled_dust`)
+    - Spread Angle
+      - Control: slider
+      - Default: 1
+      - Range: 0.001..1
+    - Normal Format
+      - Control: dropdown
+      - Default: DirectX
+      - Choices: DirectX / OpenGL
+- Ambient Occlusion (`sbs:lib:ambient_occlusion/ambient_occlusion`)
   - Library: Material tools
-  - Tooltip: dust that settles on flat upward surfaces and in cavities
-  - Inputs: in, noise
-    - in
+  - Inputs: Source
+    - Source
       - Left-edge socket
-    - noise
-      - Left-edge socket
-  - Outputs: output
+  - Outputs: Ambient_Occlusion
   - Properties:
-    - Amount
-      - Control: slider
-      - Default: 0.6
-      - Range: 0..1
-    - Slope tolerance
-      - Control: slider
-      - Default: 0.3
-      - Range: 0..1
-    - Cavity
+    - AO Spread
       - Control: slider
       - Default: 0.5
       - Range: 0..1
-    - Relief
+    - AO Levels
       - Control: slider
-      - Default: 3
-      - Range: 0..32
-    - Cavity radius (px at 512)
+      - Default: 0 1
+      - Range: 0..1
+    - Light Intensity
       - Control: slider
-      - Default: 8
-      - Range: 0..128
-- Snow (`snow_filter`)
+      - Default: 0
+      - Range: 0..1
+    - Light Angle
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Light Distance
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+- Ambient Occlusion 2 (`sbs:lib:ambient_occlusion_2/ambient_occlusion_2`)
   - Library: Material tools
-  - Tooltip: snow on upward-facing surfaces (outputs
-  - Inputs: height, mask
-    - height
+  - Inputs: Source
+    - Source
       - Left-edge socket
-    - mask
-      - Left-edge socket
-  - Outputs: height, mask
-    - height
-      - Right-edge socket
-    - mask
-      - Right-edge socket
+  - Outputs: ambient_occlusion
   - Properties:
-    - Coverage
-      - Control: slider
-      - Default: 0.55
-      - Range: 0..1
-    - Slope that holds snow
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Slope sensitivity
-      - Control: slider
-      - Default: 6
-      - Range: 0.1..64
-    - Edge softness
-      - Control: slider
-      - Default: 0.2
-      - Range: 0.01..1
-    - Breakup
-      - Control: slider
-      - Default: 0.4
-      - Range: 0..1
-    - Prefer high places
-      - Control: slider
-      - Default: 0.3
-      - Range: 0..1
-    - Snow depth
+    - Spreading
       - Control: slider
       - Default: 0.15
       - Range: 0..1
-    - Breakup scale
-      - Control: int
-      - Default: 6
-      - Range: 1..64
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-- Season (`season_filter`)
+    - Equalizer
+      - Control: slider
+      - Default: 0 0 0
+      - Range: -1..1
+    - Levels
+      - Control: slider
+      - Default: 0 0.5 1
+      - Range: 0..1
+- Curvature (`sbs:lib:curvature/curvature`)
   - Library: Material tools
-  - Tooltip: recolour foliage for a season (0 spring,1 summer,2 autumn,3 winter)
-  - Inputs: in, mask
-    - in
+  - Inputs: Input
+    - Input
+      - Left-edge socket
+  - Outputs: Output
+  - Properties:
+    - Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..10
+    - Invert Green
+      - Default: 0
+    - Normal Format
+      - Control: dropdown
+      - Default: DirectX
+      - Choices: DirectX / OpenGL
+- Curvature Smooth (`sbs:lib:curvature_smooth/curvature_smooth`)
+  - Library: Material tools
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: height
+  - Properties:
+    - Normal Format
+      - Control: dropdown
+      - Default: DirectX
+      - Choices: DirectX / OpenGL
+- Height Blend (`sbs:lib:height_blend/height_blend`)
+  - Library: Material tools
+  - Inputs: height_top, height_bottom, mask
+    - height_top
+      - Left-edge socket
+    - height_bottom
       - Left-edge socket
     - mask
       - Left-edge socket
-  - Outputs: output
+  - Outputs: blended_height, height_mask
+    - blended_height
+      - Right-edge socket
+    - height_mask
+      - Right-edge socket
   - Properties:
-    - Season (0 spring, 1 summer, 2 autumn, 3 winter)
+    - Height Position
       - Control: slider
-      - Default: 2
-      - Range: 0..4
-    - Strength
+      - Default: 0.5
+      - Range: 0..1
+    - Contrast
+      - Control: slider
+      - Default: 0.9
+      - Range: 0..1
+    - Mode
+      - Default: 0
+    - Opacity
       - Control: slider
       - Default: 1
       - Range: 0..1
-    - Leaf variation
-      - Control: slider
-      - Default: 0.4
-      - Range: 0..1
-    - Foliage hue
-      - Control: slider
-      - Default: 0.28
-      - Range: 0..1
-    - Hue range
-      - Control: slider
-      - Default: 0.14
-      - Range: 0.02..0.5
-    - Variation scale
-      - Control: int
-      - Default: 8
-      - Range: 1..64
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-- Water (`water_filter`)
+- Height Normal Blend (`sbs:lib:height_normal_blend/height_normal_blend`)
   - Library: Material tools
-  - Tooltip: water in the low parts (outputs
-  - Inputs: height, base
-    - height
+  - Inputs: Height, Normal
+    - Height
       - Left-edge socket
-    - base
+    - Normal
       - Left-edge socket
-  - Outputs: color, mask, height, roughness
-    - color
+  - Outputs: Normal
+  - Properties:
+    - Normal Intensity
+      - Control: slider
+      - Default: 0
+      - Range: 0..16
+    - Normal Format
+      - Control: dropdown
+      - Default: DirectX
+      - Choices: DirectX / OpenGL
+- Material Blend (`sbs:lib:material_blend/material_blend`)
+  - Library: Material tools
+  - Inputs: material2_diffuse, material2_basecolor, material2_normal, material2_specular, material2_emissive, material2_glossiness, material2_roughness, material2_metallic, material2_specularlevel, material2_height, material2_ambientocclusion, material2_opacity, material1_diffuse, material1_basecolor, material1_normal, material1_specular, material1_emissive, material1_glossiness, material1_roughness, material1_metallic, material1_specularlevel, material1_height, material1_ambientocclusion, material1_opacity, Input_20, Input_21
+    - material2_diffuse
+      - Left-edge socket
+    - material2_basecolor
+      - Left-edge socket
+    - material2_normal
+      - Left-edge socket
+    - material2_specular
+      - Left-edge socket
+    - material2_emissive
+      - Left-edge socket
+    - material2_glossiness
+      - Left-edge socket
+    - material2_roughness
+      - Left-edge socket
+    - material2_metallic
+      - Left-edge socket
+    - material2_specularlevel
+      - Left-edge socket
+    - material2_height
+      - Left-edge socket
+    - material2_ambientocclusion
+      - Left-edge socket
+    - material2_opacity
+      - Left-edge socket
+    - material1_diffuse
+      - Left-edge socket
+    - material1_basecolor
+      - Left-edge socket
+    - material1_normal
+      - Left-edge socket
+    - material1_specular
+      - Left-edge socket
+    - material1_emissive
+      - Left-edge socket
+    - material1_glossiness
+      - Left-edge socket
+    - material1_roughness
+      - Left-edge socket
+    - material1_metallic
+      - Left-edge socket
+    - material1_specularlevel
+      - Left-edge socket
+    - material1_height
+      - Left-edge socket
+    - material1_ambientocclusion
+      - Left-edge socket
+    - material1_opacity
+      - Left-edge socket
+    - Input_20
+      - Left-edge socket
+    - Input_21
+      - Left-edge socket
+  - Outputs: diffuse, basecolor, normal, specular, emissive, glossiness, roughness, metallic, specularlevel, height, ambientocclusion, opacity
+    - diffuse
       - Right-edge socket
-    - mask
+    - basecolor
       - Right-edge socket
-    - height
+    - normal
+      - Right-edge socket
+    - specular
+      - Right-edge socket
+    - emissive
+      - Right-edge socket
+    - glossiness
       - Right-edge socket
     - roughness
       - Right-edge socket
+    - metallic
+      - Right-edge socket
+    - specularlevel
+      - Right-edge socket
+    - height
+      - Right-edge socket
+    - ambientocclusion
+      - Right-edge socket
+    - opacity
+      - Right-edge socket
   - Properties:
-    - Water level
+    - Channel Diffuse
+      - Default: 1
+    - Channel Basecolor
+      - Default: 1
+    - Channel Normal
+      - Default: 1
+    - Channel Specular
+      - Default: 1
+    - Channel Emissive
+      - Default: 0
+    - Channel Glossiness
+      - Default: 1
+    - Channel Roughness
+      - Default: 1
+    - Channel Metallic
+      - Default: 1
+    - Channel Specularlevel
+      - Default: 0
+    - Channel Height
+      - Default: 1
+    - Channel Ambientocclusion
+      - Default: 0
+    - Channel Opacity
+      - Default: 0
+    - Diffuse Opacity
       - Control: slider
-      - Default: 0.35
+      - Default: 1
       - Range: 0..1
-    - Shore softness
+    - Diffuse Blending Mode
+      - Default: 0
+    - Basecolor Opacity
       - Control: slider
-      - Default: 0.03
-      - Range: 0.001..0.5
-    - Water red
+      - Default: 1
+      - Range: 0..1
+    - Basecolor Blending Mode
+      - Default: 0
+    - Normal Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Specular Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Specular Blending Mode
+      - Default: 0
+    - Emissive Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Emissive Blending Mode
+      - Default: 0
+    - Glossiness Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Glossiness Blending Mode
+      - Default: 0
+    - Roughness Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Roughness Blending Mode
+      - Default: 0
+    - Metallic Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Metallic Blending Mode
+      - Default: 0
+    - Specularlevel Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Specularlevel Blending Mode
+      - Default: 0
+    - Ambient Occlusion Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Ambient Occlusion Blending Mode
+      - Default: 0
+    - Height Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Height Blending Mode
+      - Default: 0
+    - Opacity Opacity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Opacity Blending Mode
+      - Default: 0
+    - ColorMask
+      - Default: 0
+    - Color
+      - Control: slider
+      - Default: 0 1 0
+      - Range: 0..1
+    - Fuzziness
       - Control: slider
       - Default: 0.1
-      - Range: 0..1
-    - Water green
+      - Range: 0.01..1
+    - Padding
       - Control: slider
-      - Default: 0.25
-      - Range: 0..1
-    - Water blue
-      - Control: slider
-      - Default: 0.3
-      - Range: 0..1
-    - Murkiness
-      - Control: slider
-      - Default: 0.5
-      - Range: 0..1
-    - Wet ground width
-      - Control: slider
-      - Default: 0.08
-      - Range: 0..0.5
-    - Ripples
-      - Control: slider
-      - Default: 0.3
-      - Range: 0..1
-    - Ripple scale
-      - Control: int
-      - Default: 24
-      - Range: 1..128
-    - Dry roughness
-      - Control: slider
-      - Default: 0.7
-      - Range: 0..1
-    - Wet roughness
-      - Control: slider
-      - Default: 0.05
-      - Range: 0..1
-    - Random seed
-      - Control: int
       - Default: 0
-      - Range: 0..9999
-
-### SDF nodes (4)
-
-- Sdf Shape (`sdf_shape`)
-  - Library: Generators > SDF
-  - Tooltip: 2D signed distance shape
-  - Inputs: none
-  - Outputs: output
+      - Range: 0..1
+- Normal Blend (`sbs:lib:normal_blend/normal_blend`)
+  - Library: Material tools
+  - Inputs: NormalFG, NormalBG, Mask
+    - NormalFG
+      - Left-edge socket
+    - NormalBG
+      - Left-edge socket
+    - Mask
+      - Left-edge socket
+  - Outputs: Normal_Blend
   - Properties:
-    - Shape
-      - Control: dropdown
-      - Default: Circle
-      - Choices: Circle / Box / Polygon / Ring
-    - Size
-      - Control: slider
-      - Default: 0.25
-      - Range: 0..0.5
-    - Aspect
+    - Opacity
       - Control: slider
       - Default: 1
-      - Range: 0.1..3
-    - Sides
-      - Control: int
-      - Default: 5
-      - Range: 3..12
-    - Rotation
+      - Range: 0..1
+    - Use Mask
+      - Default: 1
+- Normal Color (`sbs:lib:normal_color/normal_color`)
+  - Library: Material tools
+  - Inputs: none
+  - Outputs: Normal_Color
+  - Properties:
+    - Direction
       - Control: slider
       - Default: 0
       - Range: 0..1
-    - Corner rounding
+    - Slope Angle
       - Control: slider
       - Default: 0
-      - Range: 0..0.3
-    - Position X
-      - Control: slider
+      - Range: 0..0.25
+    - Invert Y
       - Default: 0
-      - Range: -0.5..0.5
-    - Position Y
-      - Control: slider
-      - Default: 0
-      - Range: -0.5..0.5
-    - Distance range
-      - Control: slider
-      - Default: 0.25
-      - Range: 0.02..1
-- Sdf Op (`sdf_op`)
-  - Library: Generators > SDF
-  - Tooltip: combine SDFs
-  - Inputs: a, b
-    - a
+- Normal Combine (`sbs:lib:normal_combine/normal_combine`)
+  - Library: Material tools
+  - Inputs: Input_1, Input
+    - Input_1
       - Left-edge socket
-    - b
+    - Input
       - Left-edge socket
-  - Outputs: output
+  - Outputs: normal
   - Properties:
-    - Operation
+    - Blend Quality
       - Control: dropdown
-      - Default: Union
-      - Choices: Union / Subtract / Intersect
-    - Smoothing
-      - Control: slider
+      - Default: Whiteout
+      - Choices: Whiteout / Channel mixer / Detail oriented
+- Normal Invert (`sbs:lib:normal_invert/normal_invert`)
+  - Library: Material tools
+  - Inputs: Normal
+    - Normal
+      - Left-edge socket
+  - Outputs: normal
+  - Properties:
+    - Invert Red
       - Default: 0
-      - Range: 0..0.3
-    - Distance range
-      - Control: slider
-      - Default: 0.25
-      - Range: 0.02..1
-- Sdf Mask (`sdf_mask`)
-  - Library: Generators > SDF
-  - Tooltip: SDF -> mask
-  - Inputs: in
-    - in
+    - Invert Green
+      - Default: 1
+    - Invert Blue
+      - Default: 0
+    - Invert Alpha
+      - Default: 0
+- Normal Normalise (`sbs:lib:normal_normalise/normal_normalise`)
+  - Library: Material tools
+  - Inputs: Normal
+    - Normal
+      - Left-edge socket
+  - Outputs: Normalise
+  - Properties:
+- Normal Sobel (`sbs:lib:normal_sobel/normal_sobel`)
+  - Library: Material tools
+  - Inputs: input
+    - input
       - Left-edge socket
   - Outputs: output
   - Properties:
+    - Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..3
+    - Normal Format
+      - Control: dropdown
+      - Default: OpenGL
+      - Choices: DirectX / OpenGL
+- Normal Sobel 2 (`sbs:lib:normal_sobel/normal_sobel_2`)
+  - Library: Material tools
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..3
+    - Normal Format
+      - Control: dropdown
+      - Default: DirectX
+      - Choices: DirectX / OpenGL
+- Normal To Height (`sbs:lib:normal_to_height_2/normal_to_height`)
+  - Library: Material tools
+  - Inputs: Input
+    - Input
+      - Left-edge socket
+  - Outputs: height
+  - Properties:
+    - Relief Balance
+      - Control: slider
+      - Default: 0.5 0.5 0.5
+      - Range: 0..1
+    - Normal Format
+      - Control: dropdown
+      - Default: DirectX
+      - Choices: DirectX / OpenGL
+    - Global Opacity
+      - Control: slider
+      - Default: 0.36
+      - Range: 0..1
+- Normal Transform (`sbs:lib:normal_transform/normal_transform`)
+  - Library: Material tools
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output
+  - Properties:
+    - Transform Matrix
+      - Control: slider
+      - Default: 1 0 0 1
+      - Range: 0..1
     - Offset
       - Control: slider
-      - Default: 0
+      - Default: 0 0
       - Range: -0.5..0.5
-    - Edge softness
-      - Control: slider
-      - Default: 0.02
-      - Range: 0..0.5
-- Sdf Form (`sdf_form`)
-  - Library: Generators > SDF
-  - Tooltip: procedural 3D SDF form as height
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Shape
+    - Normal Format
       - Control: dropdown
-      - Default: Sphere
-      - Choices: Sphere / Box / Torus / Cylinder
-    - Size
+      - Default: DirectX
+      - Choices: DirectX / OpenGL
+    - Handle Scale And Skew Transformation
+      - Default: 0
+- Normal Vector Rotation (`sbs:lib:normal_vector_rotation/normal_vector_rotation`)
+  - Library: Material tools
+  - Inputs: Normal, rotation_map
+    - Normal
+      - Left-edge socket
+    - rotation_map
+      - Left-edge socket
+  - Outputs: Normal
+  - Properties:
+    - Rotation Angle
       - Control: slider
-      - Default: 0.3
-      - Range: 0.05..0.5
-    - Repeat
-      - Control: int
-      - Default: 3
-      - Range: 1..16
-    - Rounding
-      - Control: slider
-      - Default: 0.05
-      - Range: 0..0.3
-    - Size variation
-      - Control: slider
-      - Default: 0.3
+      - Default: 0
       - Range: 0..1
+    - Normal Format
+      - Control: dropdown
+      - Default: DirectX
+      - Choices: DirectX / OpenGL
+- Season Filter (`sbs:lib:season_filter/season_filter`)
+  - Library: Material tools
+  - Inputs: Input, Input_0, Input_4, Input_3, Input_1, Input_5, Input_6, Input_7, Height, Input_12
+    - Input
+      - Left-edge socket
+    - Input_0
+      - Left-edge socket
+    - Input_4
+      - Left-edge socket
+    - Input_3
+      - Left-edge socket
+    - Input_1
+      - Left-edge socket
+    - Input_5
+      - Left-edge socket
+    - Input_6
+      - Left-edge socket
+    - Input_7
+      - Left-edge socket
     - Height
-      - Control: slider
-      - Default: 1.5
-      - Range: 0.1..4
-    - Random seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-
-### Utility nodes (6)
-
-- Input Value (`input_value`)
-  - Library: Filters > Adjustments
-  - Tooltip: graph parameter read by functions
-  - Inputs: none
-  - Outputs: output
+      - Left-edge socket
+    - Input_12
+      - Left-edge socket
+  - Outputs: diffuse, basecolor, normal, specular, glossiness, roughness, metallic, ambient_occlusion, height
+    - diffuse
+      - Right-edge socket
+    - basecolor
+      - Right-edge socket
+    - normal
+      - Right-edge socket
+    - specular
+      - Right-edge socket
+    - glossiness
+      - Right-edge socket
+    - roughness
+      - Right-edge socket
+    - metallic
+      - Right-edge socket
+    - ambient_occlusion
+      - Right-edge socket
+    - height
+      - Right-edge socket
   - Properties:
-    - Type
-      - Control: dropdown
-      - Default: Float
-      - Choices: Float / Integer / Boolean / Float2 / Float3 / Float4 / Integer2 / Integer3 / Integer4 / String
-    - Default
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Default X
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Default Y
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Default Z
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Default W
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Minimum
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Maximum
-      - Control: slider
+    - Basecolor
       - Default: 1
-      - Range: -1000..1000
-- Bitmap (`bitmap`)
-  - Library: Structure
-  - Tooltip: flip_x flip_y gray; imported bitmap (PNG, JPEG, TIFF, EXR, HDR, WebP, DDS, TGA, BMP)
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Flip horizontally
-      - Control: checkbox
-      - Default: off
-    - Flip vertically
-      - Control: checkbox
-      - Default: off
-    - Convert to grayscale
-      - Control: checkbox
-      - Default: off
-- Input (`input`)
-  - Library: Structure
-  - Tooltip: subgraph input
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Input index
-      - Control: int
-      - Default: 0
-      - Range: 0..3
-    - Grayscale
-      - Control: checkbox
-      - Default: off
-- Subgraph (`subgraph`)
-  - Library: Structure
-  - Tooltip: instance of a reusable subgraph
-  - Inputs: in0, in1, in2, in3
-    - in0
-      - Left-edge socket
-    - in1
-      - Left-edge socket
-    - in2
-      - Left-edge socket
-    - in3
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Graph
-      - Control: number box
-- Output (`output`)
-  - Library: Structure
-  - Tooltip: graph output
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Usage
-      - Control: number box
-    - Identifier
-      - Control: number box
-- Dot (`dot`)
-  - Library: Structure
-  - Tooltip: re-route a link
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-
-### Function graph nodes (84)
-
-- Out (`f_out`)
-  - Tooltip: result of the function
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Pin (`f_pin`)
-  - Tooltip: re-route a value link
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Float (`f_float`)
-  - Tooltip: constant float
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Value
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-- Int (`f_int`)
-  - Tooltip: constant integer
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Value
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-- Bool (`f_bool`)
-  - Tooltip: constant boolean
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Value
-      - Control: checkbox
-      - Default: off
-- String (`f_string`)
-  - Tooltip: constant string
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - none
-- Vec2 (`f_vec2`)
-  - Tooltip: float2 from parts (x y, linked parts win over the typed values)
-  - Inputs: x, y
-    - x
-      - Left-edge socket
-    - y
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - X
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Y
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-- Vec3 (`f_vec3`)
-  - Tooltip: float3 from parts
-  - Inputs: x, y, z
-    - x
-      - Left-edge socket
-    - y
-      - Left-edge socket
-    - z
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - X
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Y
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Z
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-- Vec4 (`f_vec4`)
-  - Tooltip: float4 from parts
-  - Inputs: x, y, z, w
-    - x
-      - Left-edge socket
-    - y
-      - Left-edge socket
-    - z
-      - Left-edge socket
-    - w
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - X
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Y
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Z
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - W
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-- Ivec2 (`f_ivec2`)
-  - Tooltip: integer2 from parts
-  - Inputs: x, y
-    - x
-      - Left-edge socket
-    - y
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - X
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Y
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-- Ivec3 (`f_ivec3`)
-  - Tooltip: integer3 from parts
-  - Inputs: x, y, z
-    - x
-      - Left-edge socket
-    - y
-      - Left-edge socket
-    - z
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - X
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Y
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Z
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-- Ivec4 (`f_ivec4`)
-  - Tooltip: integer4 from parts
-  - Inputs: x, y, z, w
-    - x
-      - Left-edge socket
-    - y
-      - Left-edge socket
-    - z
-      - Left-edge socket
-    - w
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - X
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Y
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Z
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - W
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-- Swizzle (`f_swizzle`)
-  - Tooltip: pick or reorder components
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Neg (`f_neg`)
-  - Tooltip: negate
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Abs (`f_abs`)
-  - Tooltip: absolute value
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Sqrt (`f_sqrt`)
-  - Tooltip: square root (0 for negative input)
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Exp (`f_exp`)
-  - Tooltip: e to the power a
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Log (`f_log`)
-  - Tooltip: natural logarithm (0 for input <= 0)
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Log2 (`f_log2`)
-  - Tooltip: base-2 logarithm (0 for input <= 0)
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Sin (`f_sin`)
-  - Tooltip: sine (radians)
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Cos (`f_cos`)
-  - Tooltip: cosine (radians)
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Tan (`f_tan`)
-  - Tooltip: tangent (radians)
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Asin (`f_asin`)
-  - Tooltip: inverse sine (input clamped to -1..1)
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Acos (`f_acos`)
-  - Tooltip: inverse cosine (input clamped to -1..1)
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Atan (`f_atan`)
-  - Tooltip: inverse tangent
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Radians (`f_radians`)
-  - Tooltip: degrees to radians
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Degrees (`f_degrees`)
-  - Tooltip: radians to degrees
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Floor (`f_floor`)
-  - Tooltip: round down
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Ceil (`f_ceil`)
-  - Tooltip: round up
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Round (`f_round`)
-  - Tooltip: round to nearest
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Fract (`f_fract`)
-  - Tooltip: fractional part
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Sign (`f_sign`)
-  - Tooltip: -1, 0 or 1
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Saturate (`f_saturate`)
-  - Tooltip: clamp to 0..1
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Not (`f_not`)
-  - Tooltip: boolean not
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Length (`f_length`)
-  - Tooltip: length of a vector
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Normalize (`f_normalize`)
-  - Tooltip: vector of length 1 (zero stays zero)
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Add (`f_add`)
-  - Tooltip: a + b
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Sub (`f_sub`)
-  - Tooltip: a - b
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Mul (`f_mul`)
-  - Tooltip: a * b
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Div (`f_div`)
-  - Tooltip: a / b (0 when b is 0; integer division truncates)
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Mod (`f_mod`)
-  - Tooltip: remainder of a / b with the sign of b (0 when b is 0)
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Pow (`f_pow`)
-  - Tooltip: a to the power b
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Min (`f_min`)
-  - Tooltip: smaller value
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Max (`f_max`)
-  - Tooltip: larger value
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Atan2 (`f_atan2`)
-  - Tooltip: angle of the point (b, a)
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Step (`f_step`)
-  - Tooltip: 0 when b < a, else 1
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Dot (`f_dot`)
-  - Tooltip: dot product
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Cross (`f_cross`)
-  - Tooltip: cross product of two float3
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Distance (`f_distance`)
-  - Tooltip: distance between two points
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Clamp (`f_clamp`)
-  - Tooltip: clamp a between b (low) and c (high)
-  - Inputs: a, b, c
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-    - c
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Lerp (`f_lerp`)
-  - Tooltip: a + (b - a) * c
-  - Inputs: a, b, c
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-    - c
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Smoothstep (`f_smoothstep`)
-  - Tooltip: smooth 0..1 ramp of c between edges a and b
-  - Inputs: a, b, c
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-    - c
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Eq (`f_eq`)
-  - Tooltip: a == b
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Ne (`f_ne`)
-  - Tooltip: a != b
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Lt (`f_lt`)
-  - Tooltip: a < b
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Le (`f_le`)
-  - Tooltip: a <= b
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Gt (`f_gt`)
-  - Tooltip: a > b
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Ge (`f_ge`)
-  - Tooltip: a >= b
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- And (`f_and`)
-  - Tooltip: boolean and
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Or (`f_or`)
-  - Tooltip: boolean or
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Xor (`f_xor`)
-  - Tooltip: boolean exclusive or
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- If (`f_if`)
-  - Tooltip: a when cond is true, else b (only the chosen branch runs)
-  - Inputs: cond, a, b
-    - cond
-      - Left-edge socket
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Sequence (`f_sequence`)
-  - Tooltip: run a, then b; returns b
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Set (`f_set`)
-  - Tooltip: store a in the variable `name`; returns a
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Get (`f_get`)
-  - Tooltip: read the variable `name` (0 until it is set)
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - none
-- Random (`f_random`)
-  - Tooltip: random float between a (default 0) and b (default 1); `seed` shifts the sequence
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Seed
-      - Control: int
-      - Default: 0
-      - Range: 0..9999
-- Sample Gray (`f_sample_gray`)
-  - Tooltip: brightness of input image `slot` (default in) at the position a (float2, 0..1)
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Sample Color (`f_sample_color`)
-  - Tooltip: colour (float4) of input image `slot` at the position a
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Image Avg (`f_image_avg`)
-  - Tooltip: average colour (float4) of input image `slot`
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - none
-- Image Min (`f_image_min`)
-  - Tooltip: smallest channel values (float4) of input image `slot`
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - none
-- Image Max (`f_image_max`)
-  - Tooltip: largest channel values (float4) of input image `slot`
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - none
-- Pos (`f_pos`)
-  - Tooltip: position being evaluated (float2, 0..1)
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - none
-- Size (`f_size`)
-  - Tooltip: output size in pixels (float2)
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - none
-- Index (`f_index`)
-  - Tooltip: instance / iteration number (integer)
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - none
-- Count (`f_count`)
-  - Tooltip: number of instances / iterations (integer)
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - none
-- Seed (`f_seed`)
-  - Tooltip: random seed of the caller (integer)
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - none
-- Input (`f_input`)
-  - Tooltip: input of this function
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Type
-      - Control: dropdown
-      - Default: Float
-      - Choices: Float / Integer / Boolean / Float2 / Float3 / Float4 / Integer2 / Integer3 / Integer4 / String
-    - Default
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Default X
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Default Y
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Default Z
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Default W
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Minimum
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Maximum
-      - Control: slider
+    - Diffuse
       - Default: 1
-      - Range: -1000..1000
-- Graph Input (`f_graph_input`)
-  - Tooltip: value of an Input Value node of the graph the caller lives in
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Type
-      - Control: dropdown
-      - Default: Float
-      - Choices: Float / Integer / Boolean / Float2 / Float3 / Float4 / Integer2 / Integer3 / Integer4 / String
-    - Default
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Default X
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Default Y
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Default Z
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Default W
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Minimum
-      - Control: slider
-      - Default: 0
-      - Range: -1000..1000
-    - Maximum
-      - Control: slider
+    - Normal
       - Default: 1
-      - Range: -1000..1000
-- To Float (`f_to_float`)
-  - Tooltip: convert to float
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- To Int (`f_to_int`)
-  - Tooltip: convert to integer (drops the fraction)
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- To Bool (`f_to_bool`)
-  - Tooltip: non-zero is true
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- To String (`f_to_string`)
-  - Tooltip: text of a value
-  - Inputs: a
-    - a
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Concat (`f_concat`)
-  - Tooltip: join two strings
-  - Inputs: a, b
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Call (`f_call`)
-  - Tooltip: run another function (`fn`); a b c d fill its inputs in the order of their node numbers
-  - Inputs: a, b, c, d
-    - a
-      - Left-edge socket
-    - b
-      - Left-edge socket
-    - c
-      - Left-edge socket
-    - d
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-
-### Pattern program nodes (5)
-
-- Fxm Out (`fxm_out`)
-  - Tooltip: start of a pattern program
-  - Inputs: in
-    - in
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - none
-- Fxm Marker (`fxm_marker`)
-  - Tooltip: draw a shape
-  - Inputs: none
-  - Outputs: output
-  - Properties:
-    - Shape
-      - Control: dropdown
-      - Default: Circle
-      - Choices: Circle / Square / Diamond / Image
-    - Image input
-      - Control: int
-      - Default: 0
-      - Range: 0..3
-    - Offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Width
-      - Control: slider
+    - Specular
       - Default: 1
-      - Range: 0..4
+    - Glossiness
+      - Default: 1
+    - Roughness
+      - Default: 1
+    - Metallic
+      - Default: 1
+    - Ambient Occlusion
+      - Default: 1
     - Height
-      - Control: slider
       - Default: 1
-      - Range: 0..4
-    - Rotation (deg)
-      - Control: slider
+    - Normal Format
+      - Control: dropdown
+      - Default: DirectX
+      - Choices: DirectX / OpenGL
+    - Mask
       - Default: 0
-      - Range: -360..360
-    - Value
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Softness
-      - Control: slider
-      - Default: 0.02
-      - Range: 0..1
-    - Colour R
-      - Control: slider
-      - Default: 1
-      - Range: 0..2
-    - Colour G
-      - Control: slider
-      - Default: 1
-      - Range: 0..2
-    - Colour B
-      - Control: slider
-      - Default: 1
-      - Range: 0..2
-    - Random position
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Random scale
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Random rotation (deg)
-      - Control: slider
-      - Default: 0
-      - Range: 0..180
-    - Random value
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Random colour
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-- Fxm Quadrant (`fxm_quadrant`)
-  - Tooltip: split the cell in four
-  - Inputs: q0, q1, q2, q3
-    - q0
-      - Left-edge socket
-    - q1
-      - Left-edge socket
-    - q2
-      - Left-edge socket
-    - q3
-      - Left-edge socket
-  - Outputs: output
-  - Properties:
-    - Child scale
+    - Light Intensity
       - Control: slider
       - Default: 0.5
-      - Range: 0..2
-    - Offset X
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Offset Y
-      - Control: slider
-      - Default: 0
-      - Range: -1..1
-    - Chance 1
-      - Control: slider
-      - Default: 1
       - Range: 0..1
-    - Chance 2
+    - Light Angle
       - Control: slider
-      - Default: 1
+      - Default: 0.125
       - Range: 0..1
-    - Chance 3
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Chance 4
-      - Control: slider
-      - Default: 1
-      - Range: 0..1
-    - Value 1
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Value 2
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Value 3
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Value 4
-      - Control: slider
-      - Default: 1
-      - Range: 0..4
-    - Rotation 1 (deg)
-      - Control: slider
+    - Effect From Height Normal
       - Default: 0
-      - Range: -360..360
-    - Rotation 2 (deg)
-      - Control: slider
-      - Default: 0
-      - Range: -360..360
-    - Rotation 3 (deg)
-      - Control: slider
-      - Default: 0
-      - Range: -360..360
-    - Rotation 4 (deg)
-      - Control: slider
-      - Default: 0
-      - Range: -360..360
-    - Random position
+    - Water Level
       - Control: slider
       - Default: 0
       - Range: 0..1
-    - Random scale
+    - Water Details
       - Control: slider
       - Default: 0
       - Range: 0..1
-    - Random rotation (deg)
+    - Refraction
       - Control: slider
-      - Default: 0
-      - Range: 0..180
-    - Random value
+      - Default: 0.5
+      - Range: 0..1
+    - Reflection
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Reflection Distance
+      - Control: slider
+      - Default: 0.5
+      - Range: 0..1
+    - Reflection Angle
+      - Control: slider
+      - Default: 0.625
+      - Range: 0..1
+    - Flow Direction
       - Control: slider
       - Default: 0
       - Range: 0..1
-- Fxm Iterate (`fxm_iterate`)
-  - Tooltip: repeat body
-  - Inputs: body
-    - body
+    - Ice
+      - Control: slider
+      - Default: 0.47
+      - Range: 0..1
+    - Ice Details
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Snow
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Moss
+      - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Moss Scale
+      - Control: slider
+      - Default: 3
+      - Range: 1..4
+    - Moss Color
+      - Control: slider
+      - Default: 0.227497 0.317601 0.0234989
+      - Range: 0..1
+    - Water Color
+      - Control: slider
+      - Default: 0.0299992 0.119997 0.140002 0.229999
+      - Range: 0..1
+    - Diffuse Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Basecolor Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Normal Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Specular Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Glossiness Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Roughness Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+    - Ambient Occlusion Intensity
+      - Control: slider
+      - Default: 0.3
+      - Range: 0..1
+    - Height Intensity
+      - Control: slider
+      - Default: 1
+      - Range: 0..1
+
+### Logic nodes (84)
+
+- Absolute (`sbs:fn:abs`)
+  - Library: Logic nodes
+  - Inputs: a
+    - a
       - Left-edge socket
-  - Outputs: output
+  - Outputs: t
   - Properties:
-    - Count
-      - Control: int
-      - Default: 4
-      - Range: 0..1000
-    - Grid X (0 = off)
-      - Control: int
-      - Default: 0
-      - Range: 0..64
-    - Grid Y
-      - Control: int
-      - Default: 0
-      - Range: 0..64
-    - Stagger odd rows
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Step X
-      - Control: slider
-      - Default: 0
-      - Range: -2..2
-    - Step Y
-      - Control: slider
-      - Default: 0
-      - Range: -2..2
-    - Step scale
-      - Control: slider
-      - Default: 1
-      - Range: 0..2
-    - Step rotation (deg)
-      - Control: slider
-      - Default: 0
-      - Range: -360..360
-    - Step value
-      - Control: slider
-      - Default: 1
-      - Range: 0..2
-    - Random X
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Random Y
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Random scale
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-    - Random rotation (deg)
-      - Control: slider
-      - Default: 0
-      - Range: 0..180
-    - Random value
-      - Control: slider
-      - Default: 0
-      - Range: 0..1
-- Fxm Switch (`fxm_switch`)
-  - Tooltip: run one branch
-  - Inputs: a, b, c, d
+- Add (`sbs:fn:add`)
+  - Library: Logic nodes
+  - Inputs: a, b
     - a
       - Left-edge socket
     - b
       - Left-edge socket
-    - c
-      - Left-edge socket
-    - d
-      - Left-edge socket
-  - Outputs: output
+  - Outputs: t
   - Properties:
-    - Mode
-      - Control: dropdown
-      - Default: By index
-      - Choices: By index / Random
-    - Index
-      - Control: int
+- And (`sbs:fn:and`)
+  - Library: Logic nodes
+  - Inputs: a, b
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+  - Outputs: b
+  - Properties:
+- Arc Tangent 2 (`sbs:fn:atan2`)
+  - Library: Logic nodes
+  - Inputs: a
+    - a
+      - Left-edge socket
+  - Outputs: f1
+  - Properties:
+- Bool (`sbs:fn:const_bool`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: b
+  - Properties:
+    - Const Bool
       - Default: 0
-      - Range: 0..3
-    - Weight A
+- Cartesian (`sbs:fn:cartesian`)
+  - Library: Logic nodes
+  - Inputs: rho, theta
+    - rho
+      - Left-edge socket
+    - theta
+      - Left-edge socket
+  - Outputs: f2
+  - Properties:
+- Ceil (`sbs:fn:ceil`)
+  - Library: Logic nodes
+  - Inputs: a
+    - a
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Cosine (`sbs:fn:cos`)
+  - Library: Logic nodes
+  - Inputs: a
+    - a
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Cross Product (`sbs:fn:cross`)
+  - Library: Logic nodes
+  - Inputs: a, b
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Divide (`sbs:fn:div`)
+  - Library: Logic nodes
+  - Inputs: a, b
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Dot Product (`sbs:fn:dot`)
+  - Library: Logic nodes
+  - Inputs: a, b
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+  - Outputs: f1
+  - Properties:
+- Equal (`sbs:fn:eq`)
+  - Library: Logic nodes
+  - Inputs: a, b
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+  - Outputs: b
+  - Properties:
+- Exponential (`sbs:fn:exp`)
+  - Library: Logic nodes
+  - Inputs: a
+    - a
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Float (`sbs:fn:const_float1`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: f1
+  - Properties:
+    - Const Float1
+      - Default: 0
+- Float2 (`sbs:fn:const_float2`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: f2
+  - Properties:
+    - Const Float2
+      - Default: 0 0
+- Float3 (`sbs:fn:const_float3`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: f3
+  - Properties:
+    - Const Float3
+      - Default: 0 0 0
+- Float4 (`sbs:fn:const_float4`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: f4
+  - Properties:
+    - Const Float4
+      - Default: 0 0 0 0
+- Floor (`sbs:fn:floor`)
+  - Library: Logic nodes
+  - Inputs: a
+    - a
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Function Call (`sbs:fn:instance`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: t
+  - Properties:
+    - Instance
+      - Default: 
+- Get Bool (`sbs:fn:get_bool`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: b
+  - Properties:
+    - Get Bool
+      - Default: 
+- Get Float (`sbs:fn:get_float1`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: f1
+  - Properties:
+    - Get Float1
+      - Default: 
+- Get Float2 (`sbs:fn:get_float2`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: f2
+  - Properties:
+    - Get Float2
+      - Default: 
+- Get Float3 (`sbs:fn:get_float3`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: f3
+  - Properties:
+    - Get Float3
+      - Default: 
+- Get Float4 (`sbs:fn:get_float4`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: f4
+  - Properties:
+    - Get Float4
+      - Default: 
+- Get Integer (`sbs:fn:get_integer1`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: i1
+  - Properties:
+    - Get Integer1
+      - Default: 
+- Get Integer2 (`sbs:fn:get_integer2`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: i2
+  - Properties:
+    - Get Integer2
+      - Default: 
+- Get Integer3 (`sbs:fn:get_integer3`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: i3
+  - Properties:
+    - Get Integer3
+      - Default: 
+- Get Integer4 (`sbs:fn:get_integer4`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: i4
+  - Properties:
+    - Get Integer4
+      - Default: 
+- Get String (`sbs:fn:get_string`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: s
+  - Properties:
+    - Get String
+      - Default: 
+- Greater (`sbs:fn:gt`)
+  - Library: Logic nodes
+  - Inputs: a, b
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+  - Outputs: b
+  - Properties:
+- Greater or Equal (`sbs:fn:gteq`)
+  - Library: Logic nodes
+  - Inputs: a, b
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+  - Outputs: b
+  - Properties:
+- If Else (`sbs:fn:ifelse`)
+  - Library: Logic nodes
+  - Inputs: condition, ifpath, elsepath
+    - condition
+      - Left-edge socket
+    - ifpath
+      - Left-edge socket
+    - elsepath
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Integer (`sbs:fn:const_int1`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: i1
+  - Properties:
+    - Const Int1
+      - Default: 0
+- Integer2 (`sbs:fn:const_int2`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: i2
+  - Properties:
+    - Const Int2
+      - Default: 0 0
+- Integer3 (`sbs:fn:const_int3`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: i3
+  - Properties:
+    - Const Int3
+      - Default: 0 0 0
+- Integer4 (`sbs:fn:const_int4`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: i4
+  - Properties:
+    - Const Int4
+      - Default: 0 0 0 0
+- Linear Interpolation (`sbs:fn:lerp`)
+  - Library: Logic nodes
+  - Inputs: a, b, x
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+    - x
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Log 2 (`sbs:fn:log2`)
+  - Library: Logic nodes
+  - Inputs: a
+    - a
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Logarithm (`sbs:fn:log`)
+  - Library: Logic nodes
+  - Inputs: a
+    - a
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Lower (`sbs:fn:lr`)
+  - Library: Logic nodes
+  - Inputs: a, b
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+  - Outputs: b
+  - Properties:
+- Lower or Equal (`sbs:fn:lreq`)
+  - Library: Logic nodes
+  - Inputs: a, b
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+  - Outputs: b
+  - Properties:
+- Maximum (`sbs:fn:max`)
+  - Library: Logic nodes
+  - Inputs: a, b
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Minimum (`sbs:fn:min`)
+  - Library: Logic nodes
+  - Inputs: a, b
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Modulo (`sbs:fn:mod`)
+  - Library: Logic nodes
+  - Inputs: a, b
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Multiply (`sbs:fn:mul`)
+  - Library: Logic nodes
+  - Inputs: a, b
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Negate (`sbs:fn:neg`)
+  - Library: Logic nodes
+  - Inputs: a
+    - a
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Not (`sbs:fn:not`)
+  - Library: Logic nodes
+  - Inputs: a
+    - a
+      - Left-edge socket
+  - Outputs: b
+  - Properties:
+- Not Equal (`sbs:fn:noteq`)
+  - Library: Logic nodes
+  - Inputs: a, b
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+  - Outputs: b
+  - Properties:
+- Or (`sbs:fn:or`)
+  - Library: Logic nodes
+  - Inputs: a, b
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+  - Outputs: b
+  - Properties:
+- Passthrough (`sbs:fn:passthrough`)
+  - Library: Logic nodes
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Power of 2 (`sbs:fn:pow2`)
+  - Library: Logic nodes
+  - Inputs: a
+    - a
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Random (`sbs:fn:rand`)
+  - Library: Logic nodes
+  - Inputs: a
+    - a
+      - Left-edge socket
+  - Outputs: f1
+  - Properties:
+- Sample Color (`sbs:fn:samplecol`)
+  - Library: Logic nodes
+  - Inputs: pos
+    - pos
+      - Left-edge socket
+  - Outputs: f4
+  - Properties:
+    - Samplecol
+      - Default: 0 0
+- Sample Gray (`sbs:fn:samplelum`)
+  - Library: Logic nodes
+  - Inputs: pos
+    - pos
+      - Left-edge socket
+  - Outputs: f1
+  - Properties:
+    - Samplelum
+      - Default: 0 0
+- Scalar Multiply (`sbs:fn:mulscalar`)
+  - Library: Logic nodes
+  - Inputs: a, scalar
+    - a
+      - Left-edge socket
+    - scalar
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Sequence (`sbs:fn:sequence`)
+  - Library: Logic nodes
+  - Inputs: seqin, seqlast
+    - seqin
+      - Left-edge socket
+    - seqlast
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Set (`sbs:fn:set`)
+  - Library: Logic nodes
+  - Inputs: value
+    - value
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+    - Set
+      - Default: 
+- Sine (`sbs:fn:sin`)
+  - Library: Logic nodes
+  - Inputs: a
+    - a
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Square Root (`sbs:fn:sqrt`)
+  - Library: Logic nodes
+  - Inputs: a
+    - a
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- String (`sbs:fn:const_string`)
+  - Library: Logic nodes
+  - Inputs: none
+  - Outputs: s
+  - Properties:
+    - Const String
+      - Default: 
+- Subtract (`sbs:fn:sub`)
+  - Library: Logic nodes
+  - Inputs: a, b
+    - a
+      - Left-edge socket
+    - b
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- Swizzle Float (`sbs:fn:swizzle1`)
+  - Library: Logic nodes
+  - Inputs: vector
+    - vector
+      - Left-edge socket
+  - Outputs: f1
+  - Properties:
+    - Swizzle1
+      - Default: 0
+- Swizzle Float2 (`sbs:fn:swizzle2`)
+  - Library: Logic nodes
+  - Inputs: vector
+    - vector
+      - Left-edge socket
+  - Outputs: f2
+  - Properties:
+    - Swizzle2
+      - Default: 0 1
+- Swizzle Float3 (`sbs:fn:swizzle3`)
+  - Library: Logic nodes
+  - Inputs: vector
+    - vector
+      - Left-edge socket
+  - Outputs: f3
+  - Properties:
+    - Swizzle3
+      - Default: 0 1 2
+- Swizzle Float4 (`sbs:fn:swizzle4`)
+  - Library: Logic nodes
+  - Inputs: vector
+    - vector
+      - Left-edge socket
+  - Outputs: f4
+  - Properties:
+    - Swizzle4
+      - Default: 0 1 2 3
+- Swizzle Integer (`sbs:fn:iswizzle1`)
+  - Library: Logic nodes
+  - Inputs: vector
+    - vector
+      - Left-edge socket
+  - Outputs: i1
+  - Properties:
+    - Iswizzle1
+      - Default: 0
+- Swizzle Integer2 (`sbs:fn:iswizzle2`)
+  - Library: Logic nodes
+  - Inputs: vector
+    - vector
+      - Left-edge socket
+  - Outputs: i2
+  - Properties:
+    - Iswizzle2
+      - Default: 0 1
+- Swizzle Integer3 (`sbs:fn:iswizzle3`)
+  - Library: Logic nodes
+  - Inputs: vector
+    - vector
+      - Left-edge socket
+  - Outputs: i3
+  - Properties:
+    - Iswizzle3
+      - Default: 0 1 2
+- Swizzle Integer4 (`sbs:fn:iswizzle4`)
+  - Library: Logic nodes
+  - Inputs: vector
+    - vector
+      - Left-edge socket
+  - Outputs: i4
+  - Properties:
+    - Iswizzle4
+      - Default: 0 1 2 3
+- Tangent (`sbs:fn:tan`)
+  - Library: Logic nodes
+  - Inputs: a
+    - a
+      - Left-edge socket
+  - Outputs: t
+  - Properties:
+- To Float (`sbs:fn:tofloat`)
+  - Library: Logic nodes
+  - Inputs: value
+    - value
+      - Left-edge socket
+  - Outputs: f1
+  - Properties:
+- To Float2 (`sbs:fn:tofloat2`)
+  - Library: Logic nodes
+  - Inputs: value
+    - value
+      - Left-edge socket
+  - Outputs: f2
+  - Properties:
+- To Float3 (`sbs:fn:tofloat3`)
+  - Library: Logic nodes
+  - Inputs: value
+    - value
+      - Left-edge socket
+  - Outputs: f3
+  - Properties:
+- To Float4 (`sbs:fn:tofloat4`)
+  - Library: Logic nodes
+  - Inputs: value
+    - value
+      - Left-edge socket
+  - Outputs: f4
+  - Properties:
+- To Integer (`sbs:fn:toint1`)
+  - Library: Logic nodes
+  - Inputs: value
+    - value
+      - Left-edge socket
+  - Outputs: i1
+  - Properties:
+- To Integer2 (`sbs:fn:toint2`)
+  - Library: Logic nodes
+  - Inputs: value
+    - value
+      - Left-edge socket
+  - Outputs: i2
+  - Properties:
+- To Integer3 (`sbs:fn:toint3`)
+  - Library: Logic nodes
+  - Inputs: value
+    - value
+      - Left-edge socket
+  - Outputs: i3
+  - Properties:
+- To Integer4 (`sbs:fn:toint4`)
+  - Library: Logic nodes
+  - Inputs: value
+    - value
+      - Left-edge socket
+  - Outputs: i4
+  - Properties:
+- Vector Float2 (`sbs:fn:vector2`)
+  - Library: Logic nodes
+  - Inputs: componentsin, componentslast
+    - componentsin
+      - Left-edge socket
+    - componentslast
+      - Left-edge socket
+  - Outputs: f2
+  - Properties:
+- Vector Float3 (`sbs:fn:vector3`)
+  - Library: Logic nodes
+  - Inputs: componentsin, componentslast
+    - componentsin
+      - Left-edge socket
+    - componentslast
+      - Left-edge socket
+  - Outputs: f3
+  - Properties:
+- Vector Float4 (`sbs:fn:vector4`)
+  - Library: Logic nodes
+  - Inputs: componentsin, componentslast
+    - componentsin
+      - Left-edge socket
+    - componentslast
+      - Left-edge socket
+  - Outputs: f4
+  - Properties:
+- Vector Integer2 (`sbs:fn:ivector2`)
+  - Library: Logic nodes
+  - Inputs: componentsin, componentslast
+    - componentsin
+      - Left-edge socket
+    - componentslast
+      - Left-edge socket
+  - Outputs: i2
+  - Properties:
+- Vector Integer3 (`sbs:fn:ivector3`)
+  - Library: Logic nodes
+  - Inputs: componentsin, componentslast
+    - componentsin
+      - Left-edge socket
+    - componentslast
+      - Left-edge socket
+  - Outputs: i3
+  - Properties:
+- Vector Integer4 (`sbs:fn:ivector4`)
+  - Library: Logic nodes
+  - Inputs: componentsin, componentslast
+    - componentsin
+      - Left-edge socket
+    - componentslast
+      - Left-edge socket
+  - Outputs: i4
+  - Properties:
+
+### Pattern builders (3)
+
+- Iterate (`sbs:fx:addnode`)
+  - Library: Pattern builders
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output0, output1
+    - output0
+      - Right-edge socket
+    - output1
+      - Right-edge socket
+  - Properties:
+    - Number Added
       - Control: slider
       - Default: 1
-      - Range: 0..10
-    - Weight B
+      - Range: 0..256
+    - Random Seed
       - Control: slider
+      - Default: 0
+      - Range: 0..10000
+    - Inherit Random Seed
       - Default: 1
-      - Range: 0..10
-    - Weight C
+- Quadrant (`sbs:fx:paramset`)
+  - Library: Pattern builders
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output0, output1, output2, output3
+    - output0
+      - Right-edge socket
+    - output1
+      - Right-edge socket
+    - output2
+      - Right-edge socket
+    - output3
+      - Right-edge socket
+  - Properties:
+    - Opacity
+      - Default: 1 1 1 1
+    - Branch Offset
+      - Default: 0 0
+    - Pattern
+      - Control: dropdown
+      - Default: None
+      - Choices: None / Image / Square / Disc / Paraboloid / Bell / Gaussian / Thorn / Pyramid / Brick / Gradation / Waves / Half bell / Ridged bell / Crescent / Capsule / Cone
+    - Frame Offset
+      - Default: 0 0
+    - Pattern Size
+      - Default: 1 1
+    - Pattern Rotation
       - Control: slider
-      - Default: 1
-      - Range: 0..10
-    - Weight D
+      - Default: 0
+      - Range: 0..1
+    - Pattern Parameter
       - Control: slider
+      - Default: 0
+      - Range: 0..1
+    - Blending Mode
+      - Control: dropdown
+      - Default: Add/Sub
+      - Choices: Add/Sub / Max / Alpha blending
+    - Random Seed
+      - Control: slider
+      - Default: 0
+      - Range: 0..10000
+    - Inherit Random Seed
       - Default: 1
-      - Range: 0..10
+    - Image Index
+      - Control: slider
+      - Default: 0
+      - Range: 0..64
+    - Premultiplied Image
+      - Default: 0
+    - Image Filtering
+      - Control: dropdown
+      - Default: Bilinear and mipmaps
+      - Choices: Bilinear and mipmaps / Bilinear / Nearest
+- Switch (`sbs:fx:markov2`)
+  - Library: Pattern builders
+  - Inputs: input
+    - input
+      - Left-edge socket
+  - Outputs: output0, output1
+    - output0
+      - Right-edge socket
+    - output1
+      - Right-edge socket
+  - Properties:
+    - Switch
+      - Default: 0
+    - Random Seed
+      - Control: slider
+      - Default: 0
+      - Range: 0..10000
+    - Inherit Random Seed
+      - Default: 1
 
 ### 8.6.1 3D VIEW menus (Milestone 5)
 - Menu "Lights": rig presets, add / remove light, kind (directional, point, spot), colour, intensity, angle, shadows; Shift+drag moves the selected light
@@ -9581,16 +11975,3 @@
 - Menu "Channel": lit, base colour, roughness, metallic, normal, height, AO, emissive, opacity
 - Scene menu: scene kind (single, floor, look-dev, pedestal), load custom mesh
 - Render menu: path tracer on / off with sample count, Save picture, turntable export
-
-### 8.6.2 Resources window (Milestone 6)
-
-Tools > Resources. Lists every file the graph depends on.
-
-- Header: count, "N missing" in red, buttons "Embed all linked", "Collect into project folder", "Update from source files", "Remove unused"; filter box; last message
-- Left list: grouped by kind (Bitmap, Vector art, Font, Lookup table, Spline, Baked maps); each row shows a thumbnail, the file name, a badge (embedded, linked, MISSING), size and a description such as "WebP 512x512" or "3D LUT, 33x33x33"
-- Right pane for the selected row: name, badge, kind, description, large thumbnail, where it came from or where it is linked, whether the source file changed
-  - Buttons: "Embed", "Extract to folder...", "Relink...", "Replace contents...", "Update from source", "Delete" (only when unused)
-  - Rename box and "Rename" button for embedded resources
-  - "Used by N node(s)": a link per node; clicking selects and centres the node (subgraph nodes open the subgraph)
-- Relative links are searched for next to the project file and in its `resources` folder
-- Command line: `materialcraft resources <graph> [--embed] [--update] [--collect] [--prune] [--extract <dir>] [--relink <old> <new>] [--out <file>]`

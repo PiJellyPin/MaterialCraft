@@ -328,7 +328,60 @@ pub fn compute(kind: &str, id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, s
                 }
             }))
         }
+        "tile_random2" => {
+            let (nx, ny) = (f("amount_x", 10.0).round().clamp(2.0, 64.0) as i32, f("amount_y", 10.0).round().clamp(2.0, 64.0) as i32);
+            let rsz = f("random_size", 1.0).clamp(0.0, 1.0);
+            let mut t = crate::tile2::Tiles::new(nx, ny, rsz * f("random_size_x", 1.0).clamp(0.0, 1.0), rsz * f("random_size_y", 1.0).clamp(0.0, 1.0), seed, 1.0 / s as f32);
+            let avg = t.average();
+            t.gap = f("interstice", 0.0).clamp(0.0, 1.0) * 0.25;
+            t.position = f("random_position", 0.0).clamp(0.0, 1.0);
+            t.radius = f("round_corners", 0.0).clamp(0.0, 1.0);
+            t.scale = f("scale", 1.0).clamp(0.0, 1.0);
+            t.scale_random = f("scale_random", 0.0).clamp(0.0, 1.0);
+            t.rotation = f("rotation", 0.0).clamp(0.0, 0.25);
+            t.rotation_random = f("rotation_random", 0.0).clamp(0.0, 1.0);
+            t.corners = f("corners_random", 0.0).clamp(0.0, 1.0);
+            let sl = f("slant", 0.0).clamp(0.0, 1.0);
+            t.slant = [sl * f("slant_x", 1.0).clamp(0.0, 1.0), sl * f("slant_y", 1.0).clamp(0.0, 1.0)];
+            // the bevel is measured against the average cell, so every tile gets the same width
+            let bw = f("bevel", 0.1).clamp(0.0, 1.0) * 0.5 * avg;
+            t.bevel = if f("bevel_per_axis", 0.0) > 0.5 { [bw * f("bevel_x", 1.0).clamp(0.0, 1.0), bw * f("bevel_y", 1.0).clamp(0.0, 1.0)] } else { [bw, bw] };
+            t.curve = f("bevel_curve", 0.0).clamp(0.0, 1.0);
+            let (ms, me) = (f("mask_random_start", 0.0), f("mask_random_end", 0.0));
+            if me > ms {
+                t.mask = Some((ms, me, f("mask_random_invert", 0.0) > 0.5));
+            }
+            fin(Tex::gray_fn(s, hs, |u, v| t.at(u, v).clamp(0.0, 1.0)))
+        }
         // ------------------------------------------------ noises
+        "anisotropic_noise" if f("style", 0.0) > 0.5 => {
+            // value grid: few random values along each row, many rows, smoothly joined along the row
+            let nx = f("x_amount", 4.0).round().clamp(1.0, 512.0) as i32;
+            let ny0 = f("y_amount", 256.0).round().clamp(1.0, 512.0) as i32;
+            let turn = f("rotate", 0.0) > 0.5;
+            // "by resolution": the row count is given for a 256 px image and grows with the resolution (one row per
+            // pixel row at the default)
+            let along = if turn { s } else { hs };
+            let ny = if f("rows_by_resolution", 0.0) > 0.5 { ((ny0 as f32 * along as f32 / 256.0).round() as i32).clamp(1, 8192) } else { ny0 };
+            // smoothness: how much of each step along the row is a transition (0 = hard steps, 1 = all of it);
+            // the interpolation blends a straight ramp (0) with a smooth S curve (1)
+            let sm = f("smoothness", 1.0).clamp(0.0, 1.0);
+            let si = f("smoothness_interpolation", 0.5).clamp(0.0, 1.0);
+            fin(Tex::gray_fn(s, hs, |u, v| {
+                let (u, v) = if turn { (v, u) } else { (u, v) };
+                let j = ((v * ny as f32).floor() as i32).rem_euclid(ny);
+                // every row starts at its own random place so the joins do not line up
+                let x = (u + crate::noise_styles::unit(j, 7, seed)) * nx as f32;
+                let i = x.floor();
+                let t = x - i;
+                let i = i as i32;
+                let a = crate::noise_styles::unit(i.rem_euclid(nx), j, seed);
+                let b = crate::noise_styles::unit((i + 1).rem_euclid(nx), j, seed);
+                let t = if sm < 1e-4 { if t < 0.5 { 0.0 } else { 1.0 } } else { ((t - 0.5) / sm + 0.5).clamp(0.0, 1.0) };
+                let t = t + (t * t * (3.0 - 2.0 * t) - t) * si;
+                a + (b - a) * t
+            }))
+        }
         "anisotropic_noise" => {
             let (a, b) = int_direction(f("angle", 0.0));
             let sy0 = f("scale", 8.0).round().clamp(1.0, 128.0) as i32;
@@ -363,10 +416,26 @@ pub fn compute(kind: &str, id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, s
             let nstep = ((len / step).ceil() as usize).clamp(2, 400);
             let mut img = vec![0.0f32; s * hs];
             let fl = noise::Fbm::new(4, ((4.0 * hs as f32 / s as f32).round() as i32).max(1), 2, 0.5, seed.wrapping_add(5), 0);
+            // optional flow: hairs follow a smooth field (noise) or sway sideways in waves across the image
+            let flow = f("flow", 0.0).clamp(0.0, 1.0);
+            let waves_mode = f("flow_mode", 0.0) > 0.5;
+            let waves = f("waves", 2.0).round().clamp(0.0, 16.0);
+            let (fpx, fpy) = periods(f("flow_scale", 2.0), s, hs);
+            let ff = Fbm::new(fpx, fpy, 2, 0.5, seed.wrapping_add(9), 0);
+            let field = |x: f32, y: f32| -> f32 {
+                if flow <= 0.0 {
+                    0.0
+                } else if waves_mode {
+                    (TAU * waves * x / s as f32).sin() * std::f32::consts::FRAC_PI_2 * flow
+                } else {
+                    (ff.sample(x / s as f32, y / hs as f32) - 0.5) * TAU * flow
+                }
+            };
             for k in 0..count {
                 let kk = k as i32;
                 let (mut x, mut y) = (rh(kk, 1, seed) * s as f32, rh(kk, 2, seed) * hs as f32);
-                let mut ang = base + (rh(kk, 3, seed) - 0.5) * 2.0 * var;
+                let ang0 = base + (rh(kk, 3, seed) - 0.5) * 2.0 * var;
+                let mut drift = 0.0f32;
                 let bright = 1.0 - bvar * rh(kk, 4, seed);
                 let bend = (rh(kk, 5, seed) - 0.5) * 2.0 * curl;
                 for i in 0..nstep {
@@ -375,7 +444,9 @@ pub fn compute(kind: &str, id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, s
                     // the shade rises from the root to the tip; the field makes neighbouring hairs lean together
                     let val = bright * lerp(root, 1.0, t);
                     splat_max(&mut img, s, hs, x, y, r, val);
-                    ang += bend * step / len.max(1.0) * 2.0 + (fl.sample(x / s as f32, y / hs as f32) - 0.5) * 0.05;
+                    // without a flow, a faint field makes neighbouring hairs lean together
+                    drift += bend * step / len.max(1.0) * 2.0 + if flow > 0.0 { 0.0 } else { (fl.sample(x / s as f32, y / hs as f32) - 0.5) * 0.05 };
+                    let ang = ang0 + drift + field(x, y);
                     x += ang.cos() * step;
                     y += ang.sin() * step;
                 }
@@ -405,6 +476,64 @@ pub fn compute(kind: &str, id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, s
                     run = run.max(patches.at(x, y - (step * k as f32) as i64)[0] * fall);
                 }
                 base.max(run * st * drip)
+            }))
+        }
+        "microscope_noise" if f("style", 0.0) > 0.5 => {
+            // cells floating at different depths: rings that are sharp and bright in focus, soft and dim out of focus,
+            // some of them dividing in two
+            let g = f("density", 14.0).round().clamp(2.0, 64.0) as i32;
+            let per = 3;
+            let size = f("cell_size", 0.014).clamp(0.002, 0.2);
+            let focus = f("focus", 0.07).clamp(0.0, 1.0);
+            let warp = f("warp", 0.5).clamp(0.0, 4.0) * 0.015;
+            let bright = f("brightness", 0.45).clamp(0.0, 8.0);
+            let px = 1.0 / s as f32;
+            let reach = ((size * 1.4 * 2.2) * g as f32).ceil() as i32;
+            fin(Tex::gray_fn(s, hs, |u, v| {
+                let (wu, wv) = if warp > 0.0 {
+                    (u + warp * crate::noise_styles::gradient(u, v, 6, 6, seed.wrapping_add(3)), v + warp * crate::noise_styles::gradient(u, v, 6, 6, seed.wrapping_add(4)))
+                } else {
+                    (u, v)
+                };
+                let (gx, gy) = ((wu * g as f32).floor() as i32, (wv * g as f32).floor() as i32);
+                let mut acc = 0.0f32;
+                for dy in -reach..=reach {
+                    for dx in -reach..=reach {
+                        let (cx, cy) = (gx + dx, gy + dy);
+                        let (hx, hy) = (cx.rem_euclid(g), cy.rem_euclid(g));
+                        for k in 0..per {
+                            let r = |n: i32| crate::noise_styles::unit(hx * per + k, hy * 97 + n, seed);
+                            let (px0, py0) = ((cx as f32 + r(1)) / g as f32, (cy as f32 + r(2)) / g as f32);
+                            let rad = size * (0.6 + 0.8 * r(3));
+                            let stretch = 1.0 + 0.5 * r(4);
+                            let (sn, cs) = (r(5) * std::f32::consts::TAU).sin_cos();
+                            // most cells are out of focus; `focus` is the share that is sharp
+                            let depth = if r(6) < focus { 0.0 } else { r(7) };
+                            let blur = (0.08 + 0.9 * depth) * rad + px;
+                            let amp = bright * (0.12 + 0.5 * (1.0 - depth).powi(3));
+                            let dividing = r(8) < 0.25;
+                            let (ex, ey) = (wu - px0, wv - py0);
+                            let mut best = 0.0f32;
+                            for part in 0..if dividing { 2 } else { 1 } {
+                                let (ox, oy, rr) = if dividing {
+                                    let o = if part == 0 { 0.55 } else { -0.55 } * rad;
+                                    (o * cs, o * sn, rad * 0.75)
+                                } else {
+                                    (0.0, 0.0, rad)
+                                };
+                                let (qx, qy) = (ex - ox, ey - oy);
+                                let a = (qx * cs + qy * sn) / stretch;
+                                let b = -qx * sn + qy * cs;
+                                let d = (a * a + b * b).sqrt();
+                                let ring = (-((d - rr) / blur).powi(2)).exp();
+                                let fill = 0.6 * (1.0 - smooth(rr - blur, rr + blur, d)) * depth.sqrt();
+                                best = best.max(ring + fill);
+                            }
+                            acc += amp * best;
+                        }
+                    }
+                }
+                acc.min(1.0)
             }))
         }
         "microscope_noise" => {

@@ -9,26 +9,26 @@ use std::sync::{Arc, Mutex, PoisonError};
 pub const HELP: &str = "Drive MaterialCraft from scripts and AI assistants.
 
   materialcraft mcp [options]       MCP server on standard input / output (for Claude and other assistants)
-  materialcraft serve [options]     keep a graph in memory and accept commands on a local port
+  materialcraft serve [options]     keep a package in memory and accept commands on a local port
   materialcraft exec [options] <command> [name=value ...]    run one command
   materialcraft commands [words]    list the commands and their parameters
 
 options:
-  --graph FILE        open this .mcg / .mca first
+  --graph FILE        open this package (.sbs) first
   --root DIR          limit every file the commands read or write to this folder
-  --bridge [ADDR]     (mcp, exec) drive the running editor instead of an in-memory graph; ADDR is 127.0.0.1:PORT,
+  --bridge [ADDR]     (mcp, exec) drive the running editor instead of an in-memory package; ADDR is 127.0.0.1:PORT,
                       left out it is found automatically
   --token TEXT        access token for --bridge ADDR (or set MATERIALCRAFT_CONTROL_TOKEN)
   --port N            (serve) port to listen on (default: any free port)
-  --save [FILE]       (exec) write the graph back afterwards (to FILE, or to the opened file)
+  --save [FILE]       (exec) write the package back afterwards (to FILE, or to the opened file)
   --out DIR           (exec) folder for pictures a command returns (default: the temporary folder)
 
 values: name=3  name=true  name=\"text\"  name='{\"a\":1}'  - anything that is valid JSON is JSON, the rest is text.
 A dotted name nests: params.scale=4 gives {\"params\":{\"scale\":4}}.
 
 examples:
-  materialcraft exec --graph wall.mcg render_node node=3 size=512
-  materialcraft exec node_add kind=voronoi params.scale=8 name=cells --graph wall.mcg --save
+  materialcraft exec --graph wall.sbs render_node node=3 size=512
+  materialcraft exec node_add kind=sbs:blur params.intensity=4 name=soft --graph wall.sbs --save
 ";
 
 struct Opts {
@@ -79,7 +79,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             }
             "--token" => o.token = Some(next(&mut i, "--token")?),
             "--port" => o.port = next(&mut i, "--port")?.parse().map_err(|_| "--port needs a number")?,
-            "--save" => o.save = Some(maybe(&mut i).filter(|v| !v.contains('=') && (v.ends_with(".mcg") || v.contains(['/', '\\'])))),
+            "--save" => o.save = Some(maybe(&mut i).filter(|v| !v.contains('=') && (v.ends_with(".sbs") || v.contains(['/', '\\'])))),
             "--out" => o.out = Some(PathBuf::from(next(&mut i, "--out")?)),
             "-h" | "--help" => {
                 print!("{HELP}");

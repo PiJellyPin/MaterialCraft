@@ -1,6 +1,6 @@
 # MaterialCraft Roadmap
 
-MaterialCraft is a node-based procedural material editor written in pure Rust (Windows, Linux, macOS). The core library has zero dependencies; only the GUI binary uses eframe + rfd. File formats: `.mcg` (editable graph), `.mca` (published package).
+MaterialCraft is a node-based procedural material editor written in pure Rust (Windows, Linux, macOS). The core library has zero dependencies; only the GUI binary uses eframe + rfd. File format: `.sbs` packages, opened, edited and saved as they are; since October 2026 it is the only format (the older MaterialCraft `.mcgp` / `.mcg` / `.mca` files, the ready-made `.mcg` library and everything that only served them were removed). Entries below that mention the older format, subgraphs, publishing, the spline editor, the resource manager or the ready-made library describe what existed before that change.
 
 Status note: everything has been built and tested on Linux only (CI for Windows, Linux and macOS is set up in `.github/workflows/ci.yml` but has not run yet). The GPU viewport has been verified on Mesa llvmpipe only, not on real GPUs.
 
@@ -159,7 +159,7 @@ Status note: everything has been built and tested on Linux only (CI for Windows,
 - [ ] Imported graphs are embedded copies; no live link or "update from source" when the package file changes
 - [x] Size caption on graph nodes (shown under a node whose Output Size differs from the graph; outputs show size and bit depth)
 - [x] Function graphs: about 85 `f_*` value nodes (variables, math, vectors, comparisons, logic, if / sequence, random, image sampling and statistics, inputs, casts, calls), a type checker, function-driven parameters (`fn.<param>`), pixel processor and value processor driven by a function
-- [x] Pattern programs (our FX-Map): `fx_map` node running a graph of quadrant / iterate / switch / marker nodes with random seeds, depth limit, blend modes and tileable output
+- [x] Pattern programs (our FX-Map): `fx_map` node running a graph of quadrant / iterate / switch / marker nodes with random seeds, depth limit, blend modes and tileable output; quad-tree nodes (Quad Cell, Repeat, Select Branch) with built-in patterns, image patterns, per-level roughness and settings driven by functions at every visit
 - [x] Pin (`f_pin`) and Input Value (`input_value`) nodes
 - [x] Curve node (per-channel tone curves) with an interactive editor
 - [x] Non-square graphs (width/height, `size W H`, tests), New Graph dialog with separate sizes, per-node `square_cells` (keeps cells square)
@@ -198,8 +198,30 @@ Status note: everything has been built and tested on Linux only (CI for Windows,
 - [ ] OCIO config support, per-bitmap input colour space, ICC profile import, colour-managed 2D / 3D views
 - [x] 32-bit float output: EXR, HDR and float TIFF export (graph clamps still to be reviewed)
 
+### Import from other tools
+- [x] `.sbs` package import (first version): graphs, nodes, links, parameters, function graphs, inputs/outputs, comments, bitmaps, linked packages, import report; File > Open, drag and drop, `materialcraft import`, AI `graph_open` (see IMPORT_SBS.md)
+- [x] `.sbs` pattern maps (FX-maps) as pattern programs of Quad Cell / Repeat / Select Branch nodes, with function-driven settings run per visit ($depth, $number, $pos); dynamic gradients as Lookup Table (row or column, repeat); per-node output size and format; graphs used as nodes take 16 image inputs
+- [ ] Settle the pattern-map conventions (offset units, blending, rotation direction) and the drop-down codes against the calibration renders
+- [x] `.sbs` library nodes: interface-fact table and per-node adapters; noises, gradients, shapes, tiles, splatters, ropes and weaves matched against renders (Preset Noise, Noise Patterns, Gradient (Two Points), Weave Patterns)
+- [ ] `.sbs` drop-down codes and library-node parameter names checked against real sample files and the calibration kit renders
+- [ ] Library material filters checked against renders; arc pavement, pavement, shape / height extrude, cube 3D and scratches generator matched
+- [ ] More than 4 image inputs on graphs used as nodes
+
+### .sbs as the file format (Oct 2026)
+- [x] Lossless package model (`src/xmldoc.rs`, `src/sbs_native.rs`): the file is kept as read and only what changed is written back; packages saved unchanged are byte-identical (checked on the maintainer's sample files)
+- [x] The format's own node types (`src/sbs_atomic.txt`, `src/sbs_defs.rs`): atomic texture nodes, function nodes, FX-map nodes, library graphs, graph inputs / outputs and graph instances; values keep their types and relative-to-parent flags
+- [x] Editor on packages: palette, parameters by type, function-driven values, expose (P) and graph parameters (defaults, labels, ranges), output usages, graph settings, folders in the Explorer, graphs and functions created / renamed / duplicated / deleted / saved on their own / copied from another package
+- [x] AI commands on packages (every command; `graph.set_input`, `graph.add_file`, `graph.text graph=`), CLI `render` / `graphs` / `check` / `params` on `.sbs`
+- [x] `.sbs` only (Oct 2026): the MaterialCraft file format and what only served it removed: `.mcg` / `.mcgp` / `.mca` reading and writing, publishing, live links, the ready-made `.mcg` library, the resource manager window, the spline editor, `materialcraft publish / import / library / example / resources / trace` and the `library.*`, `graph.link`, `graph.unlink`, `resource.add`, `resource.remove` and `function.probe` commands; the editor always holds an `.sbs` package (also behind Go to editor), so library nodes always draw their thumbnails and show their properties
+- [x] Library: every node listed once (an old and a new version of a library graph are one entry, the one with its settings), each with a picture
+- [x] Node positions 1:1 with the file (the format's node spacing), Output cards without an output socket and with their usage, Dot nodes drawn as dots, BASE SETTINGS open on nodes that have no other settings, a status-bar message when a graph cannot be drawn, new graphs sized relative to the parent like the format's own editor makes them, `materialcraft example` writes `brick_wall.sbs`
+- [ ] Ready-made materials rebuilt as `.sbs` packages
+- [ ] FX-map graph editing, gradient-key and curve editors for `.sbs` nodes, resources added to packages from the editor
+
 ### Publishing and automation
 - [x] AI control: command registry, MCP server, `exec` / `serve` CLI and live editor bridge (see AI_CONTROL.md)
+- [x] Assistant harness: review sheet with reference comparison (`render.review`, `materialcraft review`), graph as text (`graph.outline`), subgraphs from chosen nodes (`graph.extract`), math as text (`node.expression`), ready-made groups of standard nodes (`macro.add`), every 3D view option in `render.3d`, names for numbered settings and units in `node.describe`, Flood Fill region counts, unused-node warnings
+- [ ] Drop-down names checked against the calibration kit renders (`src/sbs_choices.txt` marks the assumed ones)
 - [ ] Unreal / Unity plugins and a small runtime for published packages
 - [ ] Scripting API and batch automation
 - [ ] Engine-specific output templates (Unreal ORM packing and similar)
@@ -207,7 +229,7 @@ Status note: everything has been built and tested on Linux only (CI for Windows,
 
 ### Polish and verification
 - [x] A path node can merge up to four splines (`file` to `file4`) and move, scale, rotate, mirror or reverse them
-- [ ] Library thumbnails are only 64 px and generated once at startup (node and ready-made tiles alike)
+- [ ] Library thumbnails are only 64 px and generated once at startup
 - [ ] `.ico` resource for the Windows exe file (the window and taskbar icon already work on all platforms; the release build hides the console window on Windows)
 - [ ] Visual check of the 2D/3D splitter and the export window
 - [ ] Run and verify on Windows and macOS
