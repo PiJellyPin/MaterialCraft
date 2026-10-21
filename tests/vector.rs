@@ -45,23 +45,10 @@ fn svg_shapes_and_transforms() {
 #[test]
 fn svg_and_text_nodes() {
     let svg = r##"<svg viewBox="0 0 10 10"><rect width="10" height="10" fill="#00ff00"/></svg>"##;
-    let b64 = |s: &str| {
-        const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let d = s.as_bytes();
-        let mut o = String::new();
-        for c in d.chunks(3) {
-            let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
-            for i in 0..4 {
-                if i <= c.len() {
-                    o.push(T[(n >> (18 - 6 * i) & 63) as usize] as char);
-                } else {
-                    o.push('=');
-                }
-            }
-        }
-        o
-    };
-    let text = format!("size 32\nresource a.svg {}\nnode 1 svg file=\"a.svg\" fit=1\nnode 2 text text=\"HI\" size=0.5\noutput a 1\noutput b 2\n", b64(svg));
+    let text = format!(
+        "size 32\nresource a.svg {}\nnode 1 svg file=\"a.svg\" fit=1\nnode 2 text text=\"HI\" size=0.5\noutput a 1\noutput b 2\n",
+        materialcraft::graph::b64_encode(svg.as_bytes())
+    );
     let g = Graph::parse(&text).unwrap();
     let out = g.evaluate(Some(32)).unwrap();
     assert_eq!(out["a"].px[16 * 32 + 16], [0.0, 1.0, 0.0, 1.0]);
@@ -84,18 +71,4 @@ fn builtin_font_layout() {
     assert!(lit > 50);
     assert!(Ttf::parse(b"not a font").is_err());
     assert!(Ttf::parse(&[0u8; 3]).is_err());
-}
-
-#[test]
-fn truetype_system_font_if_present() {
-    for path in ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", "/usr/share/fonts/dejavu/DejaVuSans.ttf"] {
-        if let Ok(bytes) = std::fs::read(path) {
-            let f = Font::load(&bytes).unwrap();
-            let polys = f.layout("Wo", 40.0, 1, 0.0, 1.0, &Xf::translate(50.0, 50.0));
-            let m = fill(&polys, 100, 100, false);
-            let lit = m.a.iter().filter(|a| **a > 0.5).count();
-            assert!(lit > 100 && lit < 5000, "{path}: lit {lit}");
-            return;
-        }
-    }
 }

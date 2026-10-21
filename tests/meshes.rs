@@ -45,3 +45,45 @@ fn closed_shapes_point_outwards() {
         assert!(bad == 0, "shape {id}: {bad} normals point inwards");
     }
 }
+
+#[test]
+fn meshes_are_outward_closed_and_finite() {
+    use materialcraft::render3d::build_mesh;
+    use materialcraft::tex::Tex;
+    let hm = Tex::gray_fn(64, 64, |u, v| ((u * 9.0).sin() * (v * 7.0).cos()) * 0.5 + 0.5);
+    for shape in 0..3 {
+        for h in [None, Some(&hm)] {
+            let m = build_mesh(shape, 24, 1.0, h, 0.1, 0.0);
+            assert!(m.pos.iter().chain(&m.nrm).chain(&m.tan).all(|p| p.iter().all(|c| c.is_finite())));
+            assert!(m.tris.iter().all(|t| t.iter().all(|&i| (i as usize) < m.pos.len())));
+            if h.is_none() {
+                // flat/undisplaced: the winding must agree with the analytic normal for every triangle
+                for t in &m.tris {
+                    let (a, b, c) = (m.pos[t[0] as usize], m.pos[t[1] as usize], m.pos[t[2] as usize]);
+                    let f = materialcraft::v3::cross(materialcraft::v3::sub(b, a), materialcraft::v3::sub(c, a));
+                    let (n0, n1, n2) = (m.nrm[t[0] as usize], m.nrm[t[1] as usize], m.nrm[t[2] as usize]);
+                    let n = [n0[0] + n1[0] + n2[0], n0[1] + n1[1] + n2[1], n0[2] + n1[2] + n2[2]];
+                    // pole triangles are degenerate (zero area), so allow float noise
+                    assert!(materialcraft::v3::dot(f, n) >= -1e-6, "shape {shape} has an inward-wound triangle");
+                }
+            }
+        }
+    }
+    // outward displacement: a white height map pushes every plane vertex towards +z (the surface normal)
+    let white = Tex::solid(4, 4, [1.0; 4]);
+    let p = build_mesh(2, 16, 1.0, Some(&white), 0.2, 0.0);
+    assert!(p.pos.iter().all(|v| (v[2] - 0.2).abs() < 1e-5), "relief must rise out of the surface");
+    // centred level: mid grey stays put
+    let grey = Tex::solid(4, 4, [0.5; 4]);
+    let p = build_mesh(2, 16, 1.0, Some(&grey), 0.2, 0.5);
+    assert!(p.pos.iter().all(|v| v[2].abs() < 1e-5));
+    // sphere seam and poles must stay welded after displacement
+    let s = build_mesh(0, 24, 1.0, Some(&hm), 0.15, 0.0);
+    let stride = 24 * 2 + 1;
+    for j in 0..=24usize {
+        let (a, b) = (s.pos[j * stride], s.pos[j * stride + 48]);
+        assert!(materialcraft::v3::len(materialcraft::v3::sub(a, b)) < 1e-4, "sphere seam opened at row {j}");
+    }
+    let top = s.pos[0];
+    assert!(s.pos[..stride].iter().all(|v| materialcraft::v3::len(materialcraft::v3::sub(*v, top)) < 1e-4), "north pole tore");
+}

@@ -1449,15 +1449,19 @@ impl Cx {
             return Some(key);
         }
         let fp = r.filepath.clone()?;
-        let fp = fp.strip_prefix("file:///").or_else(|| fp.strip_prefix("file://")).unwrap_or(&fp).to_string();
-        let dir = self.srcs[rs].dir.clone();
-        let stem = self.srcs[rs].stem.clone();
-        let raw = PathBuf::from(&fp);
-        let candidates = [raw.clone(), dir.join(&raw), dir.join(format!("{stem}.resources")).join(raw.file_name().unwrap_or_default())];
-        match candidates.iter().find(|p| p.is_file()) {
+        let dir = &self.srcs[rs].dir;
+        let stem = &self.srcs[rs].stem;
+        let dirs = [dir.clone(), dir.join(format!("{stem}.resources")), dir.join("resources")];
+        match crate::resources::resolve_in(&fp, &dirs) {
             Some(p) => Some(p.display().to_string()),
             None => {
-                self.note(Level::Missing, gname, None, format!("file '{fp}' of resource '{}' was not found next to the package", r.identifier));
+                let searched = dirs.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ");
+                self.note(
+                    Level::Missing,
+                    gname,
+                    None,
+                    format!("file '{fp}' of resource '{}' was not found; searched the original path, package folders [{searched}], and application assets folders (assets and assets/panorama beside the executable or in the working directory)", r.identifier),
+                );
                 Some(fp)
             }
         }

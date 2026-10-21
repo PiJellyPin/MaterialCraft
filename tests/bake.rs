@@ -37,6 +37,7 @@ fn identity_bake_gives_flat_normals_and_open_ao() {
     let mut s = small();
     s.maps = vec![MapKind::Normal, MapKind::AmbientOcclusion, MapKind::Opacity];
     let r = bake::bake_full(&low, Some(&low), None, &s, None).unwrap();
+    assert_eq!(r.maps.len(), s.maps.len(), "every requested bake map must be returned");
     let n = centre(&r.maps["normal"]);
     assert!((n[0] - 0.5).abs() < 0.01 && (n[1] - 0.5).abs() < 0.01 && n[2] > 0.99, "{n:?}");
     assert!(centre(&r.maps["ambient_occlusion"])[0] > 0.95);
@@ -161,6 +162,7 @@ fn cancel_stops_the_bake() {
 
 #[test]
 fn errors_are_explained() {
+    assert!(bake::parse_obj("v 0 0 0\n").is_err(), "a vertex without faces is not a mesh");
     let low = obj(&plane("p", 0.0));
     let nouv = obj("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
     assert!(bake::bake(&nouv, &low, &small()).unwrap_err().contains("UV"));

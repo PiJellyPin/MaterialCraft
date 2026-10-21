@@ -7,13 +7,13 @@ use materialcraft::lut::Lut;
 use materialcraft::resources;
 use materialcraft::tex::Tex;
 use materialcraft::vector::{fill, Xf};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 static SERIAL: Mutex<()> = Mutex::new(());
 
 fn data(n: &str) -> Vec<u8> {
-    std::fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data").join(n)).unwrap()
+    std::fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/assets").join(n)).unwrap()
 }
 
 fn tmp(name: &str) -> PathBuf {
@@ -39,24 +39,11 @@ fn font_formats_agree() {
         let b = coverage(&f, "B");
         let want = std::f32::consts::PI * 900.0;
         assert!((b - want).abs() < want * 0.02, "{file}: B covers {b}");
-        assert!(f.describe().contains("MCTest"), "{file}: {}", f.describe());
+        let description = f.describe();
+        assert!(description.contains("MCTest"), "{file}: {description}");
+        let format = if file == "tiny.otf" { "CFF" } else { "TrueType" };
+        assert!(description.contains(format), "{file}: missing {format} in {description}");
     }
-}
-
-#[test]
-fn cff_flag_in_description() {
-    assert!(Font::load(&data("tiny.otf")).unwrap().describe().contains("CFF"));
-    assert!(Font::load(&data("tiny.ttf")).unwrap().describe().contains("TrueType"));
-}
-
-#[test]
-fn real_cff_font_draws_text() {
-    // optional: any installed OpenType/CFF font
-    let p = Path::new("/usr/share/fonts/opentype/inter/InterDisplay-MediumItalic.otf");
-    let Ok(b) = std::fs::read(p) else { return };
-    let f = Font::load(&b).unwrap();
-    let c = coverage(&f, "Hag");
-    assert!(c > 300.0 && c < 8000.0, "coverage {c}");
 }
 
 #[test]

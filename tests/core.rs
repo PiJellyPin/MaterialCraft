@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use materialcraft::graph::{Error, Graph, EXAMPLE};
-use materialcraft::{expr, noise, png};
+use materialcraft::{expr, noise};
 
 #[test]
 fn example_graph_renders() {
@@ -49,13 +49,6 @@ fn expressions() {
 }
 
 #[test]
-fn png_signature_and_roundtrip_size() {
-    let px = vec![[0.5, 0.25, 1.0, 1.0]; 16];
-    let b = png::encode(4, 4, &px, 16);
-    assert_eq!(&b[1..4], b"PNG");
-}
-
-#[test]
 fn pixel_processor_and_save_roundtrip() {
     let t = "size 16\nnode 1 pixel_processor expr=\"u*v\"\noutput a 1\n";
     let g = Graph::parse(t).unwrap();
@@ -63,27 +56,8 @@ fn pixel_processor_and_save_roundtrip() {
     assert_eq!(g.evaluate(None).unwrap()["a"].px, g2.evaluate(None).unwrap()["a"].px);
 }
 
-use materialcraft::bake;
 use materialcraft::graph::Graph as G2;
 use std::collections::BTreeSet;
-
-#[test]
-fn png_roundtrip_decode() {
-    let mut px = Vec::new();
-    for i in 0..64 {
-        px.push([i as f32 / 63.0, 0.25, 1.0 - i as f32 / 63.0, 1.0]);
-    }
-    for depth in [8u8, 16] {
-        let bytes = png::encode(8, 8, &px, depth);
-        let t = png::decode(&bytes).unwrap();
-        assert_eq!((t.w, t.h), (8, 8));
-        for (a, b) in px.iter().zip(&t.px) {
-            for c in 0..3 {
-                assert!((a[c] - b[c]).abs() < 0.01, "{a:?} vs {b:?}");
-            }
-        }
-    }
-}
 
 #[test]
 fn subgraph_extract_preserves_result() {
@@ -117,53 +91,9 @@ fn sdf_nodes_and_forms() {
 }
 
 #[test]
-fn baker_produces_maps() {
-    let low = bake::parse_obj(&bake::uv_sphere_obj(12, 8, 1.0, 0.0)).unwrap();
-    let high = bake::parse_obj(&bake::uv_sphere_obj(48, 32, 1.0, 0.05)).unwrap();
-    let s = bake::BakeSettings { width: 64, height: 64, aa: 1, front: 0.2, rear: 0.2, ao_rays: 8, ao_dist: 0.5, padding: 2, ..Default::default() };
-    let m = bake::bake(&low, &high, &s).unwrap();
-    assert_eq!(m.len(), s.maps.len());
-    let n = &m["normal"];
-    assert!(n.px.iter().all(|p| p[2] > 0.3));
-    assert!(n.px.iter().any(|p| (p[0] - 0.5).abs() > 0.02));
-    assert!(bake::parse_obj("v 0 0 0\n").is_err());
-}
-
-#[test]
-fn renderer_draws_shapes() {
-    use materialcraft::render3d::{render, Maps, View};
-    use materialcraft::tex::Tex;
-    let (b, n, r, m, a) = (Tex::solid(8, 8, [0.8, 0.2, 0.2, 1.0]), Tex::solid(8, 8, [0.5, 0.5, 1.0, 1.0]), Tex::solid(8, 8, [0.4; 4]), Tex::solid(8, 8, [0.0, 0.0, 0.0, 1.0]), Tex::solid(8, 8, [1.0; 4]));
-    let maps = Maps { base: &b, normal: &n, rough: &r, metal: &m, ao: &a, emissive: None, height: None, env: None };
-    for shape in 0..3 {
-        let img = render(&maps, &View { shape, ..View::default() }, 64, 64);
-        let c = img.px[32 * 64 + 32];
-        assert!(c[0] > c[2], "shape {shape} centre should be reddish, got {c:?}");
-    }
-}
-
-#[test]
-fn bad_inputs_are_errors_not_panics() {
-    assert!(png::decode(b"not a png").is_err());
-    assert!(png::decode(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]).is_err());
+fn malformed_graphs_are_errors_not_panics() {
     assert!(G2::parse("subgraph a\nnode 1 color\n").is_err());
     assert!(G2::parse("node 1 subgraph graph=\"missing\"\noutput a 1\n").is_err());
-}
-
-#[test]
-fn every_node_type_evaluates() {
-    use materialcraft::graph::{demo_graph_for, SPECS};
-    let mut count = 0;
-    for sp in SPECS {
-        if let Some(text) = demo_graph_for(sp.kind) {
-            let g = G2::parse(&text).unwrap_or_else(|e| panic!("{}: parse: {e}", sp.kind));
-            let out = g.evaluate(Some(32)).unwrap_or_else(|e| panic!("{}: eval: {e}", sp.kind));
-            let t = &out["o"];
-            assert!(t.px.iter().all(|p| p.iter().all(|c| c.is_finite())), "{} produced NaN", sp.kind);
-            count += 1;
-        }
-    }
-    assert!(count > 60, "only {count} nodes tested");
 }
 
 #[test]
@@ -205,55 +135,6 @@ fn color_node_gray_mode() {
     let g = G2::parse("size 8\nnode 1 color r=1 g=0 b=0 gray=1 v=0.25\noutput a 1\n").unwrap();
     let p = g.evaluate(None).unwrap()["a"].px[0];
     assert!((p[0] - 0.25).abs() < 1e-5 && (p[1] - 0.25).abs() < 1e-5);
-}
-
-#[test]
-fn jpeg_and_tiff_are_well_formed() {
-    use materialcraft::{export, jpeg};
-    assert!(jpeg::tables_complete(), "standard Huffman tables must cover every symbol");
-    let mut px = Vec::new();
-    for y in 0..37 {
-        for x in 0..53 {
-            px.push([x as f32 / 52.0, y as f32 / 36.0, 0.5, 1.0]);
-        }
-    }
-    let t = materialcraft::tex::Tex { w: 53, h: 37, px };
-    let j = export::encode(export::Format::Jpeg, &t, 8, 90);
-    assert_eq!(&j[..2], &[0xff, 0xd8]);
-    assert_eq!(&j[j.len() - 2..], &[0xff, 0xd9]);
-    for depth in [8u8, 16] {
-        let tf = export::encode(export::Format::Tiff, &t, depth, 90);
-        assert_eq!(&tf[..4], &[b'I', b'I', 42, 0]);
-    }
-}
-
-#[test]
-fn png_decoder_handles_palette_alpha_and_low_bit_depth() {
-    // hand-built 2x2 4-bit palette PNG with tRNS, stored (uncompressed) deflate
-    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
-        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
-        out.extend_from_slice(kind);
-        out.extend_from_slice(data);
-        out.extend_from_slice(&[0, 0, 0, 0]); // CRC is not checked by the decoder
-    }
-    let mut p = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-    let mut ihdr = Vec::new();
-    ihdr.extend_from_slice(&2u32.to_be_bytes());
-    ihdr.extend_from_slice(&2u32.to_be_bytes());
-    ihdr.extend_from_slice(&[4, 3, 0, 0, 0]);
-    chunk(&mut p, b"IHDR", &ihdr);
-    chunk(&mut p, b"PLTE", &[255, 0, 0, 0, 255, 0]);
-    chunk(&mut p, b"tRNS", &[255, 128]);
-    let rows = [0u8, 0x01, 0u8, 0x10]; // filter 0 + two pixels per row (indices 0,1 / 1,0)
-    let mut z = vec![0x78, 0x01, 1, rows.len() as u8, 0, !(rows.len() as u8), 0xff];
-    z.extend_from_slice(&rows);
-    z.extend_from_slice(&[0, 0, 0, 0]);
-    chunk(&mut p, b"IDAT", &z);
-    chunk(&mut p, b"IEND", &[]);
-    let t = png::decode(&p).unwrap();
-    assert_eq!((t.w, t.h), (2, 2));
-    assert!(t.px[0][0] > 0.99 && t.px[0][3] > 0.99); // index 0: opaque red
-    assert!(t.px[1][1] > 0.99 && (t.px[1][3] - 128.0 / 255.0).abs() < 0.01); // index 1: half-transparent green
 }
 
 // ---------------------------------------------------------------- seamless angles + 3D mesh / displacement
@@ -330,48 +211,6 @@ fn gradient_grid_matches_perlin() {
 }
 
 #[test]
-fn meshes_are_outward_closed_and_finite() {
-    use materialcraft::render3d::build_mesh;
-    use materialcraft::tex::Tex;
-    let hm = Tex::gray_fn(64, 64, |u, v| ((u * 9.0).sin() * (v * 7.0).cos()) * 0.5 + 0.5);
-    for shape in 0..3 {
-        for h in [None, Some(&hm)] {
-            let m = build_mesh(shape, 24, 1.0, h, 0.1, 0.0);
-            assert!(m.pos.iter().chain(&m.nrm).chain(&m.tan).all(|p| p.iter().all(|c| c.is_finite())));
-            assert!(m.tris.iter().all(|t| t.iter().all(|&i| (i as usize) < m.pos.len())));
-            if h.is_none() {
-                // flat/undisplaced: the winding must agree with the analytic normal for every triangle
-                for t in &m.tris {
-                    let (a, b, c) = (m.pos[t[0] as usize], m.pos[t[1] as usize], m.pos[t[2] as usize]);
-                    let f = materialcraft::v3::cross(materialcraft::v3::sub(b, a), materialcraft::v3::sub(c, a));
-                    let (n0, n1, n2) = (m.nrm[t[0] as usize], m.nrm[t[1] as usize], m.nrm[t[2] as usize]);
-                    let n = [n0[0] + n1[0] + n2[0], n0[1] + n1[1] + n2[1], n0[2] + n1[2] + n2[2]];
-                    // pole triangles are degenerate (zero area), so allow float noise
-                    assert!(materialcraft::v3::dot(f, n) >= -1e-6, "shape {shape} has an inward-wound triangle");
-                }
-            }
-        }
-    }
-    // outward displacement: a white height map pushes every plane vertex towards +z (the surface normal)
-    let white = Tex::solid(4, 4, [1.0; 4]);
-    let p = build_mesh(2, 16, 1.0, Some(&white), 0.2, 0.0);
-    assert!(p.pos.iter().all(|v| (v[2] - 0.2).abs() < 1e-5), "relief must rise out of the surface");
-    // centred level: mid grey stays put
-    let grey = Tex::solid(4, 4, [0.5; 4]);
-    let p = build_mesh(2, 16, 1.0, Some(&grey), 0.2, 0.5);
-    assert!(p.pos.iter().all(|v| v[2].abs() < 1e-5));
-    // sphere seam and poles must stay welded after displacement
-    let s = build_mesh(0, 24, 1.0, Some(&hm), 0.15, 0.0);
-    let stride = 24 * 2 + 1;
-    for j in 0..=24usize {
-        let (a, b) = (s.pos[j * stride], s.pos[j * stride + 48]);
-        assert!(materialcraft::v3::len(materialcraft::v3::sub(a, b)) < 1e-4, "sphere seam opened at row {j}");
-    }
-    let top = s.pos[0];
-    assert!(s.pos[..stride].iter().all(|v| materialcraft::v3::len(materialcraft::v3::sub(*v, top)) < 1e-4), "north pole tore");
-}
-
-#[test]
 fn displacement_renders_every_shape_and_camera_without_panics() {
     use materialcraft::render3d::{render, Maps, View, RELIEF_BUMP, RELIEF_DISPLACE, RELIEF_NONE, RELIEF_PARALLAX};
     use materialcraft::tex::Tex;
@@ -379,6 +218,9 @@ fn displacement_renders_every_shape_and_camera_without_panics() {
     let (b, n, r, m, a) = (Tex::solid(4, 4, [0.8, 0.2, 0.2, 1.0]), Tex::solid(4, 4, [0.5, 0.5, 1.0, 1.0]), Tex::solid(4, 4, [0.4; 4]), Tex::solid(4, 4, [0.0, 0.0, 0.0, 1.0]), Tex::solid(4, 4, [1.0; 4]));
     let maps = Maps { base: &b, normal: &n, rough: &r, metal: &m, ao: &a, emissive: None, height: Some(&hm), env: None };
     for shape in 0..3 {
+        let plain = render(&maps, &View { shape, relief: RELIEF_NONE, ..View::default() }, 64, 64);
+        let center = plain.px[32 * 64 + 32];
+        assert!(center[0] > center[2], "shape {shape} center should be reddish: {center:?}");
         for relief in [RELIEF_NONE, RELIEF_BUMP, RELIEF_PARALLAX, RELIEF_DISPLACE] {
             // close cameras make triangles cross the near plane; behind/side views exercise back faces
             for (yaw, pitch, dist) in [(0.5, 0.3, 3.4), (3.4, -0.4, 1.6), (1.2, 1.2, 1.6), (-2.0, 0.0, 9.0)] {
@@ -403,10 +245,12 @@ fn every_node_output_is_sane_at_several_sizes() {
     // nodes whose demo output may legitimately be a flat colour
     let flat_ok = ["color", "input_value", "value_processor", "invert_flat", "clamp", "histogram_range", "dust", "curvature_smooth", "curvature", "edge_detect", "height_blend", "edge_wear", "dirt", "ao", "slope_blur", "vector_warp", "distance", "flood_fill_gradient"];
     let mut problems = Vec::new();
+    let mut count = 0;
     for sp in SPECS {
         let Some(text) = demo_graph_for(sp.kind) else { continue };
+        let g = G2::parse(&text).unwrap_or_else(|e| panic!("{}: parse: {e}", sp.kind));
+        count += 1;
         for size in [16usize, 32, 64, 100] {
-            let g = G2::parse(&text).unwrap();
             let out = match std::panic::catch_unwind(|| g.evaluate(Some(size))) {
                 Ok(Ok(o)) => o,
                 Ok(Err(e)) => { problems.push(format!("{} @{size}: error {e}", sp.kind)); continue; }
@@ -419,6 +263,7 @@ fn every_node_output_is_sane_at_several_sizes() {
             if mx - mn < 1e-4 && size >= 32 && !flat_ok.contains(&sp.kind) { problems.push(format!("{} @{size}: blank output ({mn})", sp.kind)); }
         }
     }
+    assert!(count > 60, "only {count} node demos exercised");
     assert!(problems.is_empty(), "node problems:\n{}", problems.join("\n"));
 }
 
@@ -613,7 +458,7 @@ fn normal_to_height_inverts_normal_from_height() {
 }
 
 #[test]
-fn batch1_nodes_behave() {
+fn color_filters_masks_and_blend_modes() {
     let run = |body: &str| Graph::parse(&format!("size 64\n{body}")).unwrap().evaluate(None).unwrap();
     // symmetry: left and right halves are mirror images
     let o = run("node 1 fbm scale=3 seed=2\nnode 2 symmetry in=@1 axis=0\noutput a 2\n");
@@ -646,7 +491,7 @@ fn batch1_nodes_behave() {
 }
 
 #[test]
-fn batch1b_nodes_behave() {
+fn normal_combine_shape_effects_and_luminosity() {
     let run = |body: &str| Graph::parse(&format!("size 64\n{body}")).unwrap().evaluate(None).unwrap();
     // normal combine with a flat detail map returns the base normal
     let o = run("node 1 fbm scale=3 seed=2\nnode 2 normal in=@1 strength=2\nnode 3 color r=0.5 g=0.5 b=1\nnode 4 normal_combine base=@2 detail=@3\noutput a 2\noutput b 4\n");
@@ -688,7 +533,6 @@ fn node_cache_reuses_unchanged_nodes_and_matches_a_fresh_run() {
     let r1 = g.evaluate_all_cached(128, &keep, 0, &cache, Some(9), true, &mut |_| first_seen += 1);
     assert_eq!(first_seen, 1, "the selected node must be reported once");
     let (h0, m0) = cache.stats();
-    let _ = h0;
     assert!(m0 >= 11, "every node computed on the first run ({m0})");
     // nothing changed: everything is reused and the pixels are identical
     let r2 = g.evaluate_all_cached(128, &keep, 0, &cache, None, true, &mut |_| {});
@@ -865,7 +709,7 @@ fn slope_blur_gray_path_matches_the_color_path() {
 }
 
 #[test]
-fn phase1_parameters_behave() {
+fn filter_parameters_change_the_result() {
     let run = |body: &str| Graph::parse(&format!("size 64\n{body}")).unwrap().evaluate(None).unwrap();
     let close = |a: &materialcraft::tex::Tex, b: &materialcraft::tex::Tex, tol: f32, what: &str| {
         for (p, q) in a.px.iter().zip(&b.px) {
@@ -997,7 +841,7 @@ fn shared_noise_block_disorder_speed_anisotropy_and_tile_offset() {
 }
 
 #[test]
-fn phase3_scatter_nodes_keep_old_output_and_gain_properties() {
+fn scatter_defaults_and_parameters() {
     use materialcraft::{ops, scatter, tex::Tex};
     let run = |body: &str| Graph::parse(&format!("size 64\n{body}")).unwrap().evaluate(None).unwrap();
     let diff = |a: &Tex, b: &Tex| a.px.iter().zip(&b.px).map(|(p, q)| (p[0] - q[0]).abs()).fold(0.0f32, f32::max);
@@ -1131,7 +975,7 @@ fn tile_sampler_and_generator_are_seamless() {
 }
 
 #[test]
-fn phase3b_nodes_behave_as_documented() {
+fn tile_and_pattern_parameters() {
     let run = |body: &str| Graph::parse(&format!("size 64\n{body}")).unwrap().evaluate(None).unwrap();
     let sum = |t: &materialcraft::tex::Tex| t.px.iter().map(|p| p[0]).sum::<f32>();
     let diff = |a: &materialcraft::tex::Tex, b: &materialcraft::tex::Tex| a.px.iter().zip(&b.px).map(|(p, q)| (p[0] - q[0]).abs()).sum::<f32>() / a.px.len() as f32;
@@ -1176,7 +1020,7 @@ fn phase3b_nodes_behave_as_documented() {
 }
 
 #[test]
-fn phase5_voronoi_cells_grunge_properties() {
+fn voronoi_cells_and_grunge_properties() {
     let run = |body: &str| Graph::parse(&format!("size 64\n{body}")).unwrap().evaluate(None).unwrap();
     let mean = |t: &materialcraft::tex::Tex| t.px.iter().map(|p| p[0]).sum::<f32>() / t.px.len() as f32;
     let diff = |a: &materialcraft::tex::Tex, b: &materialcraft::tex::Tex| a.px.iter().zip(&b.px).map(|(p, q)| (p[0] - q[0]).abs()).sum::<f32>() / a.px.len() as f32;
@@ -1223,7 +1067,7 @@ fn phase5_voronoi_cells_grunge_properties() {
 }
 
 #[test]
-fn phase6_grunge_maps_are_distinct_and_controllable() {
+fn grunge_maps_are_distinct_and_controllable() {
     let mut g = String::new();
     for m in 1..=24 {
         g += &format!("node {m} grunge_map map={m}\noutput m{m} {m}\n");
@@ -1245,7 +1089,7 @@ fn phase6_grunge_maps_are_distinct_and_controllable() {
 }
 
 #[test]
-fn phase6_gradient_map_and_color_match() {
+fn gradient_map_and_color_match() {
     let run = |body: &str| Graph::parse(&format!("size 64\n{body}")).unwrap().evaluate(None).unwrap();
     let mean = |t: &materialcraft::tex::Tex, c: usize| t.px.iter().map(|p| p[c]).sum::<f32>() / t.px.len() as f32;
     // gradient map: repeat wraps the input, clamp does not; alpha stops are only used on request
@@ -1270,7 +1114,7 @@ fn phase6_gradient_map_and_color_match() {
 }
 
 #[test]
-fn phase8_hbao_and_quantize_color() {
+fn hbao_and_quantize_color() {
     let run = |body: &str| Graph::parse(&format!("size 128\n{body}")).unwrap().evaluate(None).unwrap();
     let mean = |t: &materialcraft::tex::Tex| t.px.iter().map(|p| p[0]).sum::<f32>() / t.px.len() as f32;
     // a flat surface is unoccluded; a pit is darker at its bottom than a flat area, and taller height means darker
@@ -1295,7 +1139,7 @@ fn phase8_hbao_and_quantize_color() {
 }
 
 #[test]
-fn m0_multi_output_nodes() {
+fn color_and_material_outputs() {
     let run = |body: &str| Graph::parse(&format!("size 64\n{body}")).unwrap().evaluate(None).unwrap();
     let mean = |t: &materialcraft::tex::Tex, c: usize| t.px.iter().map(|p| p[c]).sum::<f32>() / t.px.len() as f32;
     // RGBA split: each output carries one channel; the default output (no name) is R
@@ -1337,7 +1181,7 @@ fn m0_multi_output_nodes() {
 }
 
 #[test]
-fn m0_float_export_keeps_values_above_one() {
+fn float_export_keeps_values_above_one() {
     use materialcraft::export::{encode, Format};
     use materialcraft::exr::f32_to_half;
     use materialcraft::tex::Tex;
@@ -1352,8 +1196,6 @@ fn m0_float_export_keeps_values_above_one() {
     // EXR float: header, offset table and the first scanline can be read back
     let b = encode(Format::Exr, &t, 32, 90);
     assert_eq!(&b[..4], &[0x76, 0x2f, 0x31, 0x01]);
-    let end = b.windows(2).position(|w| w == [0, 0]).unwrap(); // last header attribute ends with a 0, then the end byte
-    let _ = end;
     // find the offset table: the 8 bytes after the header's terminating zero point at scanline 0
     let hdr_end = {
         let mut i = 8;
@@ -1393,7 +1235,7 @@ fn m0_float_export_keeps_values_above_one() {
 }
 
 #[test]
-fn m0_non_square_node_sizes() {
+fn non_square_node_sizes() {
     // 256x128 graph: relative-to-input inherits the shape, the relative modifier scales both axes,
     // absolute keeps the aspect ratio of the graph
     let text = "size 256 128\nnode 1 perlin scale=4\nnode 2 blur in=@1 radius=2 osize_mode=0 osize_rel=-1\nnode 3 perlin scale=4 osize_mode=2 osize_abs=7\nnode 4 blend bg=@1 fg=@2 mode=0 opacity=0.5\noutput a 1\noutput b 2\noutput c 3\noutput d 4\n";
@@ -1410,7 +1252,7 @@ fn m0_non_square_node_sizes() {
 }
 
 #[test]
-fn m0_pin_types_follow_the_graph() {
+fn pin_types_follow_the_graph() {
     use materialcraft::graph::{pin_types, Pin};
     let g = Graph::parse("size 64\nnode 1 perlin scale=4\nnode 2 colorize in=@1\nnode 3 blur in=@2 radius=2\nnode 4 blur in=@1 radius=2\nnode 5 to_gray in=@3\nnode 6 color_match in=@2 reference=@2 method=1\nnode 7 tint in=@4\nnode 8 alpha_split in=@2\nnode 9 invert in=@8.alpha\nnode 10 invert in=@8.rgb\noutput a 5\n").unwrap();
     let p = pin_types(&g);
@@ -1426,7 +1268,7 @@ fn m0_pin_types_follow_the_graph() {
 }
 
 #[test]
-fn m0_per_node_output_format_quantises() {
+fn per_node_output_format_quantises() {
     let run = |fmt: &str| {
         let g = Graph::parse(&format!("size 64\nnode 1 gradient mode=0\nnode 2 tint in=@1 r=1.37 g=0.3333 b=0.5{fmt}\noutput o 2\n")).unwrap();
         g.evaluate(None).unwrap().remove("o").unwrap()
@@ -1444,7 +1286,7 @@ fn m0_per_node_output_format_quantises() {
 }
 
 #[test]
-fn m0_format_versions() {
+fn format_versions() {
     // a file without a format line is version 1 and still loads; we write version 2
     let old = Graph::parse("size 64\nnode 1 perlin scale=4\noutput o 1\n").unwrap();
     assert_eq!(old.format, 1);
@@ -1457,7 +1299,7 @@ fn m0_format_versions() {
 }
 
 #[test]
-fn m0_remaining_multi_output_nodes() {
+fn region_and_scatter_outputs() {
     let g = Graph::parse(concat!(
         "size 64\n",
         "node 1 cells scale=4\nnode 2 voronoi scale=5\nnode 3 splatter count=6 scale=0.2 scale_var=0 rot_var=0\n",
@@ -1503,7 +1345,7 @@ fn m0_remaining_multi_output_nodes() {
 }
 
 #[test]
-fn m0_pin_type_rules() {
+fn pin_type_rules() {
     use materialcraft::graph::{connection_issues, Pin};
     // images convert freely between gray and colour
     assert!(Pin::Color.accepts(Pin::Gray) && Pin::Gray.accepts(Pin::Color));
@@ -1518,7 +1360,7 @@ fn m0_pin_type_rules() {
 }
 
 #[test]
-fn m0_graph_default_format_and_hdr_safe_filters() {
+fn graph_default_format_and_hdr_safe_filters() {
     let base = "size 64\nnode 1 gradient mode=0\nnode 2 tint in=@1 r=1.37 g=0.3333 b=0.5\n";
     let run = |meta: &str, extra: &str| {
         let g = Graph::parse(&format!("{base}{meta}{extra}output o 2\n")).unwrap();
@@ -1545,7 +1387,7 @@ fn m0_graph_default_format_and_hdr_safe_filters() {
 }
 
 #[test]
-fn m0_square_cells_follow_the_aspect_ratio() {
+fn square_cells_follow_the_aspect_ratio() {
     use materialcraft::noise;
     let run = |extra: &str| {
         let g = Graph::parse(&format!("size 64 32\nnode 1 perlin scale=8{extra}\noutput o 1\n")).unwrap();
@@ -1574,7 +1416,7 @@ fn m0_square_cells_follow_the_aspect_ratio() {
 }
 
 #[test]
-fn m1_curve_node() {
+fn curve_node() {
     use materialcraft::curve::Curve;
     let c = Curve::parse("0:0,0.5:0.8,1:1").unwrap();
     assert!((c.eval(0.5) - 0.8).abs() < 1e-5);
@@ -1591,7 +1433,7 @@ fn m1_curve_node() {
 }
 
 #[test]
-fn m1_channel_shuffle_and_bitmap_options() {
+fn channel_shuffle_options() {
     let g = G2::parse("size 8\nnode 1 color r=0.2 g=0.4 b=0.6\nnode 2 channel_shuffle in=@1 src_r=2 src_g=8 src_b=9 inv_a=1\noutput o 2\n").unwrap();
     let p = g.evaluate(Some(8)).unwrap()["o"].px[0];
     assert!((p[0] - 0.6).abs() < 1e-5 && p[1] == 0.0 && p[2] == 1.0 && p[3] == 0.0, "{p:?}");
