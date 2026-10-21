@@ -42,8 +42,7 @@
 
 <!-- DRAFT: Replace this placeholder with a full editor screenshot. -->
 <p align="center">
-  <img width="2555" height="1387" alt="image" src="https://github.com/user-attachments/assets/aed97881-c091-4ef3-b2f4-065f99dd44fe" />
-  <sub><b>Screenshot placeholder:</b> the full editor, showing a node graph and its material in 3D.</sub>
+  <img width="2555" height="1387" alt="image" src="docs/screenshots/main-editor-window.png" />
 </p>
 
 ## Features
@@ -54,26 +53,24 @@
   <tr>
     <td width="50%" valign="top">
       <h3>🧩 Familiar by design</h3>
-      <img width="932" height="632" alt="image" src="https://github.com/user-attachments/assets/90076571-4278-4cdf-bf47-b01343185785" />
+      <img width="932" height="632" alt="image" src="docs/screenshots/familiar-by-design.png" />
       <p>A node graph, Properties panel, 2D/3D previews, and familiar editing shortcuts help Adobe Substance 3D Designer users get started. Build reusable materials and keep experimenting.</p>
     </td>
     <td width="50%" valign="top">
       <h3>🎨 Start from examples</h3>
-      <img src="https://github.com/user-attachments/assets/f41d3786-15ba-4205-9371-06089cf96587" alt="Wood-patterned material on a sphere in MaterialCraft's 3D View" width="100%"><br>
-      <sub>A wood-patterned material in the 3D View.</sub>
+      <img src="docs/screenshots/start-from-examples.png" width="100%"><br>
       <p>Open a bundled material or template and make it your own. Explore how a graph works, then reuse what you need.</p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
       <h3>🔍 Preview in 3D</h3>
-      <img src="https://github.com/user-attachments/assets/d92aed6e-ef2e-40e5-a1da-a1341e2d1a4e" alt="Purple riveted metal plates displayed on a sphere in MaterialCraft's 3D View" width="100%"><br>
-      <sub>Riveted metal plates under the preview lighting.</sub>
+      <img src="docs/screenshots/preview-in-3d.png" width="100%"><br>
       <p>Inspect textures in 2D and preview materials on built-in shapes or your own mesh. Explore lighting, surface detail, and individual material channels.</p>
     </td>
     <td width="50%" valign="top">
       <h3>📦 Bake and export</h3>
-      <img width="341" height="422" alt="image" src="https://github.com/user-attachments/assets/0be79b69-db28-4553-8aa0-497436c6e58b" />
+      <img width="341" height="422" src="docs/screenshots/bake-and-export.png" />
       <p>Bake maps from meshes and export your textures. Choose the outputs, resolution, and image format for your project.</p>
     </td>
   </tr>
@@ -86,15 +83,15 @@
 <table>
   <tr>
     <td width="33%" align="center">
-      <img src="https://github.com/user-attachments/assets/41096864-94b1-4831-9c0f-fac0b45f7dcb" alt="Dark cracked surface with glowing lava-colored seams on a sphere" width="100%"><br>
+      <img src="docs/screenshots/example-1.png" width="100%"><br>
       <sub>Lava-like cracks</sub>
     </td>
     <td width="33%" align="center">
-      <img src="https://github.com/user-attachments/assets/06a9e1bf-66f4-4a50-bc0c-33257d334d0d" alt="Raised woven pattern displayed on a sphere" width="100%"><br>
+      <img src="docs/screenshots/example-2.png" width="100%"><br>
       <sub>Woven patterns</sub>
     </td>
     <td width="33%" align="center">
-      <img src="https://github.com/user-attachments/assets/9eb1d9fd-df27-4576-a908-bc81c07bf571" alt="Cracked red brick material displayed on a sphere" width="100%"><br>
+      <img src="docs/screenshots/example-4.png" width="100%"><br>
       <sub>Weathered brick</sub>
     </td>
   </tr>
