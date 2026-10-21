@@ -23,7 +23,7 @@ For installation, see [README.md](../README.md); for automation, see
 | Task | Where to start |
 |---|---|
 | Create a material | Home > New graph, File > New > Material Graph, or Ctrl+N. Choose a template, name, package, size, and output format. |
-| Open a package | File > Open package(s), Ctrl+O, a recent-file card, or drop a .mcg/.mca file on the window. |
+| Open a package | File > Open package(s), Ctrl+O, a recent-file card, or drop an .sbs file on the window. |
 | Try a finished material | Home > TEMPLATES or File > Templates and examples. |
 | Add a node | Tab over the graph, drag a Library tile, or right-click the graph > Add node. |
 | Connect nodes | Drag between output and input sockets. Drag into empty space to open node search and auto-connect. |
@@ -40,7 +40,6 @@ For installation, see [README.md](../README.md); for automation, see
 | Manage imported files | Tools > Resources. |
 | Bake maps from meshes | Tools > Mesh map baker. |
 | Export textures | File > Export textures. Choose a folder, format, resolutions, and outputs. |
-| Publish a reusable package | File > Package > Publish package (.mca). |
 | Save your work | Ctrl+S; File > Save as for a new path. |
 | Recover a closed panel | Windows > the panel name. Windows > Reset layout restores the default layout. |
 | Automate the open graph | Tools > AI control; follow [AI_CONTROL.md](../AI_CONTROL.md). |
@@ -54,7 +53,6 @@ For installation, see [README.md](../README.md); for automation, see
   Right-click the instance > Edit template to change the shared copy in that package.
 - A **live-linked package** follows an external file. Use File > Package > Dependencies to relink it,
   embed a copy, or remove the link. Refresh linked packages rereads the external files.
-- Publishing embeds resources so the published package carries its content.
 
 ## 2. Keyboard and mouse shortcuts
 
@@ -99,8 +97,7 @@ move it independently; Shift temporarily flips grid snapping. Use Alt-, Space-, 
 
 | File | Purpose and entry point |
 |---|---|
-| `.mcg` | Editable text package containing a graph, subgraphs, links, and embedded resources. Open/save from File. |
-| `.mca` | Published text package with embedded resources and exposed parameters. Opens like .mcg. |
+| `.sbs` | Substance XML package containing graphs, functions, links, and resources. Open/save from File. |
 | `.png, .jpg, .tif, .exr, .hdr, .webp, .dds, .tga, .bmp` | Bitmap input; drop on the graph, File > Import bitmap, or browse from a Bitmap node. Format is recognized from file contents. |
 | `.svg` | Vector input; drop on the graph or browse from an SVG node. |
 | `.ttf, .otf, .ttc, .woff` | Font input for the Text node. |
@@ -114,10 +111,9 @@ and [NODES.md](NODES.md) for node-specific import controls.
 
 ### Graph and spline resources
 
-A .mcg can contain size and metadata lines, nodes, outputs, exposed parameters, comments,
-subgraphs, live links, and base64-encoded resources. Function and pattern graphs use
-meta kind "function" and meta kind "fxmap". Files declaring a newer unsupported format
-version are rejected with an update message.
+An .sbs package contains compositing graphs, function graphs, FX-Maps, parameters,
+connections, and resource references in XML. MaterialCraft preserves the original package
+and rewrites the parts changed by edits.
 
 Spline resources are stored inside the package, usually with a .spl name. Their text format is:
 
@@ -159,23 +155,20 @@ Use `materialcraft --help` for the command summary, `materialcraft bake --help` 
 A complete first render:
 
 ~~~sh
-materialcraft example examples
-materialcraft render examples/brick_wall.mcg out --size 1024
+materialcraft example out/example
+materialcraft render out/example/brick_wall.sbs out/maps --size 1024
 ~~~
 
 | Command | Purpose |
 |---|---|
 | `materialcraft render <graph> <outdir>` | Export graph outputs; choose resolutions, formats, parameters, and variations. |
 | `materialcraft render3d <graph> <out.png>` | Render a scene image or turntable. |
-| `materialcraft publish <in.mcg> <out.mca>` | Embed resources and publish a package. |
 | `materialcraft check <graph> / materialcraft params <graph>` | Inspect a graph or its exposed parameters. |
-| `materialcraft library [words]` | Find built-in graphs; --export <id> <file.mcg> writes one to disk. |
-| `materialcraft resources <graph>` | Inspect or manage embedded and linked resources. |
+| `materialcraft graphs <package.sbs>` | List package graphs; `--export <graph> <out.sbs>` saves a graph with its dependencies. |
 | `materialcraft bake --low <mesh> --out <dir>` | Bake mesh maps; add optional high-poly meshes, a cage, and map settings. |
 | `materialcraft testmesh <outdir>` | Write demonstration low/high mesh files. |
-| `materialcraft trace <graph> <node-id> <out.spl>` | Trace a node's image into spline outlines. |
 | `materialcraft nodes` | Print node inputs and parameters; see [NODES.md](NODES.md) for the reference. |
-| `materialcraft-gui [file.mcg\|file.mca]` | Open the editor, optionally with a package. |
+| `materialcraft-gui [file.sbs]` | Open the editor, optionally with a package. |
 
 For MCP, exec, serve, and the live editor bridge, see [AI_CONTROL.md](../AI_CONTROL.md).
 
@@ -217,7 +210,7 @@ The default workspace places Explorer and Library on the left, Graph in the cent
 | Menu | Main destinations |
 |---|---|
 | File | New, Open package(s), Save, Save as, Templates and examples, Import bitmap, Export textures, Home screen |
-| File > Package | Add template, Link package as node, Refresh linked packages, Dependencies, Publish package |
+| File > Package | Add template, Link package as node, Refresh linked packages, Dependencies |
 | Edit | Undo/redo, clipboard operations, selection, Add node, Comment frame, Create subgraph from selection |
 | Tools | Mesh map baker, Resources, Frame all, Auto-layout, AI control, GPU acceleration |
 | Windows | Panel visibility and Reset layout |

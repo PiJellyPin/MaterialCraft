@@ -2037,7 +2037,7 @@ fn logo() -> &'static (Tex, String) {
     LOGO.get_or_init(load_logo)
 }
 
-/// Embedded logo, else assets/MaterialCraftLogo.png next to the exe / working dir, else a built-in purple squid.
+/// Embedded logo, else assets/logo.png next to the exe / working dir, else a built-in purple squid.
 fn load_logo() -> (Tex, String) {
     let mut bytes: Option<(Vec<u8>, String)> = logo_data::LOGO_PNG.map(|b| (b.to_vec(), "embedded".to_string()));
     if bytes.is_none() {
@@ -2052,17 +2052,11 @@ fn load_logo() -> (Tex, String) {
             dirs.push(c.join("assets"));
             dirs.push(c);
         }
-        'outer: for d in dirs {
-            if let Ok(rd) = std::fs::read_dir(&d) {
-                for e in rd.flatten() {
-                    let n = e.file_name().to_string_lossy().to_lowercase();
-                    if n.starts_with("materialcraftlogo") && n.ends_with(".png") {
-                        if let Ok(b) = std::fs::read(e.path()) {
-                            bytes = Some((b, e.path().display().to_string()));
-                            break 'outer;
-                        }
-                    }
-                }
+        for d in dirs {
+            let path = d.join("logo.png");
+            if let Ok(b) = std::fs::read(&path) {
+                bytes = Some((b, path.display().to_string()));
+                break;
             }
         }
     }
@@ -2071,7 +2065,7 @@ fn load_logo() -> (Tex, String) {
             Ok(t) => (t, format!("Logo loaded from {src}")),
             Err(e) => (fallback_logo(128), format!("Logo file found but could not be read ({e}); using the built-in logo")),
         },
-        None => (fallback_logo(128), "No MaterialCraftLogo.png found; using the built-in logo".into()),
+        None => (fallback_logo(128), "No logo.png found; using the built-in logo".into()),
     }
 }
 

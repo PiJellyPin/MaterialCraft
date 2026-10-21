@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Headless-friendly GPU viewer test: renders a procedural brick material with the GPU renderer and writes a screenshot.
+//! GPU viewer diagnostic: renders a material and writes a screenshot. Requires a display and OpenGL.
 //! usage: cargo run --release --features gui --example gpu_shot -- out.png [shape 0|1|2] [relief 0..3] [width height] [nomsaa] [wire] [rough=0.3 metal=0 color=r,g,b]
 //!        [set=key=value]... (any View setting, e.g. set=env.preset=sunset set=post.bloom=0.4 set=rig=sun set=scene=floor)
 //!        [cpu=cpu.png] also render the same view with the software renderer and print how far the two pictures are apart
+//!        [graph=package.sbs] [size=1024] load an SBS material instead of the procedural brick material
 use eframe::egui;
 use eframe::egui_glow;
 use materialcraft::gpu3d::{self, MapInputs, Shared};
@@ -130,9 +131,21 @@ fn main() -> eframe::Result<()> {
     let gsize: usize = arg("size=").and_then(|s| s.parse().ok()).unwrap_or(1024);
     let gout;
     let set: TexSet = if let Some(path) = arg("graph=") {
-        // real material: evaluate a .mcg and hand its outputs to the viewer
-        let g = materialcraft::graph::Graph::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
-        gout = g.evaluate(Some(gsize)).unwrap();
+        if !path.to_ascii_lowercase().ends_with(".sbs") {
+            eprintln!("{path}: graph= expects a Substance package (.sbs)");
+            std::process::exit(1);
+        }
+        let (g, warnings) = materialcraft::sbs_native::open(std::path::Path::new(&path)).unwrap_or_else(|e| {
+            eprintln!("{path}: {e}");
+            std::process::exit(1);
+        });
+        for warning in warnings {
+            eprintln!("{path}: warning: {warning}");
+        }
+        gout = g.evaluate(Some(gsize)).unwrap_or_else(|e| {
+            eprintln!("{path}: render failed: {e}");
+            std::process::exit(1);
+        });
         let get = |k: &str| gout.get(k).cloned();
         TexSet {
             base: get("basecolor").unwrap_or_else(|| Tex::solid(4, 4, [0.5, 0.5, 0.5, 1.0])),
