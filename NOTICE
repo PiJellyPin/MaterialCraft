@@ -1,17 +1,23 @@
 MaterialCraft
-Copyright 2026 PiJellyPin and MaterialCraft contributors
+Copyright (c) 2026 PiJellyPin and MaterialCraft contributors.
+Licensed under the MIT License or the Apache License, Version 2.0, at your option
+(LICENSE-MIT, LICENSE-APACHE).
 
-This product is dual licensed under the Apache License 2.0 (LICENSE-APACHE) or
-the MIT License (LICENSE-MIT), at your option.
+Third-party material
 
-MaterialCraft is an independent work. It is not affiliated with, endorsed by or
-sponsored by any other software vendor. Product names mentioned anywhere in this
-repository belong to their respective owners.
+This product bundles third-party material under its own licenses, listed below. The per-file
+list (author, source, license) is in ATTRIBUTION.md.
 
-The graphical editor (the optional "gui" feature) links third-party open source
-libraries. Their licences are listed in THIRD_PARTY_LICENSES.md.
+libwebp data tables (src/webp_tables.rs) — BSD-3-Clause, Copyright (c) 2010, Google Inc. All rights reserved. See src/LICENSE-libwebp.
+DirectXTex data tables (src/dds_tables.rs) — MIT, Copyright (c) Microsoft Corporation. See src/LICENSE-DirectXTex.
 
-The editor also uses the shared Craft libraries (craft-atomic, craft-settings,
-craft-cms, craft-ui, craft-quit) from https://github.com/storytold/craft-libs,
-Copyright (c) 2026 ArtCraft Team and the craft-libs contributors, under
-MIT OR Apache-2.0. Their own notices are kept in that repository.
+GUI builds embed fonts from epaint_default_fonts: Hack (MIT and Bitstream Vera License;
+DejaVu contributions are public domain), Ubuntu-Light (Ubuntu Font Licence 1.0),
+NotoEmoji-Regular (SIL Open Font License 1.1), and emoji-icon-font (MIT).
+Authors, sources and upstream notices are linked in ATTRIBUTION.md. Their license texts
+ship with release packages as LICENSE-Hack, LICENSE-Ubuntu, LICENSE-NotoEmoji and
+LICENSE-emoji-icon-font.
+
+Shared Craft libraries (craft-atomic, craft-settings, craft-cms, craft-ui, craft-quit) — MIT OR Apache-2.0,
+Copyright (c) 2026 ArtCraft Team and the craft-libs contributors. Their notices are in
+https://github.com/storytold/craft-libs.

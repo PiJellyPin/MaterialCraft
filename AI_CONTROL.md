@@ -1,11 +1,12 @@
-# AI control
+# AI control and automation
 
-MaterialCraft can be driven by an AI assistant or a script. The editor exposes every action as a documented
-command; an assistant adds nodes, connects them, sets values and looks at renders while you watch the graph
-change in the window. Every edit is one undo step (Ctrl+Z).
+This guide explains MaterialCraft's optional automation interface for external AI assistants and scripts.
+It lets them add and connect nodes, set parameters, inspect graphs, and render results through the
+Model Context Protocol (MCP), CLI commands, or a connection to the running editor. In the editor, changes
+appear in the graph as they happen, and each edit is one undo step (Ctrl+Z).
 
-The design (a command registry shared by the editor, a command line and an MCP server, plus a local control
-port) follows the approach of the open-source FilmCraft project. No code was copied.
+The live editor connection is off by default. Enable it from Tools > AI control or start the editor with
+`--control`. The commands also work without an editor window, as described below.
 
 ## Quick start with the editor open
 

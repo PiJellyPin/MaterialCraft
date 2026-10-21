@@ -1,12 +1,5 @@
 RELEASE_PLAN.md
 .cargo/config.toml
-release/MaterialCraft-0.1.0-win64.zip
-release/MaterialCraft-0.1.0-win64/LICENSE-APACHE
-release/MaterialCraft-0.1.0-win64/LICENSE-MIT
-release/MaterialCraft-0.1.0-win64/LICENSE-MIT
-release/MaterialCraft-0.1.0-win64/MaterialCraft.exe
-release/MaterialCraft-0.1.0-win64/NOTICE
-release/MaterialCraft-0.1.0-win64/README.md
-release/MaterialCraft-0.1.0-win64/THIRD_PARTY_LICENSES.md
+/release/
 /target
 /AiMaterials

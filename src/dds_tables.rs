@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Constant tables for the BC6H / BC7 block decoders (partition shapes, fix-up indices, BC6H bit layouts).
 //! The numbers come from the Microsoft DirectXTex sources (MIT licence, Copyright (c) Microsoft Corporation);
-//! see THIRD_PARTY_LICENSES.md. They are facts of the Direct3D texture format specification.
+//! see ATTRIBUTION.md. They are facts of the Direct3D texture format specification.
 
 /// Subset number of every texel: `[subset count - 1][shape][texel]`.
 pub const PARTITION: [[[u8; 16]; 64]; 3] = [
