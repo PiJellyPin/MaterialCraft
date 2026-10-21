@@ -92,7 +92,7 @@ fn ply_ascii_and_binary() {
         assert!((area(&m) - 2.0).abs() < 1e-6, "big endian {big}");
     }
     assert!(meshio::parse_ply(b"hello").is_err());
-    assert!(meshio::parse_ply(b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nend_header\n").is_ok() == false || true);
+    assert!(meshio::parse_ply(b"ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nend_header\n").is_err(), "truncated ASCII PLY must be rejected");
     // a face that points at a missing vertex is an error, not a panic
     let bad = ply_ascii().replace("4 0 1 2 3", "4 0 1 2 9");
     assert!(meshio::parse_ply(bad.as_bytes()).is_err());

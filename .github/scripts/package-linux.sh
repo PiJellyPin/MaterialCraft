@@ -11,7 +11,7 @@ install -m 0755 "$OUT/materialcraft"     "$A/usr/bin/materialcraft"
 install -m 0755 "$OUT/materialcraft-gui" "$A/usr/bin/materialcraft-gui"
 install -d "$A/usr/share/doc/materialcraft"
 cp -R "$RUNNER_TEMP/materialcraft-notices/." "$A/usr/share/doc/materialcraft/"
-install -m 0644 assets/MaterialCraftLogo.png \
+install -m 0644 assets/logo.png \
   "$A/usr/share/icons/hicolor/256x256/apps/materialcraft.png"
 
 cat > "$A/materialcraft.desktop" <<EOF
@@ -26,7 +26,7 @@ Terminal=false
 EOF
 
 install -m 0644 "$A/materialcraft.desktop" "$A/usr/share/applications/materialcraft.desktop"
-install -m 0644 assets/MaterialCraftLogo.png "$A/materialcraft.png"
+install -m 0644 assets/logo.png "$A/materialcraft.png"
 
 # Bundle optional XKB libraries; graphics drivers must come from the host.
 mkdir -p "$A/lib"

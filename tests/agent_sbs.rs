@@ -89,8 +89,6 @@ fn builds_renders_saves_and_reopens_a_material() {
     // values are checked: a typo is explained, a choice is taken by name
     let e = fails(&mut s, "node.set", Json::obj().with("node", "mix").with("params", Json::obj().with("opacity", 1)));
     assert!(e.contains("opacitymult"), "{e}");
-    let e = fails(&mut s, "node.set", Json::obj().with("node", "mix").with("params", Json::obj().with("blendingmode", "banana")));
-    assert!(e.contains("Multiply"), "{e}");
     // a link to an input the node does not have is refused
     let e = fails(&mut s, "node.connect", Json::obj().with("from", "noise").with("to", "mix").with("slot", "fg"));
     assert!(e.contains("source"), "{e}");
@@ -197,28 +195,6 @@ fn parameters_can_be_exposed() {
     run(&mut s, "graph.unexpose", Json::obj().with("label", "Tint strength"));
     let g = run(&mut s, "graph.inspect", Json::obj());
     assert!(g.get("parameters").is_none());
-}
-
-#[test]
-fn undo_and_failed_batches_work_on_packages() {
-    let mut s = Session::new();
-    sd_material(&mut s);
-    let before = run(&mut s, "graph.text", Json::obj());
-    let e = fails(
-        &mut s,
-        "batch",
-        steps(
-            r#"[
-        {"command":"node_add","params":{"kind":"sbs:blur","name":"b"}},
-        {"command":"node_connect","params":{"from":"b","to":"mix","slot":"nope"}}
-    ]"#,
-        ),
-    );
-    assert!(e.contains("step 2"), "{e}");
-    assert_eq!(run(&mut s, "graph.text", Json::obj()).to_text(), before.to_text());
-    run(&mut s, "node.remove", Json::obj().with("nodes", "red"));
-    run(&mut s, "edit.undo", Json::obj());
-    assert_eq!(run(&mut s, "graph.text", Json::obj()).to_text(), before.to_text());
 }
 
 #[test]

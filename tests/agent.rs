@@ -56,6 +56,7 @@ fn builds_a_material_with_one_batch_and_one_undo_step() {
     let mut s = mc();
     run(&mut s, "graph.set", Json::obj().with("size", 128));
     let before = node_count(&mut s);
+    let original = run(&mut s, "graph.text", Json::obj());
     small_material(&mut s);
     // four nodes and two output nodes
     assert_eq!(node_count(&mut s), before + 6);
@@ -64,6 +65,7 @@ fn builds_a_material_with_one_batch_and_one_undo_step() {
     // the batch is a single undo step: graph.set was the first, the batch the second
     run(&mut s, "edit.undo", Json::obj());
     assert_eq!(node_count(&mut s), before);
+    assert_eq!(run(&mut s, "graph.text", Json::obj()), original, "undo must restore the entire package");
     run(&mut s, "edit.redo", Json::obj());
     assert_eq!(node_count(&mut s), before + 6);
 }
@@ -71,6 +73,7 @@ fn builds_a_material_with_one_batch_and_one_undo_step() {
 #[test]
 fn a_failing_batch_changes_nothing() {
     let mut s = mc();
+    let original = run(&mut s, "graph.text", Json::obj());
     let steps = Json::parse(&format!(
         r#"[
         {{"command":"node_add","params":{{"kind":"{PERLIN}","name":"a"}}}},
@@ -82,6 +85,7 @@ fn a_failing_batch_changes_nothing() {
     assert!(e.contains("step 2") && e.contains("nope"), "{e}");
     assert_eq!(node_count(&mut s), 0, "the first step must be rolled back");
     assert!(!s.can_undo(), "a failed batch leaves no undo step");
+    assert_eq!(run(&mut s, "graph.text", Json::obj()), original, "failed batch must restore the entire package");
 }
 
 #[test]

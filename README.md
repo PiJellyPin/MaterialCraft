@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/MaterialCraftLogo.png" alt="MaterialCraft" width="120">
+  <img src="assets/logo.png" alt="MaterialCraft" width="120">
 </p>
 
 <h1 align="center">MaterialCraft</h1>

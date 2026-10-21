@@ -22,8 +22,8 @@ cp -R "$RUNNER_TEMP/materialcraft-notices/." "$app/Contents/Resources/"
 set_="$RUNNER_TEMP/MaterialCraft.iconset"
 mkdir -p "$set_"
 for s in 16 32 128 256; do
-  sips -z $s $s           assets/MaterialCraftLogo.png --out "$set_/icon_${s}x${s}.png"    >/dev/null
-  sips -z $((s*2)) $((s*2)) assets/MaterialCraftLogo.png --out "$set_/icon_${s}x${s}@2x.png" >/dev/null
+  sips -z $s $s           assets/logo.png --out "$set_/icon_${s}x${s}.png"    >/dev/null
+  sips -z $((s*2)) $((s*2)) assets/logo.png --out "$set_/icon_${s}x${s}@2x.png" >/dev/null
 done
 iconutil -c icns "$set_" -o "$app/Contents/Resources/MaterialCraft.icns"
 

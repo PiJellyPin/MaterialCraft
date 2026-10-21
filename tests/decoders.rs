@@ -1,9 +1,9 @@
-//! Decoder checks against reference pictures produced by independent encoders/decoders (tests/data/*.ref.png).
+//! Decoder checks against reference pictures produced by independent encoders/decoders (tests/assets/*.ref.png).
 use materialcraft::{dec_basic, dec_dds, dec_jpeg, dec_tiff, dec_webp, png};
 use std::path::PathBuf;
 
 fn data(n: &str) -> Vec<u8> {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data").join(n);
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/assets").join(n);
     std::fs::read(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
 }
 
@@ -106,7 +106,10 @@ fn bc6h_unsigned_random_blocks() {
 #[test]
 fn corrupt_input_never_panics() {
     type F = fn(&[u8]) -> bool;
-    let files: [(&str, F); 12] = [
+    assert!(png::decode(b"not a png").is_err());
+    assert!(png::decode(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]).is_err());
+    let files: [(&str, F); 13] = [
+        ("t.png", |b| png::decode(b).is_ok()),
         ("lossy30.webp", |b| dec_webp::decode(b).is_ok()),
         ("lossless_a.webp", |b| dec_webp::decode(b).is_ok()),
         ("pal.webp", |b| dec_webp::decode(b).is_ok()),
@@ -192,18 +195,30 @@ fn imgio_float_formats_report_float() {
 
 #[test]
 fn own_encoders_round_trip() {
+    use materialcraft::export::{encode, Format};
     use materialcraft::tex::Tex;
-    let t = Tex::from_fn(24, 20, |u, v| [u, v, (u * 3.0).fract(), 1.0]);
+    let t = Tex::from_fn(53, 37, |u, v| [u, v, (u * 3.0).fract(), 0.25 + 0.75 * u]);
+    for (depth, tolerance) in [(8, 1.0 / 255.0), (16, 1.0 / 65535.0)] {
+        let bytes = encode(Format::Png, &t, depth, 90);
+        assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+        let back = png::decode(&bytes).unwrap();
+        assert_eq!((back.w, back.h), (t.w, t.h), "PNG {depth}");
+        for (a, b) in t.px.iter().zip(&back.px) {
+            assert!(a.iter().zip(b).all(|(a, b)| (a - b).abs() <= tolerance + 1e-6), "PNG {depth}: {a:?} versus {b:?}");
+        }
+    }
     // TIFF at every depth (floats are stored exactly at 32 bit)
     for (depth, tol) in [(8u8, 0.5f32 / 255.0), (16, 1.0 / 65535.0 * 2.0), (32, 1e-6)] {
-        let b = materialcraft::tiff::encode(&t, depth);
+        let b = encode(Format::Tiff, &t, depth, 90);
         let r = dec_tiff::decode(&b).unwrap_or_else(|e| panic!("tiff {depth}: {e}"));
-        assert_eq!((r.w, r.h), (24, 20));
+        assert_eq!((r.w, r.h), (t.w, t.h));
         let worst = r.px.iter().zip(&t.px).flat_map(|(a, b)| (0..3).map(move |k| (a[k] - b[k]).abs())).fold(0f32, f32::max);
         assert!(worst <= tol + 1e-6, "tiff {depth}: worst {worst}");
     }
     // JPEG: lossy, but close at high quality
-    let b = materialcraft::jpeg::encode(&t, 95);
+    assert!(materialcraft::jpeg::tables_complete(), "Huffman tables must cover every symbol");
+    let b = encode(Format::Jpeg, &t, 8, 95);
+    assert!(b.starts_with(&[0xff, 0xd8]) && b.ends_with(&[0xff, 0xd9]));
     let r = dec_jpeg::decode(&b).unwrap();
     let mean = r.px.iter().zip(&t.px).map(|(a, b)| (0..3).map(|k| (a[k] - b[k]).abs()).sum::<f32>() / 3.0).sum::<f32>() / t.px.len() as f32;
     assert!(mean < 0.02, "jpeg mean error {mean}");
@@ -224,4 +239,33 @@ fn oversized_headers_are_rejected_not_allocated() {
     assert!(materialcraft::imgio::check_size(20_000, 20_000).is_err());
     assert!(materialcraft::imgio::check_size(8192, 8192).is_ok());
     assert!(materialcraft::imgio::check_size(0, 5).is_err());
+}
+
+#[test]
+fn png_decoder_handles_palette_alpha_and_low_bit_depth() {
+    // hand-built 2x2 4-bit palette PNG with tRNS, stored (uncompressed) deflate
+    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(kind);
+        out.extend_from_slice(data);
+        out.extend_from_slice(&[0, 0, 0, 0]); // CRC is not checked by the decoder
+    }
+    let mut p = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&2u32.to_be_bytes());
+    ihdr.extend_from_slice(&2u32.to_be_bytes());
+    ihdr.extend_from_slice(&[4, 3, 0, 0, 0]);
+    chunk(&mut p, b"IHDR", &ihdr);
+    chunk(&mut p, b"PLTE", &[255, 0, 0, 0, 255, 0]);
+    chunk(&mut p, b"tRNS", &[255, 128]);
+    let rows = [0u8, 0x01, 0u8, 0x10]; // filter 0 + two pixels per row (indices 0,1 / 1,0)
+    let mut z = vec![0x78, 0x01, 1, rows.len() as u8, 0, !(rows.len() as u8), 0xff];
+    z.extend_from_slice(&rows);
+    z.extend_from_slice(&[0, 0, 0, 0]);
+    chunk(&mut p, b"IDAT", &z);
+    chunk(&mut p, b"IEND", &[]);
+    let t = png::decode(&p).unwrap();
+    assert_eq!((t.w, t.h), (2, 2));
+    assert!(t.px[0][0] > 0.99 && t.px[0][3] > 0.99); // index 0: opaque red
+    assert!(t.px[1][1] > 0.99 && (t.px[1][3] - 128.0 / 255.0).abs() < 0.01); // index 1: half-transparent green
 }
