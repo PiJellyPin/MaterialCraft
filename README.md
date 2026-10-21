@@ -1,128 +1,138 @@
+<p align="center">
+  <img src="assets/MaterialCraftLogo.png" alt="MaterialCraft" width="120">
+</p>
 
-### Donate For Claude Max Subscription to support development (all funds go to claude max subscription)
-Donate Here: [Donation Button](https://www.paypal.com/donate/?hosted_button_id=DYD94FKUZ9H7G).
+<h1 align="center">MaterialCraft</h1>
 
-our discord is here: if you want to submit features or got any cool ideas! https://discord.gg/9KVCNatNvX
+<p align="center">
+  <b>Procedural material creation; an open-source, clean-room reimplementation of Adobe Substance 3D Designer, rebuilt in pure Rust.</b><br>
+  Build with nodes and preview your materials in 3D using familiar workflows, shaped by artist feedback.<br>
+</p>
 
-### Examples:
-<img width="657" height="527" alt="image" src="https://github.com/user-attachments/assets/41096864-94b1-4831-9c0f-fac0b45f7dcb" />
-<img width="647" height="524" alt="image" src="https://github.com/user-attachments/assets/06a9e1bf-66f4-4a50-bc0c-33257d334d0d" />
-<img width="651" height="531" alt="image" src="https://github.com/user-attachments/assets/f41d3786-15ba-4205-9371-06089cf96587" />
-<img width="660" height="529" alt="image" src="https://github.com/user-attachments/assets/d92aed6e-ef2e-40e5-a1da-a1341e2d1a4e" />
-<img width="651" height="525" alt="image" src="https://github.com/user-attachments/assets/9eb1d9fd-df27-4576-a908-bc81c07bf571" />
+<p align="center">
+  <img alt="100% Rust" src="https://img.shields.io/badge/100%25-Rust-b7410e?style=flat-square&amp;logo=rust">
+  <img alt="macOS · Windows · Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-native-2f7bf5?style=flat-square">
+  <a href="#license-and-credits"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-3a3a3a?style=flat-square"></a>
+  <a href="docs/ROADMAP.md"><img alt="Status: early alpha" src="https://img.shields.io/badge/status-early%20alpha-d69e2e?style=flat-square"></a>
+</p>
 
-# MaterialCraft
-Procedural, node-based material authoring in pure Rust (Windows / Linux / macOS).
+<p align="center">
+  <a href="#downloads"><img src="https://img.shields.io/badge/Download-Development%20build-7950D6?style=for-the-badge" alt="Download the development build"></a>
+</p>
 
-## Download
-Every push to `main` is built, installed and launched on all three platforms, then published as the rolling
-[`latest` prerelease](../../releases/tag/latest). It is a development build, replaced on every push.
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#downloads">Downloads</a> ·
+  <a href="docs/ROADMAP.md"><b>Roadmap</b></a> ·
+  <a href="#getting-started">Getting Started</a>
+</p>
+
+<p align="center">
+  <a href="https://discord.gg/9KVCNatNvX"><img alt="Join the MaterialCraft community on Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&amp;logo=discord&amp;logoColor=white" height="40"></a><br>
+  Share your materials, ask questions, and tell us which workflows could be better.
+</p>
+
+<h3 align="center">Donate</h3>
+
+<p align="center">
+  <a href="https://www.paypal.com/donate/?hosted_button_id=DYD94FKUZ9H7G"><img src="https://img.shields.io/badge/Donate%20via%20PayPal-0070BA?style=for-the-badge&amp;logo=paypal&amp;logoColor=white" alt="Donate via PayPal"></a><br>
+  Help support MaterialCraft's development.<br>
+  <sub>All donations currently fund the Claude Max subscription used for development.</sub>
+</p>
+
+<!-- DRAFT: Replace this placeholder with a full editor screenshot. -->
+<p align="center">
+  <img width="2555" height="1387" alt="image" src="https://github.com/user-attachments/assets/aed97881-c091-4ef3-b2f4-065f99dd44fe" />
+  <sub><b>Screenshot placeholder:</b> the full editor, showing a node graph and its material in 3D.</sub>
+</p>
+
+## Features
+
+**306 node types:** 217 texture nodes, 84 function nodes, and 5 pattern-program nodes. [Explore the node reference →](docs/NODES.md).
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🧩 Familiar by design</h3>
+      <img width="932" height="632" alt="image" src="https://github.com/user-attachments/assets/90076571-4278-4cdf-bf47-b01343185785" />
+      <p>A node graph, Properties panel, 2D/3D previews, and familiar editing shortcuts help Adobe Substance 3D Designer users get started. Build reusable materials and keep experimenting.</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>🎨 Start from examples</h3>
+      <img src="https://github.com/user-attachments/assets/f41d3786-15ba-4205-9371-06089cf96587" alt="Wood-patterned material on a sphere in MaterialCraft's 3D View" width="100%"><br>
+      <sub>A wood-patterned material in the 3D View.</sub>
+      <p>Open a bundled material or template and make it your own. Explore how a graph works, then reuse what you need.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>🔍 Preview in 3D</h3>
+      <img src="https://github.com/user-attachments/assets/d92aed6e-ef2e-40e5-a1da-a1341e2d1a4e" alt="Purple riveted metal plates displayed on a sphere in MaterialCraft's 3D View" width="100%"><br>
+      <sub>Riveted metal plates under the preview lighting.</sub>
+      <p>Inspect textures in 2D and preview materials on built-in shapes or your own mesh. Explore lighting, surface detail, and individual material channels.</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>📦 Bake and export</h3>
+      <img width="341" height="422" alt="image" src="https://github.com/user-attachments/assets/0be79b69-db28-4553-8aa0-497436c6e58b" />
+      <p>Bake maps from meshes and export your textures. Choose the outputs, resolution, and image format for your project.</p>
+    </td>
+  </tr>
+</table>
+
+**Planned: MaterialX exports for your favorite tools.** We’re working toward [MaterialX](https://materialx.org/Specification.html) (`.mtlx`) export, starting with verified Unreal Engine support. Our [integration roadmap](docs/ROADMAP.md#application-integrations) also targets Unity Engine, Godot Engine, Blender, SideFX Houdini, Autodesk Maya, and Autodesk 3ds Max.
+
+**More materials made with MaterialCraft**
+
+<table>
+  <tr>
+    <td width="33%" align="center">
+      <img src="https://github.com/user-attachments/assets/41096864-94b1-4831-9c0f-fac0b45f7dcb" alt="Dark cracked surface with glowing lava-colored seams on a sphere" width="100%"><br>
+      <sub>Lava-like cracks</sub>
+    </td>
+    <td width="33%" align="center">
+      <img src="https://github.com/user-attachments/assets/06a9e1bf-66f4-4a50-bc0c-33257d334d0d" alt="Raised woven pattern displayed on a sphere" width="100%"><br>
+      <sub>Woven patterns</sub>
+    </td>
+    <td width="33%" align="center">
+      <img src="https://github.com/user-attachments/assets/9eb1d9fd-df27-4576-a908-bc81c07bf571" alt="Cracked red brick material displayed on a sphere" width="100%"><br>
+      <sub>Weathered brick</sub>
+    </td>
+  </tr>
+</table>
+
+## Downloads
+
+[Windows, macOS, and Linux builds](../../releases/tag/latest) are updated nightly when changes are available.
+
+<details>
+<summary>Choose a package and install it</summary>
 
 | Platform | File | Notes |
 |---|---|---|
 | Windows 10/11 x64 | `MaterialCraft_<version>_x64-windows.zip` | Unzip and run `materialcraft-gui.exe`. Unsigned, so SmartScreen may ask once: More info > Run anyway. |
 | macOS 11+ (Apple Silicon and Intel) | `MaterialCraft_<version>_universal-macOS.dmg` | Drag MaterialCraft to Applications. Not notarised: the first time, right-click the app > Open (or System Settings > Privacy & Security > Open Anyway). The `materialcraft` CLI is next to the app in the dmg. |
-| Debian / Ubuntu | `MaterialCraft_<version>_x86_64-linux.deb` | `sudo apt install ./MaterialCraft_<version>_x86_64-linux.deb` |
-| Fedora / RHEL / openSUSE | `MaterialCraft_<version>_x86_64-linux.rpm` | `sudo dnf install ./MaterialCraft_<version>_x86_64-linux.rpm` |
-| Any Linux | `MaterialCraft_<version>_x86_64-linux.AppImage` | `chmod +x` and run. Needs FUSE (`fusermount`); without it, run with `--appimage-extract-and-run`. |
-| Any Linux | `MaterialCraft_<version>_x86_64-linux.tar.gz` | Both binaries, no install. Needs the X11/Wayland, xkbcommon and EGL/GL libraries every desktop already has. |
+| Ubuntu 22.04+ / Debian 12+ (x86-64) | `MaterialCraft_<version>_x86_64-linux.deb` | `sudo apt install ./MaterialCraft_<version>_x86_64-linux.deb` |
+| Fedora / other RPM-based Linux (x86-64) | `MaterialCraft_<version>_x86_64-linux.rpm` | On systems using DNF: `sudo dnf install ./MaterialCraft_<version>_x86_64-linux.rpm`. See Linux requirements below. |
+| Linux x86-64 (portable editor) | `MaterialCraft_<version>_x86_64-linux.AppImage` | `chmod +x` and run. Needs FUSE (`fusermount`); without it, run with `--appimage-extract-and-run`. |
+| Linux x86-64 (editor and CLI archive) | `MaterialCraft_<version>_x86_64-linux.tar.gz` | Extract and run. Requires the desktop X11/Wayland, xkbcommon and EGL/GL libraries. |
 
-Linux builds need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 and later).
+Linux builds require **glibc 2.35 or newer** (Ubuntu 22.04, Debian 12, and later).
+
 `SHA256SUMS` lists every file's checksum, and each file carries a build provenance attestation:
 `gh attestation verify <file> -R PiJellyPin/MaterialCraft`.
 
-## Build & run
-    cargo run --release --features gui --bin materialcraft-gui     # visual editor
-    cargo run --release -- render wall.sbs out --size 1024 --render3d   # CLI
-    cargo run --release --features gpu -- render wall.sbs out --size 2048   # CLI with GPU compute for nodes and baking (falls back to the CPU automatically; bake takes --device auto|cpu|gpu)
+</details>
 
-Requires a current stable Rust toolchain (https://rustup.rs). On Windows the MSVC build tools are needed.
-The core library has zero dependencies; the editor uses egui/eframe + rfd (native file dialogs).
+## Getting started
 
-## Files: Substance packages (.sbs)
-MaterialCraft opens, edits and saves `.sbs` packages as they are. One package holds every graph and function of a project
-(no separate graph or package files); the Explorer lists them, and right-clicking one opens it, exports its maps, saves it as a
-package of its own with what it uses, duplicates, renames or deletes it. The node palette offers the format's own nodes (the
-atomic nodes and the library graphs MaterialCraft renders), values and graph parameters are stored the way the format stores them,
-and saving rewrites only what was changed: a package that was opened and saved without changes is byte-for-byte the same file.
-Values can be computed by function graphs, parameters can be exposed (the P button) and their defaults, labels and ranges set
-in the graph's settings, and a graph can run any other graph of the package that does not use it.
-`.sbs` is MaterialCraft's only file format: the older MaterialCraft files (`.mcg`, `.mcgp`, `.mca`) are no longer read or written.
+1. **Open an example.** Launch MaterialCraft and choose a material from **TEMPLATES**, or use **File → Templates and examples**.
+2. **Make it yours.** Select a node, adjust its properties, and inspect the result in the 2D and 3D views.
+3. **Save and export.** Save your project, then choose **File → Export textures** to select your outputs, resolution, and image format.
 
-## Editor
-Start screen (recent files, New graph dialog with templates) -> editor with Explorer, Library, Graph, 3D View, 2D View and
-Properties panels. The Library is a thumbnail grid of the format's own nodes (27 atomic nodes and 339 library graphs, each listed
-once, with a picture of what it makes), sorted into Generators, Filters and Material tools; function and FX-Map nodes appear when
-a function or pattern graph is open. Panels can be closed/reopened from the Windows menu.
-
-Tab = add node at cursor · drag a link into empty space = add + auto-connect · Ctrl+Z/Y undo/redo ·
-Ctrl+C/X/V/D · rubber-band & Shift/Ctrl multi-select · C = comment frame · double-click a graph node to open its graph ·
-F = frame all · Alt/Space/Middle-drag = pan · wheel = zoom.
-
-## CLI
-    materialcraft render <package.sbs[#graph]> <outdir> [--sizes 512,1024] [--depth 16] [--param "name=0.5"] [--variations 8] [--render3d]
-    materialcraft graphs <package.sbs> [--export <graph> <out.sbs>]   # list the graphs, or save one with what it uses as a package
-    materialcraft check | params <package.sbs[#graph]>
-    materialcraft nodes [words]                       # the nodes graphs can use
-    materialcraft bake --low <mesh>... [--high <mesh>...] [--cage <mesh>] --out <dir> [--preset game] [--size 2048] [--aa 2] [--maps normal,ao,curvature]   # see: materialcraft bake --help
-    materialcraft bake <low> <high> <outdir>                      # short form; meshes can be OBJ, glTF / GLB, PLY or STL
-    materialcraft review <package.sbs[#graph]> <out.png> [--reference photo.jpg] [--json out.json]   # review sheet: 3D preview, maps, node graph, comparison
-    materialcraft example <outdir>                    # a small example package (brick_wall.sbs)
-    materialcraft testmesh <outdir>                   # a demo low / high-poly OBJ pair for the baker
-
-## AI control
-
-Assistants and scripts can build and edit graphs through an MCP server, a command line and a live editor bridge. They can check
-their own work with a review sheet (3D preview, maps, node graph with thumbnails, the graph as text, a comparison with a
-reference picture with hints on what to change), write math as text (turned into function graphs), insert ready-made groups
-of standard nodes (grow / shrink masks, stars, strokes, custom tiles) and move nodes into subgraphs. See [AI_CONTROL.md](AI_CONTROL.md).
-
-## Platforms
-Windows, Linux and macOS use the same code: `eframe` (glow / OpenGL 3.3 core) for the window and the 3D viewport, `rfd` for
-file dialogs, plus the shared Craft libraries (`craft-ui` docking, `craft-settings`, `craft-atomic`, `craft-cms`, `craft-quit`, from
-https://github.com/storytold/craft-libs). The core library and the command-line tool still use only the Rust standard
-library unless built with `--features cms` or `--features gui`. Settings live in `config.toml` under `%APPDATA%\materialcraft`, `~/.config/materialcraft` or
-`~/Library/Application Support/materialcraft`. Building needs Rust 1.95 or newer. GitHub Actions builds and tests all three (`.github/workflows/ci.yml`); `release.yml` packages every push to `main` and installs and launches each package before `publish.yml` releases it.
-Linux needs the usual X11/Wayland/GL development packages (`libxkbcommon-dev libwayland-dev libx11-dev libgl1-mesa-dev`).
+Use **Tab** to add a node and **Ctrl+S** to save (**Cmd+S** on macOS).
 
 ## License and credits
 
-MaterialCraft is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
-Copyright (c) 2026 PiJellyPin and MaterialCraft contributors. Notices are in [NOTICE](NOTICE).
-
-Third-party libraries, fonts, and decoder tables keep their own licenses; their credits are in
-[ATTRIBUTION.md](ATTRIBUTION.md).
-
-## Graph language
-Besides graphs, a package holds **function graphs** (the format's 84 function nodes: math, vectors, logic, variables, random,
-image sampling, calls). Any value of a node can be computed by a function graph of its own (the fn button), the Pixel Processor
-and Value Processor run function graphs, and an FX-Map node draws its pattern graph (Quadrant, Iterate and Switch nodes).
-
-## 3D viewer and renderer
-Lights (directional, point, spot, shadows), HDR environments (.hdr, .exr, .png, presets; rotation, exposure, blur), camera presets and
-turntable, 16 shapes plus custom meshes (OBJ, glTF, PLY, STL), scenes (floor, look-dev, pedestal), displacement / parallax / bump,
-tone mapping and post (SSAO, DOF, bloom, grading, vignette), channel isolation, and a progressive path tracer (View > Render > Path tracer).
-Headless: `materialcraft render3d wall.sbs out.png --mode pt --spp 256 --env sunset --rig three_point --turntable 36`.
-
-## Opening packages and linked files
-**`.sbs` packages** open with File > Open or by dropping them on the window, and stay `.sbs` (see Files above). To draw them,
-MaterialCraft renders each node with its own implementation of that node: built-in nodes exactly, library graphs referred to by
-name (the common noises, patterns, tiles and weaves) with their settings translated, pattern maps (FX-maps) and function graphs
-as they are; anything without an implementation yet shows a marked placeholder while the file keeps it untouched. The graph's
-settings list what renders approximately. See IMPORT_SBS.md.
-
-The Explorer lists the package's resources (bitmaps, SVG, fonts). Linked files are found by their path, next to the package and in
-its `resources` folder. Bitmaps can be PNG, JPEG (baseline and progressive), TIFF (LZW, PackBits, Deflate, 8/16/32 bit), OpenEXR,
-Radiance HDR, WebP (lossy with alpha, lossless, animated: first frame), DDS (BC1-BC7 including BC6H, and uncompressed), TGA or BMP;
-all readers are written in Rust, with no dependencies, and recognise the format from the file contents.
-
-## Not implemented (honest list)
-AxF import, OCIO/ACE colour management, scripting API, SVG gradients, WOFF2 fonts and font kerning / shaping,
-PIZ-compressed EXR, 12-bit and arithmetic-coded JPEG, JPEG-in-TIFF, BigTIFF, and any testing of the 3D viewer on real GPUs (only a software GL driver was available).
-See [ROADMAP.md](docs/ROADMAP.md) for the MVP milestone.
-
-
-## Nodes
-The format's own nodes: 27 atomic nodes (Blend, Levels, Blur, Transformation 2D, Gradient Map, FX-Map, Pixel Processor, Text, SVG,
-Bitmap, ...), 339 library graphs (noises, patterns, tiles, weaves, grunges, filters, material tools), 84 function nodes and the
-FX-Map pattern nodes. `materialcraft nodes [words]` lists them; NODES.md describes the engine nodes they render through.
+MaterialCraft is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE).
+Copyright (c) 2026 PiJellyPin and MaterialCraft contributors.
+[Notices](NOTICE) · [Credits](ATTRIBUTION.md).
