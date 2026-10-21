@@ -104,9 +104,7 @@
 
 ## Downloads
 
-**[Download the latest development build](../../releases/tag/latest)** for Windows, macOS, or Linux.
-
-These are development builds, refreshed as changes land on `main`. MaterialCraft is still working toward its [initial release](docs/ROADMAP.md#initial-release).
+[Windows, macOS, and Linux builds](../../releases/tag/latest) are updated nightly when changes are available.
 
 <details>
 <summary>Choose a package and install it</summary>
@@ -115,12 +113,13 @@ These are development builds, refreshed as changes land on `main`. MaterialCraft
 |---|---|---|
 | Windows 10/11 x64 | `MaterialCraft_<version>_x64-windows.zip` | Unzip and run `materialcraft-gui.exe`. Unsigned, so SmartScreen may ask once: More info > Run anyway. |
 | macOS 11+ (Apple Silicon and Intel) | `MaterialCraft_<version>_universal-macOS.dmg` | Drag MaterialCraft to Applications. Not notarised: the first time, right-click the app > Open (or System Settings > Privacy & Security > Open Anyway). The `materialcraft` CLI is next to the app in the dmg. |
-| Debian / Ubuntu | `MaterialCraft_<version>_x86_64-linux.deb` | `sudo apt install ./MaterialCraft_<version>_x86_64-linux.deb` |
-| Fedora / RHEL / openSUSE | `MaterialCraft_<version>_x86_64-linux.rpm` | `sudo dnf install ./MaterialCraft_<version>_x86_64-linux.rpm` |
-| Any Linux | `MaterialCraft_<version>_x86_64-linux.AppImage` | `chmod +x` and run. Needs FUSE (`fusermount`); without it, run with `--appimage-extract-and-run`. |
-| Any Linux | `MaterialCraft_<version>_x86_64-linux.tar.gz` | Both binaries, no install. Needs the X11/Wayland, xkbcommon and EGL/GL libraries every desktop already has. |
+| Ubuntu 22.04+ / Debian 12+ (x86-64) | `MaterialCraft_<version>_x86_64-linux.deb` | `sudo apt install ./MaterialCraft_<version>_x86_64-linux.deb` |
+| Fedora / other RPM-based Linux (x86-64) | `MaterialCraft_<version>_x86_64-linux.rpm` | On systems using DNF: `sudo dnf install ./MaterialCraft_<version>_x86_64-linux.rpm`. See Linux requirements below. |
+| Linux x86-64 (portable editor) | `MaterialCraft_<version>_x86_64-linux.AppImage` | `chmod +x` and run. Needs FUSE (`fusermount`); without it, run with `--appimage-extract-and-run`. |
+| Linux x86-64 (editor and CLI archive) | `MaterialCraft_<version>_x86_64-linux.tar.gz` | Extract and run. Requires the desktop X11/Wayland, xkbcommon and EGL/GL libraries. |
 
-Linux builds need glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 and later).
+Linux builds require **glibc 2.35 or newer** (Ubuntu 22.04, Debian 12, and later).
+
 `SHA256SUMS` lists every file's checksum, and each file carries a build provenance attestation:
 `gh attestation verify <file> -R PiJellyPin/MaterialCraft`.
 
