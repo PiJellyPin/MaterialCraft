@@ -2,7 +2,7 @@
   <img src="assets/MaterialCraftLogo.png" alt="MaterialCraft" width="120">
 </p>
 
-<h1 align="center">MaterialCraft</h1>
+<h1 align="center">Material Craft</h1>
 
 <p align="center">
   <b>Procedural material creation; an open-source, clean-room reimplementation of Adobe Substance 3D Designer, rebuilt in pure Rust.</b><br>
