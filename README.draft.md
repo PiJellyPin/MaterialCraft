@@ -54,8 +54,7 @@
   <tr>
     <td width="50%" valign="top">
       <h3>🧩 Familiar by design</h3>
-      <img src="assets/readme/screenshot-placeholder.svg" alt="Screenshot placeholder: a material graph with connected nodes" width="100%"><br>
-      <sub><b>Screenshot placeholder:</b> a material graph and its texture output.</sub>
+      <img width="932" height="632" alt="image" src="https://github.com/user-attachments/assets/90076571-4278-4cdf-bf47-b01343185785" />
       <p>A node graph, Properties panel, 2D/3D previews, and familiar editing shortcuts help Adobe Substance 3D Designer users get started. Build reusable materials and keep experimenting.</p>
     </td>
     <td width="50%" valign="top">
@@ -75,7 +74,6 @@
     <td width="50%" valign="top">
       <h3>📦 Bake and export</h3>
       <img width="341" height="422" alt="image" src="https://github.com/user-attachments/assets/0be79b69-db28-4553-8aa0-497436c6e58b" />
-      <sub><b>Screenshot placeholder:</b> texture export with output and resolution controls.</sub>
       <p>Bake maps from meshes and export your textures. Choose the outputs, resolution, and image format for your project.</p>
     </td>
   </tr>
