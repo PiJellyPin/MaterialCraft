@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" role="img" aria-labelledby="title description">
+  <title id="title">Screenshot placeholder</title>
+  <desc id="description">A clearly marked placeholder for a future MaterialCraft screenshot. This is not an image of the application.</desc>
+  <rect width="960" height="600" rx="20" fill="#19171f"/>
+  <rect x="24" y="24" width="912" height="552" rx="12" fill="none" stroke="#65577e" stroke-width="2" stroke-dasharray="10 10"/>
+  <g fill="none" stroke="#b69af0" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="426" y="180" width="108" height="82" rx="8"/>
+    <circle cx="455" cy="205" r="8"/>
+    <path d="M431 252l30-28 22 18 19-27 27 37"/>
+  </g>
+  <text x="480" y="325" text-anchor="middle" font-family="sans-serif" font-size="32" font-weight="700" fill="#f4f0fa">Screenshot placeholder</text>
+  <text x="480" y="369" text-anchor="middle" font-family="sans-serif" font-size="20" fill="#c7bdd4">Replace with a capture from MaterialCraft</text>
+</svg>

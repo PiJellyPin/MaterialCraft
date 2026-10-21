@@ -184,6 +184,44 @@ jobs:
           "$OUT/materialcraft$ext" render smoke/brick_wall.mcg smoke/out --size 64
           compgen -G 'smoke/out/*.png' >/dev/null
 
+      - name: Collect license notices
+        run: |
+          set -euo pipefail
+          python_cmd=python3
+          if [ "$RUNNER_OS" = Windows ]; then python_cmd=python; fi
+          "$python_cmd" - <<'PY'
+          import json
+          import os
+          import shutil
+          import subprocess
+          from pathlib import Path
+
+          stage = Path(os.environ["RUNNER_TEMP"]) / "materialcraft-notices"
+          stage.mkdir(parents=True, exist_ok=True)
+          for name in ("LICENSE-MIT", "LICENSE-APACHE", "NOTICE", "ATTRIBUTION.md",
+                       "src/LICENSE-libwebp", "src/LICENSE-DirectXTex"):
+              destination = stage / name
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(name, destination)
+
+          # Dependency-provided fonts: ship the notices from the version Cargo resolved.
+          metadata = json.loads(subprocess.check_output(
+              ["cargo", "metadata", "--locked", "--format-version=1", "--features", "gui"],
+              text=True,
+          ))
+          packages = [p for p in metadata["packages"] if p["name"] == "epaint_default_fonts"]
+          if len(packages) != 1:
+              raise SystemExit("Expected one epaint_default_fonts version; check bundled font notices")
+          fonts = Path(packages[0]["manifest_path"]).parent / "fonts"
+          for source, destination in (
+              ("Hack-Regular.txt", "LICENSE-Hack"),
+              ("UFL.txt", "LICENSE-Ubuntu"),
+              ("OFL.txt", "LICENSE-NotoEmoji"),
+              ("emoji-icon-font-mit-license.txt", "LICENSE-emoji-icon-font"),
+          ):
+              shutil.copyfile(fonts / source, stage / destination)
+          PY
+
       # ---------------------------------------------------------------- Linux
       # The AppDir is the single source of truth for the Linux file layout: the
       # .deb, the .rpm and the AppImage are all derived from it. The plain
@@ -199,6 +237,8 @@ jobs:
 
           install -m 0755 "$OUT/materialcraft"     "$A/usr/bin/materialcraft"
           install -m 0755 "$OUT/materialcraft-gui" "$A/usr/bin/materialcraft-gui"
+          install -d "$A/usr/share/doc/materialcraft"
+          cp -R "$RUNNER_TEMP/materialcraft-notices/." "$A/usr/share/doc/materialcraft/"
           install -m 0644 assets/MaterialCraftLogo.png \
             "$A/usr/share/icons/hicolor/256x256/apps/materialcraft.png"
 
@@ -367,16 +407,19 @@ jobs:
           mkdir -p %{buildroot}/usr/bin
           mkdir -p %{buildroot}/usr/share/applications
           mkdir -p %{buildroot}/usr/share/icons/hicolor/256x256/apps
+          mkdir -p %{buildroot}/usr/share/doc/materialcraft
           install -m 0755 %{_appdir}/usr/bin/materialcraft     %{buildroot}/usr/bin/materialcraft
           install -m 0755 %{_appdir}/usr/bin/materialcraft-gui %{buildroot}/usr/bin/materialcraft-gui
           install -m 0644 %{_appdir}/usr/share/applications/materialcraft.desktop %{buildroot}/usr/share/applications/materialcraft.desktop
           install -m 0644 %{_appdir}/materialcraft.png %{buildroot}/usr/share/icons/hicolor/256x256/apps/materialcraft.png
+          cp -a %{_appdir}/usr/share/doc/materialcraft/. %{buildroot}/usr/share/doc/materialcraft/
 
           %files
           /usr/bin/materialcraft
           /usr/bin/materialcraft-gui
           /usr/share/applications/materialcraft.desktop
           /usr/share/icons/hicolor/256x256/apps/materialcraft.png
+          %license /usr/share/doc/materialcraft
           EOF
 
           rpmbuild --define "_topdir $top" \
@@ -399,7 +442,8 @@ jobs:
           mkdir -p "$stage" dist
           install -m 0755 "$OUT/materialcraft"     "$stage/materialcraft"
           install -m 0755 "$OUT/materialcraft-gui" "$stage/materialcraft-gui"
-          cp LICENSE-APACHE LICENSE-MIT NOTICE README.md "$stage/"
+          cp -R "$RUNNER_TEMP/materialcraft-notices/." "$stage/"
+          cp README.md "$stage/"
           # No library/ here: src/library.rs compiles every preset in with
           # include_str!, and nothing reads library/ from disk at runtime.
           tar -czf "dist/$name.tar.gz" -C "$RUNNER_TEMP/stage" "$name"
@@ -417,7 +461,8 @@ jobs:
           # -Path/-Destination must be explicit: "a", "b" binds both to -Path.
           Copy-Item -Path "$env:OUT/materialcraft.exe"     -Destination "$stage/materialcraft.exe"
           Copy-Item -Path "$env:OUT/materialcraft-gui.exe" -Destination "$stage/materialcraft-gui.exe"
-          Copy-Item LICENSE-APACHE, LICENSE-MIT, NOTICE, README.md $stage
+          Copy-Item -Path "$env:RUNNER_TEMP/materialcraft-notices/*" -Destination $stage -Recurse
+          Copy-Item -Path README.md -Destination $stage
           # Presets are compiled in via include_str!, so no library/ copy.
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Compress-Archive -Path $stage -DestinationPath "dist/$name.zip"
@@ -434,6 +479,7 @@ jobs:
 
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" dist
           install -m 0755 "$OUT/materialcraft-gui" "$app/Contents/MacOS/materialcraft-gui"
+          cp -R "$RUNNER_TEMP/materialcraft-notices/." "$app/Contents/Resources/"
 
           # Finder only shows a bundle icon from an .icns named by
           # CFBundleIconFile; a bare PNG in Resources is ignored.
@@ -468,7 +514,8 @@ jobs:
 
           # The headless CLI travels next to the bundle, uninstalled and ready.
           install -m 0755 "$OUT/materialcraft" "$stage/materialcraft"
-          cp LICENSE-APACHE LICENSE-MIT NOTICE README.md "$stage/"
+          cp -R "$RUNNER_TEMP/materialcraft-notices/." "$stage/"
+          cp README.md "$stage/"
 
           # Ad-hoc signature (no Developer ID). lipo output and a bundle
           # assembled by hand carry no valid bundle signature, and Gatekeeper

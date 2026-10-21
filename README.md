@@ -80,15 +80,18 @@ of standard nodes (grow / shrink masks, stars, strokes, custom tiles) and move n
 ## Platforms
 Windows, Linux and macOS use the same code: `eframe` (glow / OpenGL 3.3 core) for the window and the 3D viewport, `rfd` for
 file dialogs, plus the shared Craft libraries (`craft-ui` docking, `craft-settings`, `craft-atomic`, `craft-cms`, `craft-quit`, from
-https://github.com/storytold/craft-libs, MIT OR Apache-2.0). The core library and the command-line tool still use only the Rust standard
+https://github.com/storytold/craft-libs). The core library and the command-line tool still use only the Rust standard
 library unless built with `--features cms` or `--features gui`. Settings live in `config.toml` under `%APPDATA%\materialcraft`, `~/.config/materialcraft` or
 `~/Library/Application Support/materialcraft`. Building needs Rust 1.95 or newer. GitHub Actions builds and tests all three (`.github/workflows/ci.yml`); `release.yml` packages every push to `main` and installs and launches each package before `publish.yml` releases it.
 Linux needs the usual X11/Wayland/GL development packages (`libxkbcommon-dev libwayland-dev libx11-dev libgl1-mesa-dev`).
 
-## Licence
-Dual licensed under [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), at your option. See [NOTICE](NOTICE),
-[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) and [INDEPENDENT_IMPLEMENTATION.md](INDEPENDENT_IMPLEMENTATION.md)
-(how we keep the code original). MaterialCraft is not affiliated with any other software vendor.
+## License and credits
+
+MaterialCraft is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+Copyright (c) 2026 PiJellyPin and MaterialCraft contributors. Notices are in [NOTICE](NOTICE).
+
+Third-party libraries, fonts, and decoder tables keep their own licenses; their credits are in
+[ATTRIBUTION.md](ATTRIBUTION.md).
 
 ## Graph language
 Besides graphs, a package holds **function graphs** (the format's 84 function nodes: math, vectors, logic, variables, random,
@@ -116,7 +119,7 @@ all readers are written in Rust, with no dependencies, and recognise the format 
 ## Not implemented (honest list)
 AxF import, OCIO/ACE colour management, scripting API, SVG gradients, WOFF2 fonts and font kerning / shaping,
 PIZ-compressed EXR, 12-bit and arithmetic-coded JPEG, JPEG-in-TIFF, BigTIFF, and any testing of the 3D viewer on real GPUs (only a software GL driver was available).
-See ROADMAP.md for the complete list.
+See [ROADMAP.md](docs/ROADMAP.md) for the MVP milestone.
 
 
 ## Nodes

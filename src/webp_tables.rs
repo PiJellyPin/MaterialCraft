@@ -2,7 +2,7 @@
 //! Constant tables of the VP8 / VP8L (WebP) decoders: default and update probabilities of the coefficient tokens,
 //! intra block mode probabilities, quantiser step tables and the VP8L distance code map.
 //! The numbers come from the WebP project's libwebp sources (BSD-3-Clause, Copyright Google Inc.) and the VP8 data
-//! format specification (RFC 6386); see THIRD_PARTY_LICENSES.md. Flat arrays are indexed as noted.
+//! format specification (RFC 6386); see ATTRIBUTION.md. Flat arrays are indexed as noted.
 
 /// `[type 4][band 8][context 3][prob 11]`
 pub const COEFF_PROBA: [u8; 1056] = [
