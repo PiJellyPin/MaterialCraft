@@ -74,7 +74,7 @@
     </td>
     <td width="50%" valign="top">
       <h3>📦 Bake and export</h3>
-      <img src="assets/readme/screenshot-placeholder.svg" alt="Screenshot placeholder: MaterialCraft's texture export controls" width="100%"><br>
+      <img width="341" height="422" alt="image" src="https://github.com/user-attachments/assets/0be79b69-db28-4553-8aa0-497436c6e58b" />
       <sub><b>Screenshot placeholder:</b> texture export with output and resolution controls.</sub>
       <p>Bake maps from meshes and export your textures. Choose the outputs, resolution, and image format for your project.</p>
     </td>
