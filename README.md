@@ -1,3 +1,5 @@
+> **NOTE: MaterialCraft is its own independent project and is not associated with the [ArtCraft](https://getartcraft.com/) suite.**
+
 <p align="center">
   <img src="assets/logo.png" alt="MaterialCraft" width="120">
 </p>
