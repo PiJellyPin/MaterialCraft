@@ -356,7 +356,7 @@ impl App {
                 self.sel_comment = None;
                 if self.active != Some(id) {
                     self.active = Some(id);
-                    self.dirty = true;
+                    self.view_pending = true;
                 }
             }
             if nr.dragged() && (self.connecting.is_none() && self.connecting_in.is_none()) {
@@ -398,7 +398,7 @@ impl App {
                 self.sel_comment = None;
                 if self.active != Some(id) {
                     self.active = Some(id);
-                    self.dirty = true;
+                    self.view_pending = true;
                 }
             }
             if nr.double_clicked() {
@@ -409,7 +409,7 @@ impl App {
             if nr.secondary_clicked() && !self.sel.contains(&id) {
                 self.sel = [id].into_iter().collect();
                 self.active = Some(id);
-                self.dirty = true;
+                self.view_pending = true;
             }
             if let Some(e) = &err {
                 nr.clone().on_hover_text(e);
@@ -630,7 +630,7 @@ impl App {
                     }
                     if self.active.is_none() {
                         self.active = self.sel.iter().next().copied();
-                        self.dirty = true;
+                        self.view_pending = true;
                     }
                     self.rubber = None;
                 }
@@ -705,7 +705,7 @@ impl App {
             Act::SelectAll => {
                 self.sel = self.g.nodes.keys().copied().collect();
                 self.active = self.sel.iter().next().copied();
-                self.dirty = true;
+                self.view_pending = true;
             }
             Act::Comment => self.add_comment(),
             Act::EnterSub(n) => {

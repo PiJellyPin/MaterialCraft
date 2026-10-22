@@ -563,6 +563,17 @@ pub fn compute(kind: &str, _id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, 
     }
 }
 
+/// Runs `f` with a parameter reader for node `n` of extension kind `kind` (no input pictures): the GPU code reads a
+/// node's settings through the same defaults and lanes as the CPU code does.
+pub fn with_params<R>(kind: &str, n: &Node, s: usize, hs: usize, seed: u32, f: impl FnOnce(&Cx) -> R) -> Option<R> {
+    let info = info(kind)?;
+    let ins = BTreeMap::new();
+    let out = n.nums.get("_out").copied().unwrap_or(0.0).max(0.0).round() as usize;
+    let want = n.nums.get("_want").copied().unwrap_or(0.0).max(0.0) as u32 | (1u32 << out.min(31));
+    let cx = Cx { kind, n, lib: info.lib, ins: &ins, s: s.max(1), hs: hs.max(1), seed, out, want, outs: info.outs };
+    Some(f(&cx))
+}
+
 // ------------------------------------------------------------------------------------------------ shared helpers
 
 pub fn grey(v: f32) -> [f32; 4] {

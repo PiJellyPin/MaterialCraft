@@ -151,7 +151,7 @@ fn curve_at(c: &[f32], v: f32) -> f32 {
 // ---------------------------------------------------------------- homography (quad transforms)
 /// Projective map taking the four points `from` to the four points `to`: returns [a b c d e f g h] with
 /// x' = (a x + b y + c) / (g x + h y + 1), y' = (d x + e y + f) / (g x + h y + 1). None when degenerate.
-fn homography(from: [[f32; 2]; 4], to: [[f32; 2]; 4]) -> Option<[f32; 8]> {
+pub(crate) fn homography(from: [[f32; 2]; 4], to: [[f32; 2]; 4]) -> Option<[f32; 8]> {
     let mut m = [[0.0f64; 9]; 8];
     for i in 0..4 {
         let (x, y) = (from[i][0] as f64, from[i][1] as f64);

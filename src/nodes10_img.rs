@@ -411,30 +411,15 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
         "x_floodfill_mapper_color" | "x_floodfill_mapper_grayscale" => floodfill_mapper(cx),
         // ---------------------------------------------------------------- lighting estimates
         "x_rt_shadows" | "x_shadows" => {
-            let (h, height_scale, lp, opacity, samples, soft, maxlen, invert) = if cx.kind == "x_rt_shadows" {
-                (inp(cx, "input"), cx.f("height_scale"), cx.v2("light_position"), cx.f("shadows_opacity"), cx.i("samples").clamp(1, 64), cx.f("light_scale") + 0.02 * cx.lane("light_size", 0), cx.f("max_shadow_length"), cx.b("invert"))
-            } else {
-                // older node: a light angle (turns, from the horizon) and a shadow distance
-                let a = cx.f("light_angle") * TAU;
-                (inp(cx, "Input"), cx.f("shadow_distance") * 0.5, [0.5 + 0.4 * a.cos(), 0.5 - 0.4 * a.sin()], 1.0, cx.i("Samples").clamp(1, 16) * 4, cx.f("edges_softness") * 0.05, 1.0, false)
-            };
-            // shadows fade with the distance to what casts them; the light's intensity scales the lit result
-            let (atten, light_k) = if cx.kind == "x_rt_shadows" { (cx.f("shadows_attenuation").clamp(0.0, 1.0), cx.f("light_intensity").max(0.0)) } else { (0.0, 1.0) };
-            let dir = [lp[0] - 0.5, lp[1] - 0.5];
-            let dl = (dir[0] * dir[0] + dir[1] * dir[1]).sqrt().max(1e-4);
-            let dir = [dir[0] / dl, dir[1] / dl];
-            // the light's elevation: lights near the centre are high, at the border low
-            let elev = (1.0 - (dl * 2.0).min(1.0)) * 1.2 + 0.08;
-            let len = maxlen.clamp(0.0, 1.0) * 0.5;
-            // about one step per pixel along the ray (bounded), each ray starting at a dithered offset so the
-            // stepping does not show as bands
-            let steps = ((len * s.max(hs) as f32).ceil() as usize).clamp(16, 192);
+            let h = inp(cx, if cx.kind == "x_rt_shadows" { "input" } else { "Input" });
+            let sh = shadow_params(cx, s, hs);
+            let (dir, elev, len, steps, height_scale, atten, light_k, opacity, soft, invert) = (sh.dir, sh.elev, sh.len, sh.steps as usize, sh.height_scale, sh.atten, sh.light_k, sh.opacity, sh.soft, sh.invert);
             let hh = &h;
             let res = crate::tex::par_map(s * hs, |i| {
                 let (u, v) = (((i % s) as f32 + 0.5) / s as f32, ((i / s) as f32 + 0.5) / hs as f32);
                 let h0 = g(hh, u, v) * height_scale;
                 let mut lit = 0.0;
-                let taps = samples.clamp(1, 8);
+                let taps = sh.taps.clamp(1, 8) as i32;
                 for k in 0..taps {
                     // jittered directions inside the light's size give soft shadow edges
                     let j = (rnd(i as i32, k, 91) - 0.5) * soft * 6.0;
@@ -1314,4 +1299,28 @@ fn floodfill_mapper(cx: &Cx) -> Tex {
         })
         .collect();
     Tex { w: s, h: hs, px }
+}
+
+/// The settings of the Shadows nodes (`x_rt_shadows`, and the older `x_shadows`) for a picture of `s` x `hs` pixels. The
+/// CPU code above and the GPU kernel both run on exactly these values.
+pub fn shadow_params(cx: &Cx, s: usize, hs: usize) -> crate::gpu::ShadowParams {
+    let rt = cx.kind == "x_rt_shadows";
+    let (height_scale, lp, opacity, samples, soft, maxlen, invert) = if rt {
+        (cx.f("height_scale"), cx.v2("light_position"), cx.f("shadows_opacity"), cx.i("samples").clamp(1, 64), cx.f("light_scale") + 0.02 * cx.lane("light_size", 0), cx.f("max_shadow_length"), cx.b("invert"))
+    } else {
+        // older node: a light angle (turns, from the horizon) and a shadow distance
+        let a = cx.f("light_angle") * TAU;
+        (cx.f("shadow_distance") * 0.5, [0.5 + 0.4 * a.cos(), 0.5 - 0.4 * a.sin()], 1.0, cx.i("Samples").clamp(1, 16) * 4, cx.f("edges_softness") * 0.05, 1.0, false)
+    };
+    // shadows fade with the distance to what casts them; the light's intensity scales the lit result
+    let (atten, light_k) = if rt { (cx.f("shadows_attenuation").clamp(0.0, 1.0), cx.f("light_intensity").max(0.0)) } else { (0.0, 1.0) };
+    let dir = [lp[0] - 0.5, lp[1] - 0.5];
+    let dl = (dir[0] * dir[0] + dir[1] * dir[1]).sqrt().max(1e-4);
+    let dir = [dir[0] / dl, dir[1] / dl];
+    // the light's elevation: lights near the centre are high, at the border low
+    let elev = (1.0 - (dl * 2.0).min(1.0)) * 1.2 + 0.08;
+    let len = maxlen.clamp(0.0, 1.0) * 0.5;
+    // about one step per pixel along the ray (bounded)
+    let steps = ((len * s.max(hs) as f32).ceil() as usize).clamp(16, 192) as u32;
+    crate::gpu::ShadowParams { steps, taps: samples.clamp(1, 8) as u32, height_scale, atten, light_k, opacity, soft, len, elev, invert, dir }
 }

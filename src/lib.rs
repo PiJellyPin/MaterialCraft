@@ -18,7 +18,7 @@ pub mod fxmap;
 pub mod graph;
 pub mod hdri;
 pub mod objects;
-#[cfg(feature = "gui")]
+#[cfg(feature = "gpu")]
 pub mod gpu3d;
 pub mod jpeg;
 pub mod noise;

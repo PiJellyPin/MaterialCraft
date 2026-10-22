@@ -1456,83 +1456,99 @@ pub fn signed_distance(t: &Tex, thr: f32) -> Vec<f32> {
     let (w, h) = (t.w, t.h);
     let n = w * h;
     let g: Vec<f32> = t.px.iter().map(|p| lum(*p)).collect();
-    let inside: Vec<bool> = g.iter().map(|v| *v > thr).collect();
-    let at = |x: i64, y: i64| y.rem_euclid(h as i64) as usize * w + x.rem_euclid(w as i64) as usize;
-    // offset from each pixel centre to the nearest edge point found so far
+    // state per pixel: offset to the nearest edge point found so far (pixels)
     let far = [1e9f32, 1e9f32];
     let mut off = vec![far; n];
-    let len = |o: [f32; 2]| o[0] * o[0] + o[1] * o[1];
+    let wrap = |v: i64, m: usize| v.rem_euclid(m as i64) as usize;
     let mut any = false;
-    for y in 0..h as i64 {
-        for x in 0..w as i64 {
-            let i = at(x, y);
-            for (dx, dy) in [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)] {
-                let j = at(x + dx, y + dy);
-                if inside[j] == inside[i] {
-                    continue;
+    {
+        let rows_per = crate::pool::rows_per_piece(w, h);
+        let g = &g;
+        crate::pool::for_chunks(&mut off, rows_per * w, &|ci, chunk| {
+            for (ry, row) in chunk.chunks_mut(w).enumerate() {
+                let y = (ci * rows_per + ry) as i64;
+                for (x, dst) in row.iter_mut().enumerate() {
+                    let i = y as usize * w + x;
+                    let inside = g[i] > thr;
+                    let mut best = far;
+                    for (dx, dy) in [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)] {
+                        let j = wrap(y + dy, h) * w + wrap(x as i64 + dx, w);
+                        if (g[j] > thr) == inside {
+                            continue;
+                        }
+                        // where the values cross the threshold on the way to the neighbour
+                        let d = g[j] - g[i];
+                        let f = if d.abs() < 1e-6 { 0.5 } else { ((thr - g[i]) / d).clamp(0.0, 1.0) };
+                        let c = [dx as f32 * f, dy as f32 * f];
+                        if c[0] * c[0] + c[1] * c[1] < best[0] * best[0] + best[1] * best[1] {
+                            best = c;
+                        }
+                    }
+                    *dst = best;
                 }
-                // where the values cross the threshold on the way to the neighbour
-                let d = g[j] - g[i];
-                let f = if d.abs() < 1e-6 { 0.5 } else { ((thr - g[i]) / d).clamp(0.0, 1.0) };
-                let o = [dx as f32 * f, dy as f32 * f];
-                if len(o) < len(off[i]) {
-                    off[i] = o;
-                }
-                any = true;
             }
+        });
+    }
+    for o in &off {
+        if o[0] < 1e8 {
+            any = true;
+            break;
         }
     }
+    let inside: Vec<bool> = g.iter().map(|v| *v > thr).collect();
     if !any {
         return inside.iter().map(|&m| if m { 1e9 } else { -1e9 }).collect();
     }
-    // propagate the nearest edge points (two sweeps each way, 8 neighbours)
-    let fwd = [(-1i64, 0i64), (0, -1), (-1, -1), (1, -1)];
-    let bwd = [(1i64, 0i64), (0, 1), (1, 1), (-1, 1)];
-    for _ in 0..2 {
-        for y in 0..h as i64 {
-            for x in 0..w as i64 {
-                let i = at(x, y);
-                for (dx, dy) in fwd {
-                    let o = off[at(x + dx, y + dy)];
-                    let c = [o[0] + dx as f32, o[1] + dy as f32];
-                    if len(c) < len(off[i]) {
-                        off[i] = c;
-                    }
-                }
-            }
-            for x in (0..w as i64).rev() {
-                let i = at(x, y);
-                let (dx, dy) = (1i64, 0i64);
-                let o = off[at(x + dx, y + dy)];
-                let c = [o[0] + dx as f32, o[1] + dy as f32];
-                if len(c) < len(off[i]) {
-                    off[i] = c;
-                }
-            }
-        }
-        for y in (0..h as i64).rev() {
-            for x in (0..w as i64).rev() {
-                let i = at(x, y);
-                for (dx, dy) in bwd {
-                    let o = off[at(x + dx, y + dy)];
-                    let c = [o[0] + dx as f32, o[1] + dy as f32];
-                    if len(c) < len(off[i]) {
-                        off[i] = c;
-                    }
-                }
-            }
-            for x in 0..w as i64 {
-                let i = at(x, y);
-                let (dx, dy) = (-1i64, 0i64);
-                let o = off[at(x + dx, y + dy)];
-                let c = [o[0] + dx as f32, o[1] + dy as f32];
-                if len(c) < len(off[i]) {
-                    off[i] = c;
-                }
-            }
-        }
+    // jump flooding (same steps and tie-breaks as the GPU kernel, so both give the same field): jumps of half the
+    // size down to 1, then 2 and 1 again to repair the rare misses of the plain algorithm
+    let mut steps = Vec::new();
+    let mut k = w.max(h).next_power_of_two() / 2;
+    while k >= 1 {
+        steps.push(k as i64);
+        k /= 2;
     }
-    off.iter().zip(&inside).map(|(o, &m)| if m { len(*o).sqrt() } else { -len(*o).sqrt() }).collect()
+    steps.push(2);
+    steps.push(1);
+    let mut next = vec![far; n];
+    for st in steps {
+        {
+            let rows_per = crate::pool::rows_per_piece(w, h);
+            let off = &off;
+            crate::pool::for_chunks(&mut next, rows_per * w, &|ci, chunk| {
+                for (ry, row) in chunk.chunks_mut(w).enumerate() {
+                    let y = (ci * rows_per + ry) as i64;
+                    for (x, dst) in row.iter_mut().enumerate() {
+                        let mut best = off[y as usize * w + x];
+                        let mut bl = best[0] * best[0] + best[1] * best[1];
+                        for dj in -1i64..=1 {
+                            for di in -1i64..=1 {
+                                if di == 0 && dj == 0 {
+                                    continue;
+                                }
+                                let o = off[wrap(y + dj * st, h) * w + wrap(x as i64 + di * st, w)];
+                                let c = [o[0] + (di * st) as f32, o[1] + (dj * st) as f32];
+                                let l = c[0] * c[0] + c[1] * c[1];
+                                if l < bl {
+                                    best = c;
+                                    bl = l;
+                                }
+                            }
+                        }
+                        *dst = best;
+                    }
+                }
+            });
+        }
+        std::mem::swap(&mut off, &mut next);
+    }
+    off.iter().zip(&inside).map(|(o, &m)| {
+        let d = (o[0] * o[0] + o[1] * o[1]).sqrt();
+        if m {
+            d
+        } else {
+            -d
+        }
+    }).collect()
 }
 
 pub fn bevel(t: &Tex, dist_px: f32, smoothing: f32, thr: f32) -> Tex {
@@ -2021,10 +2037,21 @@ pub fn hbao(h: &Tex, radius_uv: f32, height_scale: f32, dirs: u32, intensity: f3
     let p = crate::tex::Plane::of(&g, 0);
     drop(g);
     let dirs = dirs.clamp(2, 64) as usize;
-    let steps = 14usize;
+    let steps = HBAO_STEPS;
     // Every pixel looks at the same offsets, so the whole-pixel shift and the bilinear weights of each (direction,
     // step) are the same for all pixels: they are worked out once here, and a row of pixels is then handled with
     // straight, contiguous reads that the compiler turns into SIMD code.
+    let taps = hbao_taps(w, hh, radius_uv, dirs);
+    let rows = crate::tex::par_map(hh, |y| hbao_row(&p, &taps, dirs, steps, y, height_scale, intensity));
+    Tex { w, h: hh, px: rows.concat() }
+}
+
+/// Steps along each direction of the horizon search.
+pub const HBAO_STEPS: usize = 14;
+
+/// The offsets of every (direction, step) of the horizon search, direction by direction.
+fn hbao_taps(w: usize, hh: usize, radius_uv: f32, dirs: usize) -> Vec<HbaoTap> {
+    let steps = HBAO_STEPS;
     let mut taps: Vec<HbaoTap> = Vec::with_capacity(dirs * steps);
     for k in 0..dirs {
         let a = k as f32 / dirs as f32 * std::f32::consts::TAU;
@@ -2044,8 +2071,13 @@ pub fn hbao(h: &Tex, radius_uv: f32, height_scale: f32, dirs: u32, intensity: f3
             });
         }
     }
-    let rows = crate::tex::par_map(hh, |y| hbao_row(&p, &taps, dirs, steps, y, height_scale, intensity));
-    Tex { w, h: hh, px: rows.concat() }
+    taps
+}
+
+/// The same table for the GPU kernel: two `vec4`s per tap, `(ix, iy, fx, fy)` and `(d2, falloff, 0, 0)`.
+pub fn hbao_tap_table(w: usize, hh: usize, radius_uv: f32, dirs: u32) -> Vec<[f32; 4]> {
+    let dirs = dirs.clamp(2, 64) as usize;
+    hbao_taps(w, hh, radius_uv, dirs).iter().flat_map(|t| [[t.ix as f32, t.iy as f32, t.fx, t.fy], [t.d2, t.falloff, 0.0, 0.0]]).collect()
 }
 
 /// One (direction, step) of the horizon search: the whole-pixel offset (already wrapped into the image), the

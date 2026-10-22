@@ -390,6 +390,7 @@ impl App {
             rfd::FileDialog::new().add_filter("PNG image", &["png"]).set_file_name("view.png").save_file()
         };
         let Some(target) = target else { return };
+        self.ensure_maps();
         let maps = self.maps.clone();
         let mut view = self.view3d.clone();
         view.tess = view.tess.max(256);
@@ -447,6 +448,7 @@ impl App {
     }
 
     fn pt_tick(&mut self, ctx: &egui::Context) {
+        self.ensure_maps();
         let mut view = self.view3d.clone();
         view.tess = view.tess.min(256);
         let size = self.r3d_size;
