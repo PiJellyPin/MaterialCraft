@@ -7,7 +7,7 @@ from pathlib import Path
 stage = Path(os.environ["RUNNER_TEMP"]) / "materialcraft-notices"
 stage.mkdir(parents=True, exist_ok=True)
 for name in ("LICENSE-MIT", "LICENSE-APACHE", "NOTICE", "ATTRIBUTION.md",
-             "src/LICENSE-libwebp", "src/LICENSE-DirectXTex"):
+             "src/LICENSE-libwebp", "src/LICENSE-DirectXTex", "src/LICENSE-exr"):
     destination = stage / name
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(name, destination)

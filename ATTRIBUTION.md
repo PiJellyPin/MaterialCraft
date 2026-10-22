@@ -9,6 +9,7 @@ and keep its license file beside the copied material. Fonts below come from
 | Path | Title | Author | Source | License |
 |---|---|---|---|---|
 | `src/webp_tables.rs` | VP8/VP8L probability, quantizer and distance tables | Google Inc. | [libwebp](https://chromium.googlesource.com/webm/libwebp/) | BSD-3-Clause, [full notice](src/LICENSE-libwebp) |
+| `Cargo.toml` (`exr`) | OpenEXR import/export | Contributors to the exrs and OpenEXR projects | [exrs](https://github.com/johannesvollmer/exrs) | BSD-3-Clause, [full notices](src/LICENSE-exr) |
 | `src/dds_tables.rs` | BC6H/BC7 partition, fix-up and bit-layout tables | Microsoft Corporation | [DirectXTex](https://github.com/microsoft/DirectXTex) | MIT, [full notice](src/LICENSE-DirectXTex) |
 | `epaint_default_fonts/fonts/Hack-Regular.ttf` | Hack monospace font | Source Foundry Authors; Bitstream; DejaVu contributors | [Hack](https://github.com/source-foundry/Hack) via [egui 0.36.2](https://github.com/emilk/egui/tree/0.36.2/crates/epaint_default_fonts/fonts) | MIT and Bitstream Vera License; DejaVu contributions are public domain. [Full notices](https://github.com/emilk/egui/blob/0.36.2/crates/epaint_default_fonts/fonts/Hack-Regular.txt) |
 | `epaint_default_fonts/fonts/Ubuntu-Light.ttf` | Ubuntu UI font | Canonical Ltd.; Dalton Maag | [Ubuntu font](https://design.ubuntu.com/font) via egui | Ubuntu Font Licence 1.0, [full text](https://github.com/emilk/egui/blob/0.36.2/crates/epaint_default_fonts/fonts/UFL.txt) |

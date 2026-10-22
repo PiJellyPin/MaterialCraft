@@ -2,6 +2,8 @@
 
 This is the detailed inventory for the [compatibility report](ALL_NODES_COMPATIBILITY.md). All UIDs below belong to `Substance_graph`. The main report separately lists the two undefined function nodes in `Substance_graph/1584843868/outputsize`.
 
+This inventory predates the replacement of 34 HDRI bitmap nodes with four bundled panoramas. See the fixture-update note in the compatibility report; the current fixture has 536 compositing nodes.
+
 The tables contain all 566 compositing nodes once: 207 unconverted, 300 approximate, and 59 classified exact by the importer. `Texture` means finite pixel data was returned at 32×32; it does not prove visual fidelity. `Placeholder` means a gray fallback, even though evaluation returned a texture.
 
 “Definition” describes native editor interface coverage, not renderer support. Specific behavior warnings and render errors are retained beside each node. Routine approximate substitutions are identified by the renderer column and “Own renderer implementation.”

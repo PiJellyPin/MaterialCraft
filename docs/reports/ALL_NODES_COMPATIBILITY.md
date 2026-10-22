@@ -4,6 +4,8 @@
 
 This report comes from a fresh run of the two tests in [sbs_all_nodes.rs](../../tests/sbs_all_nodes.rs). The fixture and test expectations were not changed for this audit.
 
+**Subsequent fixture update:** The 34 unavailable HDRI references and bitmap nodes have been replaced with four EXRs from `assets/panorama/`. The missing `Untitled_Bitmap` PNG now uses the logo from `assets/logo.png`. All five references store only their filenames, allowing lookup in the package folders and fallback to application `assets/` and `assets/panorama/` folders. The current fixture has 536 compositing nodes and six resources. All four panoramas and the logo resolve and render through direct import and native conversion. The audit counts and missing-file list below describe the earlier fixture.
+
 ## Run and reproduction
 
 - Completed: `2026-10-21T19:37:32.083410+00:00`.
