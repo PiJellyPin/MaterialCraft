@@ -46,3 +46,8 @@ required-features = ["gui"]
 opt-level = 3
 lto = true
 codegen-units = 1
+
+[[example]]
+name = "bench3d"
+path = "examples/bench3d.rs"
+required-features = ["gui"]

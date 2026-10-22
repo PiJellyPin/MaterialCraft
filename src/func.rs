@@ -235,6 +235,7 @@ pub const FUNC_SPECS: &[Spec] = &[
     f!("f_xor", ["a", "b"], [], "boolean exclusive or"),
     f!("f_if", ["cond", "a", "b"], [], "a when cond is true, else b (only the chosen branch runs)"),
     f!("f_sequence", ["a", "b"], [], "run a, then b; returns b"),
+    f!("f_while", ["a", "b", "c"], [], "run a once, then repeat c until b is true (at most `max` times, -1 no limit); returns the last c (a when c never ran)"),
     f!("f_set", ["a"], [], "store a in the variable `name`; returns a"),
     f!("f_get", [], [], "read the variable `name` (0 until it is set)"),
     f!("f_random", [], ["a", "b"], "random float between a (default 0) and b (default 1); `seed` shifts the sequence"),
@@ -255,7 +256,7 @@ pub const FUNC_SPECS: &[Spec] = &[
     f!("f_to_bool", ["a"], [], "non-zero is true"),
     f!("f_to_string", ["a"], [], "text of a value"),
     f!("f_concat", ["a", "b"], [], "join two strings"),
-    f!("f_call", [], ["a", "b", "c", "d"], "run another function (`fn`); a b c d fill its inputs in the order of their node numbers"),
+    f!("f_call", [], ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"], "run another function (`fn`); a b c d ... l fill its inputs in the order of their node numbers"),
 ];
 
 /// Is this kind a function-graph node?
@@ -287,6 +288,7 @@ enum Op {
     Smooth,
     If,
     Seq,
+    While,
     Set,
     Get,
     Random,
@@ -428,6 +430,7 @@ fn op_of(kind: &str) -> Option<Op> {
         "f_smoothstep" => Op::Smooth,
         "f_if" => Op::If,
         "f_sequence" => Op::Seq,
+        "f_while" => Op::While,
         "f_set" => Op::Set,
         "f_get" => Op::Get,
         "f_random" => Op::Random,
@@ -799,11 +802,15 @@ impl<'a> FnEnv<'a> {
     }
 }
 
+/// The inputs a function call passes on (a node's input slots, at most).
+pub const CALL_SLOTS: [&str; 12] = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
+const MAX_INS: usize = CALL_SLOTS.len();
+
 struct PNode {
     id: u32,
     op: Op,
     /// input node indices by slot position (the order of the spec: required slots, then optional ones)
-    ins: [Option<usize>; 4],
+    ins: [Option<usize>; MAX_INS],
     num: BTreeMap<String, f64>,
     text: String,
     name: String,
@@ -881,8 +888,8 @@ impl Prog {
         let n = g.nodes.get(&id).ok_or_else(|| format!("node {id} is missing"))?;
         let op = op_of(&n.kind).ok_or_else(|| format!("node {id} ({}) is not a function node", n.kind))?;
         let sp = crate::graph::spec(&n.kind).ok_or_else(|| format!("unknown node {}", n.kind))?;
-        let mut ins = [None; 4];
-        for (pos, slot) in sp.req.iter().chain(sp.opt.iter()).enumerate().take(4) {
+        let mut ins = [None; MAX_INS];
+        for (pos, slot) in sp.req.iter().chain(sp.opt.iter()).enumerate().take(MAX_INS) {
             if let Some(src) = n.ins.get(*slot) {
                 ins[pos] = Some(self.add(g, lib, *src, depth, index, visiting)?);
             } else if pos < sp.req.len() {
@@ -1005,6 +1012,27 @@ impl Prog {
                 self.arg(n, 0, env, pos, st)?;
                 self.arg(n, 1, env, pos, st)?
             }
+            Op::While => {
+                let mut last = self.arg(n, 0, env, pos, st)?;
+                let max = num("max");
+                let cap: u64 = if max < 0.0 { 1_000_000 } else { (max as u64).min(1_000_000) };
+                let mut done = 0u64;
+                loop {
+                    // a new epoch: the condition and the body read the variables as they are now
+                    st.epoch += 1;
+                    match self.arg(n, 1, env, pos, st)? {
+                        Value::Bool(true) => break,
+                        Value::Bool(false) => {}
+                        _ => return Err("the exit condition must be a boolean".into()),
+                    }
+                    if done >= cap {
+                        break;
+                    }
+                    last = self.arg(n, 2, env, pos, st)?;
+                    done += 1;
+                }
+                last
+            }
             Op::Set => {
                 let v = self.arg(n, 0, env, pos, st)?;
                 match st.vars.iter_mut().find(|(k, _)| *k == n.name) {
@@ -1094,7 +1122,7 @@ impl Prog {
             Op::Call => {
                 let callee = n.callee.as_ref().ok_or("call without a function")?;
                 let mut sub_env = FnEnv { size: env.size, index: env.index, count: env.count, seed: env.seed, images: env.images.clone(), graph_inputs: env.graph_inputs, args: BTreeMap::new(), stats: env.stats.clone() };
-                for (k, (name, pin, _)) in callee.inputs.iter().enumerate().take(4) {
+                for (k, (name, pin, _)) in callee.inputs.iter().enumerate().take(MAX_INS) {
                     if let Some(v) = self.opt_arg(n, k, env, pos, st)? {
                         sub_env.args.insert(name.clone(), coerce(&v, *pin));
                     }
@@ -1142,6 +1170,11 @@ impl Prog {
             Op::Seq => {
                 t(0, memo)?;
                 t(1, memo)?.ok_or("an input is not connected")?
+            }
+            Op::While => {
+                t(1, memo)?;
+                t(2, memo)?;
+                t(0, memo)?.ok_or("an input is not connected")?
             }
             Op::Set => t(0, memo)?.ok_or("an input is not connected")?,
             Op::Get => Pin::Float,

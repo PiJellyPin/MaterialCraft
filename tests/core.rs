@@ -1430,6 +1430,17 @@ fn curve_node() {
     for (x, y) in o["a"].px.iter().zip(&o["b"].px) {
         assert!((x[0] - y[0]).abs() < 2e-3, "reversed curve equals invert");
     }
+    // Bezier handles (Substance Designer's left / right tangents, absolute positions)
+    let lin = Curve::parse("0:0:0:0:0.3333333:0.3333333,1:1:0.6666667:0.6666667:1:1").unwrap();
+    for i in 0..=10 {
+        let x = i as f32 / 10.0;
+        assert!((lin.eval(x) - x).abs() < 1e-3, "handles on the diagonal give a straight line at {x}: {}", lin.eval(x));
+    }
+    // handles pulled flat at both ends: an S-curve that stays flat near the ends
+    let s = Curve::parse("0:0:0:0:0.5:0,1:1:0.5:1:1:1").unwrap();
+    assert!(s.eval(0.1) < 0.05 && s.eval(0.9) > 0.95 && (s.eval(0.5) - 0.5).abs() < 1e-3, "{} {} {}", s.eval(0.1), s.eval(0.5), s.eval(0.9));
+    let back = Curve::parse(&s.to_text()).unwrap();
+    assert!((back.eval(0.2) - s.eval(0.2)).abs() < 1e-5, "handles survive the text form");
 }
 
 #[test]

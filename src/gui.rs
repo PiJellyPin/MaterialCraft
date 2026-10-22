@@ -249,9 +249,34 @@ struct EvalResult {
     img2d: Option<ColorImage>,
     img_for: Option<u32>,
     gpu: Option<gpu3d::GpuMaps>,
+    /// the normal map turned to the OpenGL convention the viewers light (made on the worker thread too)
+    normal_gl: Option<std::sync::Arc<Tex>>,
+    /// lowest and highest colour value of the 2D view's image (scanned on the worker thread)
+    range2d: Option<(f32, f32)>,
     /// resolution this pass was computed at
     size: usize,
+    /// how long the pass took (evaluation and conversion), in milliseconds, and the parts of it
+    ms: f32,
+    ms_eval: f32,
+    ms_prep: f32,
+    ms_2d: f32,
     pass: Pass,
+}
+
+/// `MC_TRACE_EVAL=1` prints a timeline of every edit to the console: when each pass starts and when the 3D view gets
+/// its maps, in milliseconds since the edit. It is how the speed of the edit -> 3D view path is measured.
+fn trace_on() -> bool {
+    static T: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *T.get_or_init(|| std::env::var_os("MC_TRACE_EVAL").is_some())
+}
+
+static EDIT_AT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+fn trace(msg: &str) {
+    if trace_on() {
+        let t = EDIT_AT.lock().ok().and_then(|g| *g).map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+        eprintln!("[eval +{t:>7.0} ms] {msg}");
+    }
 }
 
 /// What an evaluation pass is for.
@@ -340,6 +365,10 @@ struct App {
     pass_size: usize,
     /// resolution of the maps the 3D view shows
     maps_size: usize,
+    /// milliseconds per pixel of the last interactive pass: the size used while a value moves follows it
+    drag_ms_px: f32,
+    /// per-pixel cost of the last few interactive passes (the worst one counts)
+    drag_hist: [f32; 4],
     tile_preview: bool,
     thumbs: HashMap<u32, egui::TextureHandle>,
     /// pixels behind each thumbnail texture (an unchanged thumbnail is not uploaded again)
@@ -474,6 +503,8 @@ impl App {
             node_sizes: HashMap::new(),
             pass_size: 0,
             maps_size: 0,
+            drag_ms_px: 0.0,
+            drag_hist: [0.0; 4],
             tile_preview: false,
             thumbs: HashMap::new(),
             thumb_px: HashMap::new(),
@@ -1375,6 +1406,23 @@ impl App {
         }
     }
 
+    /// The size of the passes that run while a value moves: as large as keeps a pass within about 80 ms (judged by
+    /// how long the last ones took per pixel), between 128 and 512 pixels. A light graph is then shown sharp while
+    /// it is dragged, a heavy one stays responsive at a coarser size, and the settled passes bring it to full size.
+    fn interactive_size(&self) -> usize {
+        const BUDGET_MS: f32 = 80.0;
+        let full = self.preview_full();
+        let cap = full.min(512);
+        if self.drag_ms_px <= 0.0 {
+            return self.first_tier();
+        }
+        let mut s = 128usize.min(cap);
+        while s * 2 <= cap && self.drag_ms_px * ((s * 2) * (s * 2)) as f32 <= BUDGET_MS {
+            s *= 2;
+        }
+        s
+    }
+
     fn first_tier(&self) -> usize {
         let full = self.preview_full();
         if full > 256 {
@@ -1400,7 +1448,8 @@ impl App {
     /// brings the outputs (and so the 3D view) to the full preview size.
     fn spawn_eval(&mut self, size: usize, pass: Pass) {
         let full = pass == Pass::Thumbs;
-        let maps = pass != Pass::Interactive;
+        // every pass feeds the 3D view (a drag too, at the small size it runs at), so the viewport follows the edit
+        let maps = true;
         let g = match self.g.preview_host() {
             Some((h, _)) => h,
             None => self.g.clone(),
@@ -1416,6 +1465,7 @@ impl App {
         if let Some(a) = active {
             keep.push(a);
         }
+        trace(&format!("start {pass:?} pass at {size}px"));
         // a newer job makes every older one stale: their loops stop within a few rows
         self.gen += 1;
         let gen = self.gen;
@@ -1426,6 +1476,7 @@ impl App {
         self.part = Some(prx);
         let cache = self.node_cache.clone();
         std::thread::spawn(move || {
+            let started = std::time::Instant::now();
             let mut on_first = |t: &Tex| {
                 if let Some(a) = active {
                     if !tex::stale(gen) {
@@ -1434,20 +1485,20 @@ impl App {
                 }
             };
             let r = g.evaluate_all_cached(size, &keep, gen, &cache, active, full, &mut on_first);
+            let ms_eval = started.elapsed().as_secs_f32() * 1000.0;
             if tex::stale(gen) {
                 return; // superseded: nobody waits for this result
             }
             tex::set_job(gen);
             let outputs: Vec<(String, u32)> = g.output_nodes().into_iter().map(|(u, _, id)| (u, id)).collect();
-            // the GPU material maps are prepared only once the input has settled; a drag leaves the 3D view as it was
+            let named = |n: &str| outputs.iter().find(|o| o.0 == n).and_then(|o| r.kept.get(&o.1)).map(|a| a.as_ref());
+            // DirectX normal maps are shown the right way up (done here once, for the GPU maps and the CPU viewers)
+            let normal_gl = named("normal").and_then(|t| g.normal_for_view(t)).map(std::sync::Arc::new);
             let gpu = if maps {
-                let named = |n: &str| outputs.iter().find(|o| o.0 == n).and_then(|o| r.kept.get(&o.1)).map(|a| a.as_ref());
                 let inv_gloss = named("glossiness").map(ops::invert);
-                // DirectX normal maps are shown the right way up
-                let normal_gl = named("normal").and_then(|t| g.normal_for_view(t));
                 Some(gpu3d::prepare(&MapInputs {
                     base: named("basecolor").or_else(|| named("out")).or_else(|| named("diffuse")),
-                    normal: normal_gl.as_ref().or_else(|| named("normal")),
+                    normal: normal_gl.as_deref().or_else(|| named("normal")),
                     rough: named("roughness").or(inv_gloss.as_ref()),
                     metal: named("metallic"),
                     ao: named("ambient_occlusion"),
@@ -1457,7 +1508,11 @@ impl App {
             } else {
                 None
             };
+            let ms_prep = started.elapsed().as_secs_f32() * 1000.0 - ms_eval;
             let img2d = active.and_then(|a| r.kept.get(&a)).map(|a| qimg(a));
+            let range2d = active.and_then(|a| r.kept.get(&a)).map(|t| {
+                t.px.iter().fold((f32::MAX, f32::MIN), |m, p| (m.0.min(p[0]).min(p[1]).min(p[2]), m.1.max(p[0]).max(p[1]).max(p[2])))
+            });
             tex::set_job(0);
             if tex::stale(gen) {
                 return;
@@ -1472,7 +1527,13 @@ impl App {
                 img2d,
                 img_for: active,
                 gpu,
+                normal_gl,
+                range2d,
                 size,
+                ms: started.elapsed().as_secs_f32() * 1000.0,
+                ms_eval,
+                ms_prep,
+                ms_2d: started.elapsed().as_secs_f32() * 1000.0 - ms_eval - ms_prep,
                 pass,
             });
         });
@@ -1514,6 +1575,15 @@ impl App {
                 self.job = None;
                 if r.gen != self.gen {
                     return;
+                }
+                // how long an interactive pass costs per pixel: the size used while a value moves follows it
+                if r.pass == Pass::Interactive && r.size >= 64 {
+                    let per_px = r.ms / (r.size * r.size) as f32;
+                    self.drag_hist.rotate_left(1);
+                    self.drag_hist[3] = per_px;
+                    // passes that found most of the graph in the cache look cheaper than the next edit will be: the worst
+                    // of the last few is the guide
+                    self.drag_ms_px = self.drag_hist.iter().cloned().fold(0.0, f32::max);
                 }
                 // a thumbnail pass smaller than the picture already on screen leaves the 2D view (and its refinement) alone
                 let show2d = !(r.pass == Pass::Thumbs && r.size < self.pass_size);
@@ -1576,9 +1646,9 @@ impl App {
                     return;
                 }
                 self.pass_size = r.size;
-                self.tex2d_range = self.view_node().and_then(|a| r.kept.get(&a)).map(|t| {
+                self.tex2d_range = if self.view_node() == r.img_for { r.range2d } else { self.view_node().and_then(|a| r.kept.get(&a)).map(|t| {
                     t.px.iter().fold((f32::MAX, f32::MIN), |m, p| (m.0.min(p[0]).min(p[1]).min(p[2]), m.1.max(p[0]).max(p[1]).max(p[2])))
-                });
+                }) };
                 if let Some(a) = self.view_node() {
                     if let (Some(img), true) = (r.img2d.take(), r.img_for == Some(a)) {
                         self.tex2d_size = (img.size[0], img.size[1]);
@@ -1597,6 +1667,7 @@ impl App {
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => {
                 self.job = None;
+                self.final_due = false;
                 self.status("Evaluation failed unexpectedly.", false);
             }
         }
@@ -1604,20 +1675,19 @@ impl App {
 
     /// The material outputs and the 3D view follow the thumbnail and final passes; a drag leaves 3D as it was.
     fn apply_maps(&mut self, r: &mut EvalResult) {
-        if r.pass == Pass::Interactive {
-            return;
-        }
         // a thumbnail pass never replaces sharper maps from a final pass of the same graph state
-        if r.pass == Pass::Thumbs && self.maps_size > r.size && !self.final_due {
+        // (the size is reset to 0 whenever the graph changes, so this only keeps the picture of the current state)
+        if r.pass == Pass::Thumbs && self.maps_size > r.size {
             return;
         }
         self.maps_size = r.size;
+        trace(&format!("3D view gets {:?} maps at {}px (pass {:.0} ms = graph {:.0} + 3D maps {:.0} + 2D image {:.0})", r.pass, r.size, r.ms, r.ms_eval, r.ms_prep, r.ms_2d));
         self.maps.clear();
         for (name, id) in &r.outputs {
             if let Some(t) = r.kept.get(id) {
                 // the viewers light normal maps in the OpenGL convention: a DirectX one is flipped for them
-                let t = match (name.as_str(), self.g.normal_for_view(t)) {
-                    ("normal", Some(f)) => std::sync::Arc::new(f),
+                let t = match (name.as_str(), r.normal_gl.as_ref()) {
+                    ("normal", Some(f)) => f.clone(),
                     _ => t.clone(),
                 };
                 self.maps.insert(name.clone(), t);

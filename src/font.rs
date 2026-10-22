@@ -1190,3 +1190,145 @@ impl Cs {
         self.y = p[1];
     }
 }
+
+// ---------------------------------------------------------------- installed fonts
+
+/// Family and style of a font file (the first face of a collection), read from its name table only.
+pub fn names_of(input: &[u8]) -> Option<(String, String)> {
+    let dir = if input.get(0..4)? == b"ttcf" { u32_at(input, 12)? as usize } else { 0 };
+    let n = u16_at(input, dir + 4)? as usize;
+    for i in 0..n.min(256) {
+        let r = dir + 12 + i * 16;
+        if input.get(r..r + 4)? == b"name" {
+            let (o, l) = (u32_at(input, r + 8)? as usize, u32_at(input, r + 12)? as usize);
+            if o.checked_add(l)? <= input.len() {
+                return Some(font_names(input, o, l));
+            }
+        }
+    }
+    None
+}
+
+/// Lower-case letters and digits only: "Times New Roman" and "times-new-roman" compare equal.
+fn font_key(s: &str) -> String {
+    s.chars().filter(|c| c.is_ascii_alphanumeric()).map(|c| c.to_ascii_lowercase()).collect()
+}
+
+/// Folders where the operating system keeps installed fonts (Windows, macOS and Linux).
+pub fn font_dirs() -> Vec<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let mut v: Vec<PathBuf> = Vec::new();
+    if let Some(w) = std::env::var_os("WINDIR").or_else(|| std::env::var_os("SystemRoot")) {
+        v.push(PathBuf::from(w).join("Fonts"));
+    }
+    if let Some(l) = std::env::var_os("LOCALAPPDATA") {
+        v.push(PathBuf::from(l).join("Microsoft").join("Windows").join("Fonts"));
+    }
+    for d in ["/System/Library/Fonts", "/Library/Fonts", "/usr/share/fonts", "/usr/local/share/fonts", "/usr/X11R6/lib/X11/fonts"] {
+        v.push(PathBuf::from(d));
+    }
+    if let Some(h) = std::env::var_os("HOME") {
+        let h = PathBuf::from(h);
+        v.push(h.join("Library").join("Fonts"));
+        v.push(h.join(".fonts"));
+        v.push(h.join(".local").join("share").join("fonts"));
+    }
+    v.retain(|d| d.is_dir());
+    v
+}
+
+fn font_files() -> &'static Vec<std::path::PathBuf> {
+    static FILES: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync::OnceLock::new();
+    FILES.get_or_init(|| {
+        let mut out = Vec::new();
+        let mut stack: Vec<(std::path::PathBuf, u32)> = font_dirs().into_iter().map(|d| (d, 0)).collect();
+        while let Some((d, depth)) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    if depth < 5 {
+                        stack.push((p, depth + 1));
+                    }
+                } else if matches!(p.extension().and_then(|x| x.to_str()).map(|x| x.to_ascii_lowercase()).as_deref(), Some("ttf" | "otf" | "ttc" | "woff")) {
+                    out.push(p);
+                }
+                if out.len() > 50_000 {
+                    return out;
+                }
+            }
+        }
+        out.sort();
+        out
+    })
+}
+
+/// (family key, style key, file) of every installed font, read once.
+fn font_index() -> &'static Vec<(String, String, std::path::PathBuf)> {
+    static INDEX: std::sync::OnceLock<Vec<(String, String, std::path::PathBuf)>> = std::sync::OnceLock::new();
+    INDEX.get_or_init(|| {
+        font_files()
+            .iter()
+            .filter(|p| std::fs::metadata(p).map(|m| m.len() < 64 << 20).unwrap_or(false))
+            .filter_map(|p| {
+                let bytes = std::fs::read(p).ok()?;
+                let (f, s) = names_of(&bytes)?;
+                Some((font_key(&f), font_key(&s), p.clone()))
+            })
+            .collect()
+    })
+}
+
+/// Metric-compatible stand-ins for common faces that are not installed everywhere.
+fn font_substitutes(key: &str) -> &'static [&'static str] {
+    match key {
+        "arial" | "helvetica" | "helveticaneue" | "arialmt" => &["liberationsans", "arimo", "dejavusans", "freesans", "notosans"],
+        "timesnewroman" | "times" | "timesnewromanpsmt" => &["liberationserif", "tinos", "dejavuserif", "freeserif", "notoserif"],
+        "couriernew" | "courier" => &["liberationmono", "cousine", "dejavusansmono", "freemono", "notosansmono"],
+        "verdana" | "tahoma" | "segoeui" | "calibri" => &["dejavusans", "liberationsans", "notosans"],
+        "georgia" | "cambria" => &["dejavuserif", "liberationserif", "notoserif"],
+        "consolas" | "lucidaconsole" => &["dejavusansmono", "liberationmono", "notosansmono"],
+        _ => &[],
+    }
+}
+
+/// The installed font file for a family name such as "Arial" (the regular face when there are several),
+/// or a metric-compatible stand-in when that family is not installed. Lookups are cached.
+pub fn system_font(family: &str) -> Option<std::path::PathBuf> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static CACHE: std::sync::OnceLock<Mutex<HashMap<String, Option<std::path::PathBuf>>>> = std::sync::OnceLock::new();
+    let want = font_key(family);
+    if want.is_empty() {
+        return None;
+    }
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = cache.lock().ok().and_then(|c| c.get(&want).cloned()) {
+        return hit;
+    }
+    let mut keys = vec![want.clone()];
+    keys.extend(font_substitutes(&want).iter().map(|s| s.to_string()));
+    let regular = |s: &str| matches!(s, "" | "regular" | "book" | "normal" | "roman" | "medium");
+    let mut found = None;
+    'search: for k in &keys {
+        // by file name first (arial.ttf, Arial-Regular.ttf, ArialMT.ttf): no file has to be read
+        for p in font_files() {
+            let stem = p.file_stem().map(|s| font_key(&s.to_string_lossy())).unwrap_or_default();
+            if stem == *k || stem == format!("{k}regular") || stem == format!("{k}mt") || stem == format!("{k}book") {
+                found = Some(p.clone());
+                break 'search;
+            }
+        }
+        // then by the names inside the files, preferring the regular face
+        let idx = font_index();
+        let hit = idx.iter().find(|(f, s, _)| f == k && regular(s)).or_else(|| idx.iter().find(|(f, s, _)| format!("{f}{s}") == *k)).or_else(|| idx.iter().find(|(f, _, _)| f == k));
+        if let Some((_, _, p)) = hit {
+            found = Some(p.clone());
+            break;
+        }
+    }
+    if let Ok(mut c) = cache.lock() {
+        c.insert(want, found.clone());
+    }
+    found
+}

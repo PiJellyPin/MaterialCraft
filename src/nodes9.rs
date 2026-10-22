@@ -296,7 +296,7 @@ pub fn compute(kind: &str, _id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, 
             let lat = f("scale", 32.0).clamp(1.0, 512.0);
             fin(noise_pattern(preset, lat, s, hs, seed, &warp, n, _ins))
         }
-        _ => return Ok(None),
+        _ => return crate::nodes10::compute(kind, _id, n, ins, s, hs, seed),
     };
     Ok(Some(out))
 }
@@ -317,68 +317,156 @@ struct Cell {
     pv: f32,
 }
 
-/// The point of lattice cell (cx, cy). `jitter` 1 lets points stray up to one and a half cells from their own
-/// cell, which gives cells of quite different sizes; 0 is a regular grid.
-fn cell_point(cx: i32, cy: i32, p: i32, q: i32, seed: u32, jitter: f32) -> (f32, f32, u32) {
-    let (wx, wy) = (cx.rem_euclid(p), cy.rem_euclid(q));
-    let h = noise_styles::hash(wx, wy, seed);
-    let amp = 3.0 * jitter;
-    let jx = ((h & 0xffff) as f32 / 65535.0 - 0.5) * amp + 0.5;
-    let jy = (((h >> 16) & 0xffff) as f32 / 65535.0 - 0.5) * amp + 0.5;
-    (cx as f32 + jx, cy as f32 + jy, noise_styles::hash(wx, wy, seed ^ 0x5bd1_e995))
+/// The points of every lattice cell, worked out once per image: the random offset of a cell's point and the hash that
+/// gives the cell its value only depend on the (wrapped) cell, yet every pixel looks at the 25 or 49 cells around it.
+struct CellGrid {
+    p: i32,
+    q: i32,
+    /// how far the search reaches: 3 cells when points can stray far, else 2
+    r: i32,
+    /// per wrapped cell: offset of its point inside the cell, and the hash that stands for the cell's value
+    tab: Vec<(f32, f32, u32)>,
+    /// tells this grid's cached points from another one's
+    id: u64,
+}
+
+impl CellGrid {
+    /// `jitter` 1 lets points stray up to one and a half cells from their own cell, which gives cells of quite
+    /// different sizes; 0 is a regular grid.
+    fn new(p: i32, q: i32, seed: u32, jitter: f32) -> CellGrid {
+        let amp = 3.0 * jitter;
+        let tab = crate::tex::par_map((p * q) as usize, |i| {
+            let (wx, wy) = (i as i32 % p, i as i32 / p);
+            let h = noise_styles::hash(wx, wy, seed);
+            let jx = ((h & 0xffff) as f32 / 65535.0 - 0.5) * amp + 0.5;
+            let jy = (((h >> 16) & 0xffff) as f32 / 65535.0 - 0.5) * amp + 0.5;
+            (jx, jy, noise_styles::hash(wx, wy, seed ^ 0x5bd1_e995))
+        });
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        CellGrid { p, q, r: if jitter > 0.67 { 3 } else { 2 }, tab, id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) }
+    }
+}
+
+/// The points around one lattice cell, kept between pixels: neighbouring pixels (almost) always lie in the same cell.
+struct CellCache {
+    grid: u64,
+    ix: i32,
+    iy: i32,
+    n: usize,
+    px: [f32; 49],
+    py: [f32; 49],
+    hv: [u32; 49],
+}
+
+thread_local! {
+    static CELLS: std::cell::RefCell<CellCache> = const { std::cell::RefCell::new(CellCache { grid: 0, ix: 0, iy: 0, n: 0, px: [0.0; 49], py: [0.0; 49], hv: [0; 49] }) };
 }
 
 /// Tileable cellular noise at `p` x `q` cells.
-fn cell_at(u: f32, v: f32, p: i32, q: i32, seed: u32, jitter: f32) -> Cell {
+fn cell_at(grid: &CellGrid, u: f32, v: f32) -> Cell {
+    let (p, q) = (grid.p, grid.q);
     let (x, y) = (u * p as f32, v * q as f32);
     let (ix, iy) = (x.floor() as i32, y.floor() as i32);
-    let r = if jitter > 0.67 { 3 } else { 2 };
-    let mut pts = [(0.0f32, 0.0f32, 0u32); 49];
-    let mut np = 0usize;
-    for j in -r..=r {
-        for i in -r..=r {
-            pts[np] = cell_point(ix + i, iy + j, p, q, seed, jitter);
-            np += 1;
+    CELLS.with(|cc| {
+        let mut c = cc.borrow_mut();
+        if c.grid != grid.id || c.ix != ix || c.iy != iy {
+            let r = grid.r;
+            let mut np = 0usize;
+            for j in -r..=r {
+                let cy = iy + j;
+                let wy = if cy >= 0 && cy < q { cy } else { cy.rem_euclid(q) };
+                let row = (wy * p) as usize;
+                for i in -r..=r {
+                    let cx = ix + i;
+                    let wx = if cx >= 0 && cx < p { cx } else { cx.rem_euclid(p) };
+                    let (jx, jy, hv) = grid.tab[row + wx as usize];
+                    c.px[np] = cx as f32 + jx;
+                    c.py[np] = cy as f32 + jy;
+                    c.hv[np] = hv;
+                    np += 1;
+                }
+            }
+            c.grid = grid.id;
+            c.ix = ix;
+            c.iy = iy;
+            c.n = np;
         }
-    }
-    let pts = &pts[..np];
-    let (mut best, mut bi) = (f32::MAX, 0usize);
-    for (k, pt) in pts.iter().enumerate() {
-        let d = (x - pt.0) * (x - pt.0) + (y - pt.1) * (y - pt.1);
-        if d < best {
-            best = d;
-            bi = k;
+        let np = c.n;
+        let (px, py, hv) = (&c.px[..np], &c.py[..np], &c.hv[..np]);
+        // squared distance to every point (one straight loop the compiler turns into SIMD code), then the nearest
+        let mut dist = [0.0f32; 49];
+        for k in 0..np {
+            dist[k] = (x - px[k]) * (x - px[k]) + (y - py[k]) * (y - py[k]);
         }
-    }
-    let (bx, by, bh) = pts[bi];
-    let (mut edge, mut h2) = (f32::MAX, bh);
-    for (k, &(px, py, ph)) in pts.iter().enumerate() {
-        if k == bi {
-            continue;
+        let (mut best, mut bi) = (f32::MAX, 0usize);
+        // the second nearest as well: its edge is a good first guess for the pruning below
+        let (mut second, mut si) = (f32::MAX, usize::MAX);
+        for k in 0..np {
+            let d = dist[k];
+            if d < best {
+                second = best;
+                si = bi;
+                best = d;
+                bi = k;
+            } else if d < second {
+                second = d;
+                si = k;
+            }
         }
-        let (ux, uy) = (px - bx, py - by);
-        let l = (ux * ux + uy * uy).sqrt();
-        if l < 1e-6 {
-            continue;
+        let (bx, by, bh) = (px[bi], py[bi], hv[bi]);
+        let (mut edge, mut h2, mut ik) = (f32::MAX, bh, usize::MAX);
+        // the distance from the point to the bisector with candidate k (the original arithmetic)
+        let edge_of = |k: usize| -> Option<f32> {
+            let (ux, uy) = (px[k] - bx, py[k] - by);
+            let l = (ux * ux + uy * uy).sqrt();
+            if l < 1e-6 {
+                return None;
+            }
+            let (mx, my) = ((px[k] + bx) * 0.5, (py[k] + by) * 0.5);
+            Some(((mx - x) * ux + (my - y) * uy) / l)
+        };
+        if si != usize::MAX {
+            if let Some(e) = edge_of(si) {
+                edge = e;
+                h2 = hv[si];
+                ik = si;
+            }
         }
-        let (mx, my) = ((px + bx) * 0.5, (py + by) * 0.5);
-        let e = ((mx - x) * ux + (my - y) * uy) / l;
-        if e < edge {
-            edge = e;
-            h2 = ph;
+        // The distance to the bisector with candidate k is at least (sqrt(d_k) - sqrt(d_best)) / 2, so a candidate whose
+        // distance exceeds sqrt(d_best) + 2 * edge cannot win. That needs no square root per candidate: the limit is a
+        // squared distance, and it shrinks as nearer edges are found (the margin is far above any rounding).
+        let sb = best.sqrt();
+        let limit = |edge: f32| {
+            let r = sb + 2.0 * (edge + 2e-3);
+            r * r
+        };
+        let mut thr = if edge < f32::MAX { limit(edge) } else { f32::MAX };
+        for k in 0..np {
+            if dist[k] > thr || k == bi || k == si {
+                continue;
+            }
+            if let Some(e) = edge_of(k) {
+                // the first of equally near candidates in lattice order wins, as when they are visited in that order
+                if e < edge || (e == edge && k < ik) {
+                    edge = e;
+                    h2 = hv[k];
+                    ik = k;
+                    thr = limit(edge);
+                }
+            }
         }
-    }
-    let unit = |h: u32| (h >> 8) as f32 / 16_777_216.0;
-    Cell {
-        f1: best.sqrt(),
-        edge: edge.max(0.0),
-        val: unit(bh),
-        val2: unit(h2),
-        dx: x - bx,
-        dy: y - by,
-        pu: bx / p as f32,
-        pv: by / q as f32,
-    }
+        let unit = |h: u32| (h >> 8) as f32 / 16_777_216.0;
+        Cell {
+            f1: best.sqrt(),
+            edge: edge.max(0.0),
+            val: unit(bh),
+            val2: unit(h2),
+            dx: x - bx,
+            dy: y - by,
+            pu: bx / p as f32,
+            pv: by / q as f32,
+        }
+    })
 }
 
 /// Names of the Noise Patterns presets (the order is stored in files).
@@ -420,11 +508,13 @@ fn noise_pattern(preset: usize, lat: f32, s: usize, hs: usize, seed: u32, warp: 
         let t = ((x - a) / (b - a).max(1e-6)).clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
     };
+    // only the cell presets look at the lattice points
+    let grid = if base <= 4 { CellGrid::new(p, q, seed, jitter) } else { CellGrid::new(1, 1, seed, jitter) };
     let mut t = match base {
         // Cells 1: round bubbles that leave dark gaps where three cells meet
         0 => Tex::gray_fn(s, hs, |u, v| {
             let (u, v) = warp(u, v);
-            let c = cell_at(u, v, p, q, seed, jitter);
+            let c = cell_at(&grid, u, v);
             (1.0 - (c.f1 / 1.15) * (c.f1 / 1.15)).max(0.0).sqrt()
         }),
         // Cells 2: white cells with dark borders of even width
@@ -432,7 +522,7 @@ fn noise_pattern(preset: usize, lat: f32, s: usize, hs: usize, seed: u32, warp: 
             let w = if legacy { 0.098 } else { f("edge_width", 2.0).clamp(0.0, 8.0) * 0.0766 };
             Tex::gray_fn(s, hs, |u, v| {
                 let (u, v) = warp(u, v);
-                let c = cell_at(u, v, p, q, seed, jitter);
+                let c = cell_at(&grid, u, v);
                 smooth(w - px * 0.5, w + px * 0.5, c.edge)
             })
         }
@@ -442,7 +532,7 @@ fn noise_pattern(preset: usize, lat: f32, s: usize, hs: usize, seed: u32, warp: 
             let w = px * (1.7 - 1.0 * hard);
             Tex::gray_fn(s, hs, |u, v| {
                 let (u, v) = warp(u, v);
-                let c = cell_at(u, v, p, q, seed, jitter);
+                let c = cell_at(&grid, u, v);
                 let line = 1.0 - smooth(0.0, w, c.edge);
                 let k = (c.val - c.val2).abs().powf(0.6);
                 1.0 - line * (0.55 + 0.45 * k)
@@ -455,7 +545,7 @@ fn noise_pattern(preset: usize, lat: f32, s: usize, hs: usize, seed: u32, warp: 
             let img = ins.get("input").cloned();
             Tex::gray_fn(s, hs, move |u, v| {
                 let (u, v) = warp(u, v);
-                let c = cell_at(u, v, p, q, seed, jitter);
+                let c = cell_at(&grid, u, v);
                 match (src, &img) {
                     (2, Some(t)) => crate::tex::lum(t.sample(c.pu, c.pv)),
                     (1, _) => noise::rnd((c.pu * 4096.0) as i32, (c.pv * 4096.0) as i32, pseed.wrapping_add(4242)),
@@ -470,7 +560,7 @@ fn noise_pattern(preset: usize, lat: f32, s: usize, hs: usize, seed: u32, warp: 
             let (pn, qn) = (((lat / 2.0).round() as i32).max(1), ((lat / 2.0 * hs as f32 / s as f32).round() as i32).max(1));
             Tex::gray_fn(s, hs, |u, v| {
                 let (u, v) = warp(u, v);
-                let c = cell_at(u, v, p, q, seed, jitter);
+                let c = cell_at(&grid, u, v);
                 let e = 0.25 / p as f32;
                 let n0 = noise_styles::gradient(c.pu, c.pv, pn, qn, seed ^ 0x51);
                 let gx = (noise_styles::gradient(c.pu + e, c.pv, pn, qn, seed ^ 0x51) - n0) / e;

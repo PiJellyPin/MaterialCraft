@@ -848,7 +848,8 @@ impl<'a> Writer<'a> {
     /// A function graph as a `dynamicValue`.
     fn dynamic_value(&mut self, g: &Graph) -> XElem {
         let mut d = XElem::new("dynamicValue");
-        let root = g.sd.as_ref().and_then(|s| s.root).or_else(|| g.nodes.keys().next_back().copied());
+        // a function without a result node stays without one (it yields its parameter's default, as in the file)
+        let root = g.sd.as_ref().and_then(|s| s.root);
         if let Some(r) = root {
             let uid = g.nodes.get(&r).map(|n| uid_of(r, n)).unwrap_or_else(|| r.to_string());
             push(&mut d, v("rootnode", &uid));

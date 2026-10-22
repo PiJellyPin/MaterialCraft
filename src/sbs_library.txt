@@ -8418,3 +8418,57 @@ input_1 c
 input_2 g
 input_3 c
 input_4 g
+# Material presets of the library's materials/pbr folder: only their outputs are known (no parameters of theirs are
+# used), as files show them.
+@bricks_001 bricks_001
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@bricks_005 bricks_005
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@cardboard_001 cardboard_001
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@concrete_002 concrete_002
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@concrete_006 concrete_006
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@concrete_010 concrete_010
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@concrete_011 concrete_011
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@concrete_044 concrete_044
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@concrete_070 concrete_070
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@fabric_002 fabric_002
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@fabric_009 fabric_009
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@fabric_025 fabric_025
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@gravel gravel
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@metal_002 metal_002
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@metal_003 metal_003
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@metal_006 metal_006
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@metal_plate_001 metal_plate_001
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@metal_plate_004 metal_plate_004
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@old_painted_planks old_painted_planks
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@paper_005 paper_005
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@rough_concrete_with_lines rough_concrete_with_lines
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@tiles_002 tiles_002
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@tiles_008 tiles_008
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@tiles_011 tiles_011
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@tiles_025 tiles_025
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion
+@wood_american_cherry wood_american_cherry
+> diffuse basecolor normal specular glossiness roughness metallic height ambient_occlusion

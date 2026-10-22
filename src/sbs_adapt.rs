@@ -1606,12 +1606,16 @@ fn height_blend(ad: &mut Ad) {
 }
 
 fn emboss_with_gloss(ad: &mut Ad) {
+    // the source lit by the height map, with coloured highlights and shadows and a glossy specular highlight
+    ad.set("mode", 1.0);
     ad.same("Intensity", "intensity");
     ad.same("LightAngle", "angle");
-    ad.note("the gloss and the light colours are not reproduced");
-    ad.ignore(&["HighlightColor", "ShadowColor", "Gloss"]);
+    ad.vec("HighlightColor", &["hl_r", "hl_g", "hl_b"]);
+    ad.vec("ShadowColor", &["sh_r", "sh_g", "sh_b"]);
+    ad.same("Gloss", "gloss");
     ad.slot("Source", "in");
-    ad.slot("Height", "");
+    ad.slot("Height", "height");
+    ad.note("the emboss lighting and gloss follow Substance Designer's model; their strength is not yet matched against a reference render");
 }
 
 fn non_uniform_blur(ad: &mut Ad) {
@@ -2137,11 +2141,13 @@ fn height_to_normal_world_units(ad: &mut Ad) {
 fn histogram_scan_non_uniform(ad: &mut Ad) {
     ad.same("position", "position");
     ad.same("contrast", "contrast");
-    ad.ignore(&["custom_position", "custom_contrast"]);
+    // "custom" position / contrast: the slider; otherwise the connected map drives it per pixel
+    let (cp, cc) = (ad.take_b("custom_position"), ad.take_b("custom_contrast"));
+    ad.set("use_position_map", if cp { 0.0 } else { 1.0 });
+    ad.set("use_contrast_map", if cc { 0.0 } else { 1.0 });
     ad.slot("input", "in");
-    ad.slot("position_1", "");
-    ad.slot("contrast_1", "");
-    ad.note("the position and contrast maps are not used");
+    ad.slot("position_1", "position_map");
+    ad.slot("contrast_1", "contrast_map");
 }
 
 fn histogram_select(ad: &mut Ad) {

@@ -75,9 +75,9 @@ pub const SPECS: &[Spec] = &[
     s!("checker", [], [], "tiles white_first rotate45 lum_var seed"),
     s!("bricks", [], [], "rows cols mortar bevel offset lum_var seed"),
     s!("fx_map", [], ["in", "in2", "in3", "in4", "in5", "in6", "in7", "in8", "background"], "run a pattern program: program=\"name\" depth seed blend (0 max 1 add 2 over 3 min 4 multiply) color bg bg_r bg_g bg_b roughness (strength per quad-tree level) opacity; in..in8 are the image patterns, background the starting image"),
-    s!("curve", ["in"], [], "tone curves: points (master), points_r points_g points_b points_a as \"x:y,x:y\" lists"),
+    s!("curve", ["in"], [], "tone curves: points (master), points_r points_g points_b points_a as \"x:y,x:y\" lists; a point may add a slope (x:y:s), two slopes (x:y:sin:sout) or Bezier handles at absolute positions (x:y:lx:ly:rx:ry)"),
     s!("svg", [], [], "vector image: file=\"art.svg\" fit (0 contain 1 stretch 2 cover) scale x y"),
-    s!("text", [], [], "text: text=\"...\" font=\"face.ttf\" (optional) size x y align (0 left 1 centre 2 right) spacing line_spacing rotation value wrap(width as a fraction of the image, 0 off) use_color color_r color_g color_b"),
+    s!("text", [], [], "text: text=\"...\" font=\"face.ttf\" (optional) or font_family=\"Arial\" (an installed family) size x y align (0 left 1 centre 2 right) spacing line_spacing rotation value wrap(width as a fraction of the image, 0 off) use_color color_r color_g color_b"),
     s!("channel_shuffle", ["in"], ["in2"], "rebuild channels: src_r src_g src_b src_a (0-3 channels of in, 4-7 channels of in2, 8 zero, 9 one), inv_r inv_g inv_b inv_a"),
     s!("input_value", [], [], "graph parameter read by functions: name, type (0 float, 1 int, 2 bool, 3 float2, 4 float3, 5 float4, 6 int2, 7 int3, 8 int4, 9 string), v / x y z w, min max, label"),
     s!("pixel_processor", [], ["in", "in2", "in3", "in4", "in5", "in6", "in7", "in8", "in9", "in10", "in11", "in12", "in13", "in14", "in15", "in16"], "per-pixel expr / expr_g / expr_b / expr_a (string params), or fn=\"function\" to run a function graph per pixel"),
@@ -141,7 +141,7 @@ pub const SPECS: &[Spec] = &[
     s!("adjust", ["in"], [], "brightness contrast"),
     s!("invert", ["in"], [], "invert colours: invert"),
     s!("threshold", ["in"], [], "binary threshold: threshold softness mode(0 greater,1 greater or equal,2 lower,3 lower or equal)"),
-    s!("histogram_scan", ["in"], [], "position width"),
+    s!("histogram_scan", ["in"], ["position_map", "contrast_map"], "position contrast invert; position_map / contrast_map (grayscale) give the position and contrast per pixel while use_position_map / use_contrast_map are on"),
     s!("quantize", ["in"], [], "steps"),
     s!("to_gray", ["in"], [], "luminance"),
     s!("channel", ["in"], [], "ch(0 r,1 g,2 b,3 a)"),
@@ -160,7 +160,7 @@ pub const SPECS: &[Spec] = &[
     s!("quantize_color", ["in"], [], "reduce to few colours (k-means): color_amount contour_smoothing dithering dithering_pattern(0 noise,1 bayer) ignore_alpha distance_color_space(0 lab,1 rgb)"),
     s!("curvature", ["in"], [], "curvature of a normal map: mode(0 normal map,1 height map) intensity directx radius"),
     s!("edge_detect", ["in"], [], "edge lines: mode(0 lines,1 sobel) edge_width edge_roundness invert tolerance intensity"),
-    s!("emboss", ["in"], [], "angle intensity"),
+    s!("emboss", ["in"], ["height"], "mode (0 relief of the input, 1 light the input with the height map) angle intensity hl_r hl_g hl_b (highlight colour) sh_r sh_g sh_b (shadow colour) gloss"),
     s!("non_uniform_blur", ["in", "mask"], [], "blur by a mask: intensity"),
     s!("radial_blur", ["in"], [], "spin blur around a centre: mode(0 spin,1 zoom) samples angle x y amount radius"),
     s!("anisotropic_blur", ["in"], [], "blur stretched in one direction: intensity anisotropy angle"),
@@ -291,11 +291,12 @@ pub fn spec(kind: &str) -> Option<&'static Spec> {
     if kind.starts_with("sbs:") {
         return crate::sbs_defs::spec(kind);
     }
-    SPECS.iter().chain(crate::func::FUNC_SPECS.iter()).chain(crate::fxmap::FXM_SPECS.iter()).find(|s| s.kind == kind)
+    SPECS.iter().chain(crate::func::FUNC_SPECS.iter()).chain(crate::fxmap::FXM_SPECS.iter()).find(|s| s.kind == kind).or_else(|| crate::nodes10::spec(kind))
 }
 
 pub fn category(kind: &str) -> &'static str {
     match kind {
+        k if k.starts_with("x_") => crate::nodes10::category(k),
         "color" | "white_noise" | "gaussian_noise" | "perlin" | "fbm" | "clouds" | "voronoi" | "voronoi_fractal" | "bnw_spots" | "crystal" | "directional_noise" | "grunge" | "plasma"
         | "gradient" | "gradient_axial" | "gradient_circular" | "circle" | "rect" | "polygon" | "shape" | "star" | "checker" | "bricks" | "stripes" | "weave"
         | "tile_sampler" | "tile_generator" | "splatter" | "splatter_circular" | "pixel_processor" | "value_processor" | "fx_map" | "text" | "svg" | "cells" | "fractal_sum" | "waveform" | "gaussian_spots" | "triangle_grid" | "starburst" | "gradient_reflected" | "weave_generator" | "grunge_map" | "blue_noise" | "fibers" | "scratches" | "caustics" | "liquid_noise" | "perlin_3d" | "paving" | "wire_mesh" | "path_stroke" | "path_fill" | "path_distance" | "path_border" | "path_scatter" | "path_track" | "path_cable" | "path_seam" | "path_splatter" | "path_sample" | "herringbone" | "arc_pavement" | "anisotropic_noise" | "fur_noise" | "moisture_noise" | "microscope_noise" | "worley_3d" | "fbm_3d" | "volume_mask" | "gradient_3d" | "preset_noise" | "noise_pattern" | "gradient_2pt" | "weave_preset" | "tile_preset" | "tile_random2" | "noise_3d" => "Generators",
@@ -310,6 +311,9 @@ pub fn category(kind: &str) -> &'static str {
 
 /// Friendly display name for a node kind.
 pub fn label(kind: &str) -> String {
+    if let Some(l) = crate::nodes10::label(kind) {
+        return l;
+    }
     let named = match kind {
         "fbm" => "Fractal Noise",
         "clouds" => "Clouds",
@@ -2143,7 +2147,7 @@ pub fn node_outputs(kind: &str) -> &'static [&'static str] {
         "uber_emboss" => &["emboss", "highlight", "shadow"],
         "snow_filter" => &["height", "mask"],
         "water_filter" => &["color", "mask", "height", "roughness"],
-        _ => &[],
+        _ => crate::nodes10::outputs(kind),
     }
 }
 
@@ -2255,6 +2259,9 @@ pub fn connection_issues(g: &Graph) -> Vec<(u32, String, String)> {
 /// Output type of a built-in node. `any_color_in` says whether any connected input is a colour pin, `n` supplies
 /// mode switches such as the Uniform Color node's grayscale flag.
 pub fn output_pin(kind: &str, out: Option<&str>, any_color_in: bool, n: &Node) -> Pin {
+    if let Some(p) = crate::nodes10::pin(kind, out) {
+        return p;
+    }
     let flag = |k: &str| n.nums.get(k).copied().unwrap_or(0.0) > 0.5;
     match kind {
         // always colour
@@ -3331,7 +3338,15 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
         "text" => {
             let font = match n.strs.get("font").filter(|f| !f.is_empty()) {
                 Some(file) => crate::font::Font::load(&read_resource(id, file, ctx)?).map_err(|m| Error::BadParam(id, format!("'{file}': {m}")))?,
-                None => crate::font::Font::Builtin,
+                // an installed family (as Substance Designer's Text node names it); the built-in face when it is not installed
+                None => n
+                    .strs
+                    .get("font_family")
+                    .filter(|f| !f.trim().is_empty())
+                    .and_then(|fam| crate::font::system_font(fam))
+                    .and_then(|p| std::fs::read(p).ok())
+                    .and_then(|b| crate::font::Font::load(&b).ok())
+                    .unwrap_or(crate::font::Font::Builtin),
             };
             let mut text = n.strs.get("text").cloned().unwrap_or_default();
             let size_px = f("size", 0.2).max(0.001) * hs as f32;
@@ -3351,10 +3366,11 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
             }
             t
         }
-        "value_processor" => {
-            let fname = n.strs.get("fn").ok_or_else(|| Error::BadParam(id, "value_processor needs fn=\"function\"".into()))?;
-            return run_function_image(id, n, fname, ins, ctx, true);
-        }
+        "value_processor" => match n.strs.get("fn") {
+            Some(fname) => return run_function_image(id, n, fname, ins, ctx, true),
+            // no function: the value is the type's default (0), as an empty processor gives in the file's own editor
+            None => Tex::solid(ctx.size, ctx.height, [0.0, 0.0, 0.0, 1.0]),
+        },
         "input_value" => {
             let v = f("v", 0.0);
             Tex::solid(ctx.size, ctx.height, [v, v, v, 1.0])
@@ -3499,7 +3515,21 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
         "invert" => if f("invert", 1.0) > 0.5 { ops::invert(tex("in")?) } else { tex("in")?.clone() },
         "threshold" => ops::threshold_mode(tex("in")?, f("threshold", 0.5), f("softness", 0.0), f("mode", 0.0).max(0.0) as u32),
         "histogram_scan" => {
-            let t = ops::histogram_scan(tex("in")?, f("position", 0.5), (1.0 - f("contrast", 0.5).clamp(0.0, 1.0)).max(1e-4));
+            let src = tex("in")?;
+            let (pos, con) = (f("position", 0.5), f("contrast", 0.5));
+            let pm = ins.get("position_map").filter(|_| f("use_position_map", 1.0) > 0.5);
+            let cm = ins.get("contrast_map").filter(|_| f("use_contrast_map", 1.0) > 0.5);
+            let t = if pm.is_none() && cm.is_none() {
+                ops::histogram_scan(src, pos, (1.0 - con.clamp(0.0, 1.0)).max(1e-4))
+            } else {
+                // non-uniform: the position and contrast change across the image
+                Tex::from_fn(src.w, src.h, |u, v| {
+                    let p = pm.map(|m| m.sample(u, v)[0]).unwrap_or(pos);
+                    let w = (1.0 - cm.map(|m| m.sample(u, v)[0]).unwrap_or(con).clamp(0.0, 1.0)).max(1e-4);
+                    let g = ((lum(src.sample(u, v)) - (p - w * 0.5)) / w).clamp(0.0, 1.0);
+                    [g, g, g, 1.0]
+                })
+            };
             if f("invert", 0.0) > 0.5 { ops::invert(&t) } else { t }
         }
         "quantize" => ops::quantize(tex("in")?, f("steps", 4.0)),
@@ -3630,7 +3660,14 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
                 ops::edge_detect_ex(tex("in")?, (f("edge_width", 2.0) * rs).max(1.0), f("edge_roundness", 4.0) * rs, f("invert", 0.0) > 0.5, f("tolerance", 0.0))
             }
         }
-        "emboss" => ops::emboss(tex("in")?, f("angle", 0.125), f("intensity", 4.0)),
+        "emboss" => {
+            if f("mode", 0.0) > 0.5 {
+                let (hl, sh) = ([f("hl_r", 1.0), f("hl_g", 1.0), f("hl_b", 1.0)], [f("sh_r", 0.0), f("sh_g", 0.0), f("sh_b", 0.0)]);
+                ops::emboss_lit(tex("in")?, ins.get("height").map(|t| &**t), f("angle", 0.125), f("intensity", 4.0), hl, sh, f("gloss", 0.0).clamp(0.0, 1.0))
+            } else {
+                ops::emboss(tex("in")?, f("angle", 0.125), f("intensity", 4.0))
+            }
+        }
         other => match crate::nodes2::compute(other, id, n, ins, s, hs, seed)? {
             Some(t) => t,
             None => match crate::nodes3::compute(other, id, n, ins, s, hs, seed)? {

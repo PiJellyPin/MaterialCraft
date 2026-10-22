@@ -51,7 +51,7 @@ Nodes with several outputs: `path_sample` (position, width, height, side); `shap
 | `gradient_reflected` |  | gradient that goes 0-1-0: count angle contrast invert |
 | `fx_map` | in, in2, in3, in4 | run a pattern program: program="name" depth seed blend (0 max 1 add 2 over 3 min 4 multiply) color bg bg_r bg_g bg_b |
 | `svg` |  | vector image: file="art.svg" fit (0 contain 1 stretch 2 cover) scale x y |
-| `text` |  | text: text="..." font="face.ttf" (optional) size x y align (0 left 1 centre 2 right) spacing line_spacing rotation value wrap(width as a fraction of the image, 0 off) use_color color_r color_g color_b |
+| `text` |  | text: text="..." font="face.ttf" (optional) or font_family="Arial" (an installed family; a metric-compatible stand-in such as Liberation Sans when it is not installed, else the built-in face) size x y align (0 left 1 centre 2 right) spacing line_spacing rotation value wrap(width as a fraction of the image, 0 off) use_color color_r color_g color_b |
 | `value_processor` | in, in2, in3, in4 | run fn="function" once; the result (float, float3 or float4) fills the image. The function can read image statistics |
 | `blue_noise` |  | evenly spread grain with little low-frequency content: scale seed tightness contrast invert |
 | `fibers` |  | random curved hair-like strands: count length thickness angle angle_variation curl taper brightness_variation seed contrast invert |
@@ -134,7 +134,7 @@ Nodes with several outputs: `path_sample` (position, width, height, side); `shap
 | `adjust` | in | brightness contrast |
 | `invert` | in | invert colours: invert |
 | `threshold` | in | binary threshold: threshold softness mode(0 greater,1 greater or equal,2 lower,3 lower or equal) |
-| `histogram_scan` | in | position width |
+| `histogram_scan` | in, position_map, contrast_map | position contrast invert; position_map / contrast_map (grayscale) give the position and contrast per pixel while use_position_map / use_contrast_map are on (Histogram Scan Non-Uniform) |
 | `quantize` | in | steps |
 | `to_gray` | in | luminance |
 | `channel` | in | ch(0 r,1 g,2 b,3 a) |
@@ -149,7 +149,7 @@ Nodes with several outputs: `path_sample` (position, width, height, side); `shap
 | `blend` | fg, bg, mask | blend two images: mode(0 copy,1 add,2 sub,3 mul,4 screen,5 overlay,6 max,7 min,8 diff,9 softlight,20 add sub,21 switch) opacity alpha_mode(0 source alpha,1 ignore alpha,2 straight,3 premultiplied) crop_x0 crop_y0 crop_x1 crop_y1 |
 | `quantize_color` | in | reduce to few colours (k-means): color_amount contour_smoothing dithering dithering_pattern(0 noise,1 bayer) ignore_alpha distance_color_space(0 lab,1 rgb) |
 | `edge_detect` | in | edge lines: mode(0 lines,1 sobel) edge_width edge_roundness invert tolerance intensity |
-| `emboss` | in | angle intensity |
+| `emboss` | in, height | mode (0 relief of the input, 1 light the input with the height map, as Substance Designer's Emboss) angle intensity hl_r hl_g hl_b (highlight colour) sh_r sh_g sh_b (shadow colour) gloss (specular highlight, Emboss With Gloss) |
 | `non_uniform_blur` | in, mask | blur by a mask: intensity |
 | `radial_blur` | in | spin blur around a centre: mode(0 spin,1 zoom) samples angle x y amount radius |
 | `anisotropic_blur` | in | blur stretched in one direction: intensity anisotropy angle |
@@ -174,7 +174,7 @@ Nodes with several outputs: `path_sample` (position, width, height, side); `shap
 | `shape_glow` | in | glow around a shape: width softness intensity threshold opacity spread color_r color_g color_b |
 | `chrominance_extract` | in | colour without brightness |
 | `shape_drop_shadow` | in | drop shadow of a mask: angle distance blur opacity spread |
-| `curve` | in | tone curves: points (master), points_r points_g points_b points_a as "x:y,x:y" lists |
+| `curve` | in | tone curves: points (master), points_r points_g points_b points_a as "x:y,x:y" lists; a point may add a slope (x:y:s), two slopes (x:y:sin:sout) or Bezier handles at absolute positions (x:y:lx:ly:rx:ry, Substance Designer's left / right tangents) |
 | `channel_shuffle` | in, in2 | rebuild channels: src_r src_g src_b src_a (0-3 channels of in, 4-7 channels of in2, 8 zero, 9 one), inv_r inv_g inv_b inv_a |
 | `contrast_luminosity` | in | contrast around mid-gray and brightness shift: contrast luminosity |
 | `srgb_to_linear` | in | decode the sRGB curve (colour channels only) |
@@ -251,6 +251,8 @@ Nodes with several outputs: `path_sample` (position, width, height, side); `shap
 ## Function-graph nodes
 
 Used inside graphs with `meta kind "function"`. Links carry values (float, float2-4, integer, integer2-4, boolean, string). Slots `a`, `b`, `c` are operands. Running a function never produces NaN or infinity.
+
+Substance Designer's 161 function presets (its `sbs://functions.sbs` library: `Functions/Math/clamp`, `Functions/colorValues/HSVtoRGB`, the easings, the HSL/HSV/HCL/HSI conversions, the matrix and polar transforms, and so on) are built in (`src/libfuncs.rs`), so a material that drives a parameter with one of them renders without Designer installed. Designer's own `functions.sbs` is never read: every library function is built in, and a call to a `sbs://` library function that is not among them gives 0 with a note. (Library *graphs* — the `x_*` nodes — are a separate mechanism and unaffected.)
 
 | Node | Inputs | Description and parameters |
 |---|---|---|
@@ -365,16 +367,243 @@ Maps: tangent-space normal, world-space normal, position, ambient occlusion, ben
 
 Results are stored in the package as 16-bit PNG resources named `bake/<set>/<map>.png` (and the set's settings as `bake/<set>.cfg`), so they travel with the file and publish with it. A `baked_map` node reads one map by set and map name and resamples it to the graph size; `mesh_weathering` and the older `edge_wear`, `dirt`, `dust`, `leak_streaks` and `settled_dust` nodes turn baked curvature, AO and normal maps into masks.
 
+## Library graphs implemented natively
+
+Substance Designer library graphs that MaterialCraft runs with its own implementation of the whole graph (kind names start with `x_`; source in `src/nodes10*.rs`). An imported `.sbs` instance of one of these graphs becomes this node with the instance's parameter values; in the editor they appear in the node menu under the library graph's own name. Parameters keep the library's identifiers (vectors are split into `name_0`, `name_1`, ...), and every output of the library graph is kept.
+
+Spline, path and splatter data travel between these nodes as images in MaterialCraft's own encoding, and 3D textures are slice atlases (`grid_size` slices in a grid, the first at the top left), so these nodes work with each other rather than with data images made by other programs.
+
+### Filters
+
+| Kind | Name | Library graph | Inputs | Outputs |
+| --- | --- | --- | --- | --- |
+| `x_3d_linear_gradient` | 3D Linear Gradient | `3d_gradient/3d_linear_gradient` | position | output |
+| `x_3d_planar_projection` | 3D Planar Projection | `3d_planar_projection/3d_planar_projection` | position, wsnormal, texture | output |
+| `x_3d_planar_projection_color` | 3D Planar Projection Color | `3d_planar_projection/3d_planar_projection_color` | position, wsnormal, texture | output |
+| `x_3d_texture_offset_color` | 3D Texture Offset Color | `3d_texture_transform/3d_texture_offset_color` | input | output |
+| `x_3d_texture_offset_grayscale` | 3D Texture Offset Grayscale | `3d_texture_transform/3d_texture_offset_grayscale` | input | output |
+| `x_3d_texture_sdf` | 3D Texture Sdf | `3d_texture_jump_flood/3d_texture_sdf` | mask_input | output |
+| `x_3d_texture_surface_render` | 3D Texture Surface Render | `3d_texture_render/3d_texture_surface_render` | 3d_distance_field, environment | output |
+| `x_3d_texture_volume_render_light` | 3D Texture Volume Render Light | `3d_texture_render/3d_texture_volume_render_light` | 3d_signed_distance_field, density | output |
+| `x_3d_volume_mask` | 3D Volume Mask | `3d_volume_mask/3d_volume_mask` | position | output |
+| `x_acescg_to_linear_srgb` | Acescg To Linear Srgb | `color_space_conversion/acescg_to_linear_srgb` | input | output |
+| `x_acescg_to_srgb` | Acescg To Srgb | `color_space_conversion/acescg_to_srgb` | input | output |
+| `x_anisotropic_kuwahara_color` | Anisotropic Kuwahara Color | `anisotropic_kuwahara/anisotropic_kuwahara_color` | input, anisotropy_angle_map, slope_map, radius_map, direction_map | output, direction_map |
+| `x_anisotropic_kuwahara_grayscale` | Anisotropic Kuwahara Grayscale | `anisotropic_kuwahara/anisotropic_kuwahara_grayscale` | input, anisotropy_angle_map, slope_map, radius_map, direction_map | output, direction_map |
+| `x_ao_cancel` | AO Cancel | `ao_cancel/ao_cancel` | color, AO | output |
+| `x_apply_color_palette` | Apply Color Palette | `quantize_color/apply_color_palette` | id, palette | output |
+| `x_atlas_scatter` | Atlas Scatter | `atlas_scatter/atlas_scatter` | basecolor, normal, roughness, metallic, height, opacity, background_basecolor, background_normal, background_roughness, background_metallic, background_height, pattern_distribution_map, shape_scale_map, shape_rotation_map, height_offset_map, height_scale_map, mask_random_map, vector_map | basecolor, normal, roughness, metallic, height, shape_count, mask |
+| `x_atlas_spliter` | Atlas Spliter | `atlas_spliter/atlas_spliter` | basecolor, normal, roughness, metallic, height, opacity, user1, user2 | basecolor, normal, roughness, metallic, height, opacity, shape_count, user1, user2 |
+| `x_basecolor_metallic_roughness_converter` | Basecolor Metallic Roughness Converter | `pbr_converter/basecolor_metallic_roughness_converter` | basecolor, normal, roughness, metallic, specularlevel | diffuse, normal, specular, speuclar_face_color, reflection, glossiness, roughness, ior, f0 |
+| `x_bitmap2material_2_light` | Bitmap2Material 2 Light | `bitmaptomaterial_2_light/Bitmap2Material_2_Light` | bitmap_diffuse, metallic_1 | diffuse, normal, specular, glossiness, roughness, metallic, ambient_occlusion, height |
+| `x_clone` | Clone | `clone/clone` | Source, Mask | output |
+| `x_color_equalizer` | Color Equalizer | `color_equalizer/color_equalizer` | input, mask_input | output, mask |
+| `x_color_temperature_adjustment` | Color Temperature Adjustment | `color_temperature_adjustment/color_temperature_adjustment` | input | output |
+| `x_create_color_palette_16colors` | Create Color Palette 16colors | `quantize_color/create_color_palette_16colors` | palette | palette, palette_color_amount |
+| `x_crop` | Crop | `crop/crop` | input | output, area |
+| `x_crop_grayscale` | Crop Grayscale | `crop/crop_grayscale` | input | output, area |
+| `x_directional_distance` | Directional Distance | `directional_distance/directional_distance` | input, distance_map, angle_map | output, uv |
+| `x_exposure` | Exposure | `exposure/exposure` | input | output |
+| `x_extend_shape_color` | Extend Shape Color | `extend_shape/extend_shape_color` | input | output |
+| `x_extend_shape_grayscale` | Extend Shape Grayscale | `extend_shape/extend_shape_grayscale` | input | output |
+| `x_floodfill_mapper_color` | Floodfill Mapper Color | `floodfill_mapper/floodfill_mapper_color` | bbox, pattern_input_1, pattern_input_2, pattern_input_3, pattern_input_4, pattern_input_5, pattern_input_6, pattern_input_7, pattern_input_8, pattern_distribution_map, scale_map, rotation_map, luminance_offset_map | output |
+| `x_floodfill_mapper_grayscale` | Floodfill Mapper Grayscale | `floodfill_mapper/floodfill_mapper_grayscale` | bbox, pattern_input, pattern_input_2, pattern_input_3, pattern_input_4, pattern_input_5, pattern_input_6, pattern_input_7, pattern_input_8, pattern_distribution_map, scale_map, rotation_map, luminance_offset_map | output |
+| `x_get_size_color` | Get Size Color | `value_get_size/get_size_color` | input | output |
+| `x_get_size_grayscale` | Get Size Grayscale | `value_get_size/get_size_grayscale` | input | output |
+| `x_hald_clut` | Hald Clut | `hald_clut/hald_clut` | input, lut | output |
+| `x_hdr_exposure_preview` | HDR Exposure Preview | `hdr_exposure_preview/hdr_exposure_preview` | input | output |
+| `x_hdr_merge_2` | HDR Merge 2 | `hdr_merge/hdr_merge_2` | input_1, input_2, input_3, input_4, input_5, input_6, input_7, input_8, input_9, input_10, input_11, input_12, input_13, input_14, input_15, input_16 | output |
+| `x_hdr_range_viewer` | HDR Range Viewer | `hdr_range_viewer/hdr_range_viewer` | input | output |
+| `x_hdr_range_viewer_grayscale` | HDR Range Viewer Grayscale | `hdr_range_viewer/hdr_range_viewer_grayscale` | input | output |
+| `x_height_extrude` | Height Extrude | `height_extrude/height_extrude` | height | depth, normal |
+| `x_height_map_frequencies_mapper` | Height Map Frequencies Mapper | `height_map_frequencies_mapper/height_map_frequencies_mapper` | Height | Displacement, Relief_Parallax |
+| `x_histogram_compute` | Histogram Compute | `histogram_tools/histogram_compute` | input | histogram, cdf |
+| `x_histogram_render` | Histogram Render | `histogram_tools/histogram_render` | input | output |
+| `x_id_to_mask_grayscale` | ID To Mask Grayscale | `id_to_mask/id_to_mask_grayscale` | id | output |
+| `x_lighting_cancel_hf` | Lighting Cancel HF | `lighting_cancel_hf/lighting_cancel_hf` | Source | output |
+| `x_lighting_cancel_lf` | Lighting Cancel LF | `lighting_cancel_lf/lighting_cancel_lf` | Source | output |
+| `x_linear_srgb_to_acescg` | Linear Srgb To Acescg | `color_space_conversion/linear_srgb_to_acescg` | input | output |
+| `x_median_filter_color` | Median Filter Color | `median_filter/median_filter_color` | input | output |
+| `x_median_filter_grayscale` | Median Filter Grayscale | `median_filter/median_filter_grayscale` | input | output |
+| `x_mlv_color` | MLV Color | `mean_of_least_variance/mlv_color` | input | output |
+| `x_mlv_grayscale` | MLV Grayscale | `mean_of_least_variance/mlv_grayscale` | input | output |
+| `x_modify_color_palette` | Modify Color Palette | `quantize_color/modify_color_palette` | id, palette | output, palette |
+| `x_multi_clone_patch` | Multi Clone Patch | `clone_patch/multi_clone_patch` | input_1, input_2, input_3, input_4, input_5, input_6, input_7, input_8 | output_1, output_2, output_3, output_4, output_5, output_6, output_7, output_8, areas |
+| `x_multi_clone_patch_grayscale` | Multi Clone Patch Grayscale | `clone_patch/multi_clone_patch_grayscale` | input_1, input_2, input_3, input_4, input_5, input_6, input_7, input_8 | output_1, output_2, output_3, output_4, output_5, output_6, output_7, output_8, areas |
+| `x_multi_color_equalizer` | Multi Color Equalizer | `color_equalizer/multi_color_equalizer` | input_1, input_2, input_3, input_4, input_5, input_6, input_7, input_8, mask_input | output_1, output_2, output_3, output_4, output_5, output_6, output_7, output_8 |
+| `x_multi_crop` | Multi Crop | `crop/multi_crop` | input_1, input_2, input_3, input_4, input_5, input_6, input_7, input_8 | output_1, output_2, output_3, output_4, output_5, output_6, output_7, output_8, area |
+| `x_multi_crop_grayscale` | Multi Crop Grayscale | `crop/multi_crop_grayscale` | input_1, input_2, input_3, input_4, input_5, input_6, input_7, input_8 | output_1, output_2, output_3, output_4, output_5, output_6, output_7, output_8, area |
+| `x_multiangle_to_albedo` | Multiangle To Albedo | `multiangle_to_albedo/multiangle_to_albedo` | input_1, input_2, input_3, input_4, input_5, input_6, input_7, input_8 | output |
+| `x_multiangle_to_normal` | Multiangle To Normal | `multiangle_to_normal/multiangle_to_normal` | input_1, input_2, input_3, input_4, input_5, input_6, input_7, input_8 | output |
+| `x_nadir_extract` | Nadir Extract | `panorama_nadir_extract/nadir_extract` | input | output |
+| `x_non_square_transform` | Non Square Transform | `non_square_transform/non_square_transform` | input | output |
+| `x_non_square_transform_greyscale` | Non Square Transform Greyscale | `non_square_transform/non_square_transform_greyscale` | input | output |
+| `x_non_uniform_rotation_color` | Non Uniform Rotation Color | `non_uniform_rotation/non_uniform_rotation_color` | input, rotation_map, rotation_pivot_map | output |
+| `x_non_uniform_rotation_grayscale` | Non Uniform Rotation Grayscale | `non_uniform_rotation/non_uniform_rotation_grayscale` | input, rotation_map, rotation_pivot_map | output |
+| `x_normal_intensity` | Normal Intensity | `normal_intensity/normal_intensity` | input | output |
+| `x_normal_uncombine` | Normal Uncombine | `normal_uncombine/normal_uncombine` | normal, height | normal, guessed_intensity |
+| `x_rt_irradiance` | Rt Irradiance | `rt_irradiance/rt_irradiance` | basecolor, metallic, height, emissive, environment | output, raw_irradiance |
+| `x_rt_shadows` | Rt Shadows | `rt_shadows_v2/rt_shadows` | input | output |
+| `x_shadows` | Shadows | `shadows/shadows` | Input | output |
+| `x_smart_auto_tile` | Smart Auto Tile | `smart_auto_tile/smart_auto_tile` | baseColor, normal, height, mask | baseColor, normal, height, pattern |
+| `x_srgb_to_acescg` | Srgb To Acescg | `color_space_conversion/srgb_to_acescg` | input | output |
+| `x_triplanar_3` | Triplanar 3 | `triplanar/triplanar_3` | position, ws_normal, input_x, input_y, input_z | output |
+| `x_triplanar_grayscale_3` | Triplanar Grayscale 3 | `triplanar/triplanar_grayscale_3` | position, ws_normal, input_x, input_y, input_z | output |
+| `x_uv_mapper_color` | UV Mapper Color | `uv_mapper/uv_mapper_color` | uv, input | output |
+| `x_uv_mapper_grayscale` | UV Mapper Grayscale | `uv_mapper/uv_mapper_grayscale` | uv, input | output |
+| `x_vertex_processor` | Vertex Processor | `paths_tools/vertex_processor` | paths, input_1, input_2, input_3, input_4, input_5, input_6, input_7, input_8 | output |
+| `x_vertex_processor_simple` | Vertex Processor Simple | `paths_tools/vertex_processor_simple` | paths, input_1, input_2, input_3, input_4 | output |
+
+### Generators
+
+| Kind | Name | Library graph | Inputs | Outputs |
+| --- | --- | --- | --- | --- |
+| `x_2dtransform_path` | 2D Transform Path | `paths_tools/2dtransform_path` | paths | output |
+| `x_3d_texture_position` | 3D Texture Position | `3d_texture_position/3d_texture_position` |  | output |
+| `x_blackbody` | Blackbody | `blackbody/blackbody` |  | output |
+| `x_cube_3d` | Cube 3D | `pattern_cube_3d/cube_3d` |  | output |
+| `x_cube_3d_gbuffers` | Cube 3D Gbuffers | `pattern_cube_3d/cube_3d_gbuffers` |  | position, normal, depth, uv |
+| `x_mask_to_paths_2` | Mask To Paths 2 | `paths_tools/mask_to_paths_2` | mask | preview, paths |
+| `x_panorama_3d_position` | Panorama 3D Position | `panorama_position/panorama_3d_position` |  | output |
+| `x_panorama_gradient_2_points` | Panorama Gradient 2 Points | `panorama_gradients/panorama_gradient_2_points` |  | output |
+| `x_panorama_gradient_linear` | Panorama Gradient Linear | `panorama_gradients/panorama_gradient_linear` |  | output |
+| `x_panorama_line_light` | Panorama Line Light | `panorama_shape/panorama_line_light` | background_image_input, shape_image_input, pattern_image_input | output |
+| `x_panorama_nadir_patch` | Panorama Nadir Patch | `panorama_nadir_patch/panorama_nadir_patch` | input, mask_input | output |
+| `x_panorama_physical_sun_sky` | Panorama Physical Sun Sky | `panorama_physical_sun_sky/panorama_physical_sun_sky` |  | output |
+| `x_panorama_plane_light` | Panorama Plane Light | `panorama_shape/panorama_plane_light` | background_image_input, shape_image_input, pattern_image_input | output |
+| `x_panorama_rotation` | Panorama Rotation | `panorama_rotation/panorama_rotation` | input | output |
+| `x_panorama_shape` | Panorama Shape | `panorama_shape/panorama_shape` | input | output |
+| `x_panorama_shape_2` | Panorama Shape 2 | `panorama_shape/panorama_shape_2` | background_image_input, shape_image_input | output |
+| `x_panorama_sphere_light` | Panorama Sphere Light | `panorama_shape/panorama_sphere_light` | background_image_input, sphere_image_input | output |
+| `x_panorama_straighten_horizon` | Panorama Straighten Horizon | `panorama_straighten_horizon/panorama_straighten_horizon` | input | output |
+| `x_path_to_spline` | Path To Spline | `paths_tools/path_to_spline` | paths | spline_coords, spline_data, spline_amount |
+| `x_paths_polygon` | Paths Polygon | `paths_tools/paths_polygon` |  | output |
+| `x_paths_trace` | Paths Trace | `paths_tools/paths_trace` | background, paths | output |
+| `x_paths_warp` | Paths Warp | `paths_tools/paths_warp` | paths, gradient | output |
+| `x_point_list` | Point List | `spline_tools/point_list` | preview, point_list_input | preview, point_list, point_number |
+| `x_quad_transform_path` | Quad Transform Path | `paths_tools/quad_transform_path` | paths | output |
+| `x_scatter_on_spline_color` | Scatter On Spline Color | `spline_tools/scatter_on_spline_color` | background, spline_coords, spline_data, pattern_input_1, pattern_input_2, pattern_input_3, pattern_input_4, pattern_input_5, pattern_input_6, pattern_input_7, pattern_input_8, scale_map, color_map, mask_map | output |
+| `x_scatter_on_spline_grayscale` | Scatter On Spline Grayscale | `spline_tools/scatter_on_spline_grayscale` | background, spline_coords, spline_data, pattern_input_1, pattern_input_2, pattern_input_3, pattern_input_4, pattern_input_5, pattern_input_6, pattern_input_7, pattern_input_8, scale_map, height_map, mask_map | output |
+| `x_scatter_splines_on_splines` | Scatter Splines On Splines | `spline_tools/scatter_splines_on_splines` | preview, spline_coords, spline_data, custom_spline_coords, custom_spline_data, scale_map, rotation_map | preview, spline_coords, spline_data, spline_amount |
+| `x_scratches_generator_normal` | Scratches Generator Normal | `pattern_scratches_generator/scratches_generator_normal` |  | normal, mask |
+| `x_select_path` | Select Path | `paths_tools/select_path` | paths | output |
+| `x_shape_splatter` | Shape Splatter | `shape_splatter/shape_splatter` | background_height, splatter_data_1, pattern_1, pattern_2, pattern_3, pattern_4, pattern_5, pattern_6, pattern_7, pattern_8, pattern_distribution_map, shape_scale_map, shape_rotation_map, height_offset_map, height_scale_map, mask_random_map, vector_map | height, splatter_data_1, splatter_data_2 |
+| `x_shape_splatter_blend` | Shape Splatter Blend | `shape_splatter/shape_splatter_blend` | background_color, pattern_1, pattern_2, pattern_3, pattern_4, pattern_5, pattern_6, pattern_7, pattern_8, color_input, splatter_data_1, splatter_data_2 | output |
+| `x_shape_splatter_blend_color` | Shape Splatter Blend Color | `shape_splatter/shape_splatter_blend_color` | background_color, pattern_1, pattern_2, pattern_3, pattern_4, pattern_5, pattern_6, pattern_7, pattern_8, color_input, splatter_data_1, splatter_data_2 | output |
+| `x_shape_splatter_data_extract` | Shape Splatter Data Extract | `shape_splatter/shape_splatter_data_extract` | splatter_data_1, splatter_data_2 | position, uv_shape_space, uv_texture_space, bounding_box_size, shape_index, pattern_id, shape_angle |
+| `x_shape_splatter_to_mask` | Shape Splatter To Mask | `shape_splatter/shape_splatter_to_mask` | splatter_data_1 | output |
+| `x_spline_2dtransform` | Spline 2D Transform | `spline_tools/spline_2dtransform` | preview, spline_coords, spline_data | preview, spline_coords, spline_data, spline_amount |
+| `x_spline_append` | Spline Append | `spline_tools/spline_append` | preview_1, spline_coords_1, spline_data_1, preview_2, spline_coords_2, spline_data_2 | preview, spline_coords, spline_data, spline_amount |
+| `x_spline_bridge_2_splines` | Spline Bridge 2 Splines | `spline_tools/spline_bridge_2_splines` | preview_1, spline_coords_1, spline_data_1, preview_2, spline_coords_2, spline_data_2, start_tangent_length_curve, start_tangent_rotation_curve, end_tangent_length_curve, end_tangent_rotation_curve | preview, spline_coords, spline_data, spline_amount |
+| `x_spline_bridge_list_v2` | Spline Bridge List V2 | `spline_tools/spline_bridge_list_v2` | preview, spline_coords, spline_data | preview, spline_coords, spline_data, spline_amount |
+| `x_spline_bridge_mapper_color` | Spline Bridge Mapper Color | `spline_tools/spline_bridge_mapper_color` | background, spline_coords, spline_data, color_map | color, height, uv, mask |
+| `x_spline_bridge_mapper_grayscale` | Spline Bridge Mapper Grayscale | `spline_tools/spline_bridge_mapper_grayscale` | background, spline_coords, spline_data, color_map | color, height, uv, mask |
+| `x_spline_circle` | Spline Circle | `spline_tools/spline_circle` | preview, spline_coords, spline_data | preview, spline_coords, spline_data, spline_amount |
+| `x_spline_cubic` | Spline Cubic | `spline_tools/spline_cubic` | preview, spline_coords, spline_data | preview, spline_coords, spline_data, spline_amount |
+| `x_spline_fill` | Spline Fill | `spline_tools/spline_fill` | preview, spline_coords, spline_data | output |
+| `x_spline_flow_mapper` | Spline Flow Mapper | `spline_tools/spline_flow_mapper` | spline_coords, spline_data, background, attenuation_profile_curve | output |
+| `x_spline_mapper_color` | Spline Mapper Color | `spline_tools/spline_mapper_color` | background, spline_coords, spline_data, color_map, height_map, twist_curve | color, height, uv, id |
+| `x_spline_mapper_grayscale` | Spline Mapper Grayscale | `spline_tools/spline_mapper_grayscale` | background, spline_coords, spline_data, color_map, height_map, twist_curve | color, height, uv, id |
+| `x_spline_merge_list` | Spline Merge List | `spline_tools/spline_merge_list` | preview, spline_coords, spline_data | preview, spline_coords, spline_data, spline_amount |
+| `x_spline_poly_quadratic` | Spline Poly Quadratic | `spline_tools/spline_poly_quadratic` | preview, spline_coords, spline_data, points_preview, point_list_input | preview, spline_coords, spline_data, spline_amount |
+| `x_spline_quadratic` | Spline Quadratic | `spline_tools/spline_quadratic` | preview, spline_coords, spline_data | preview, spline_coords, spline_data, spline_amount |
+| `x_spline_render` | Spline Render | `spline_tools/spline_render` | background, spline_coords, spline_data | output |
+| `x_spline_sample_height` | Spline Sample Height | `spline_tools/spline_sample_height` | preview, spline_coords, spline_data, height_map | preview, spline_coords, spline_data, spline_amount |
+| `x_spline_sample_thickness` | Spline Sample Thickness | `spline_tools/spline_sample_thickness` | preview, spline_coords, spline_data, thickness_map | preview, spline_coords, spline_data, spline_amount |
+| `x_spline_select` | Spline Select | `spline_tools/spline_select` | preview, spline_coords, spline_data | preview, spline_coords, spline_data, spline_amount |
+| `x_spline_warp` | Spline Warp | `spline_tools/spline_warp` | preview, spline_coords, spline_data, intensity_map, vector_map, attenuation_curve | preview, spline_coords, spline_data, spline_amount |
+
+### Material
+
+| Kind | Name | Library graph | Inputs | Outputs |
+| --- | --- | --- | --- | --- |
+| `x_bricks_001` | Bricks 001 | `bricks_001/bricks_001` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_bricks_005` | Bricks 005 | `bricks_005/bricks_005` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_cardboard_001` | Cardboard 001 | `cardboard_001/cardboard_001` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_concrete_002` | Concrete 002 | `concrete_002/concrete_002` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_concrete_006` | Concrete 006 | `concrete_006/concrete_006` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_concrete_010` | Concrete 010 | `concrete_010/concrete_010` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_concrete_011` | Concrete 011 | `concrete_011/concrete_011` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_concrete_044` | Concrete 044 | `concrete_044/concrete_044` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_concrete_070` | Concrete 070 | `concrete_070/concrete_070` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_cracks_weathering` | Cracks Weathering | `cracks_weathering_material/cracks_weathering` | Input_9, Input_13, Input_6, Input, Input_8, Input_11, Input_12, Input_14, Input_2, Input_4, Input_10, Input_5 | Diffuse_1, basecolor, Normal, Specular, Glossiness, Roughness, Metallic, Height, ambient_occlusion |
+| `x_fabric_002` | Fabric 002 | `fabric_002/fabric_002` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_fabric_009` | Fabric 009 | `fabric_009/fabric_009` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_fabric_025` | Fabric 025 | `fabric_025/fabric_025` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_fabric_weathering` | Fabric Weathering | `fabric_weathering_material/fabric_weathering` | Diffuse_1, basecolor_1, Input, Specular_1, Input_1, Input_3, Input_4, Height_1, Input_2, AO, Normal_Wold_Space, Input_12 | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_gravel` | Gravel | `gravel/gravel` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_leather_weathering` | Leather Weathering | `leather_weathering_material/leather_weathering` | Diffuse_1, basecolor_1, Input, Specular_1, Input_1, Input_3, Input_4, Height_1, Input_2, AO, Normal_Wold_Space, Input_12 | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_material_adjustment_blend` | Material Adjustment Blend | `material_adjustment_blend/material_adjustment_blend` | diffuse, basecolor, normal, specular, emissive, glossiness, roughness, metallic, specularlevel, height, ambientocclusion, opacity, Input_20, Input_21 | diffuse, basecolor, normal, specular, emissive, glossiness, roughness, metallic, specularlevel, height, ambientocclusion, opacity |
+| `x_material_clone_patch` | Material Clone Patch | `clone_patch/material_clone_patch` | diffuse, basecolor, normal, specular, emissive, glossiness, roughness, metallic, specular_level, height, ambient_occlusion, opacity, anisotropy_level, anisotropy_angle, mask | diffuse, basecolor, normal, specular, emissive, glossiness, roughness, metallic, specular_level, height, ambient_occlusion, opacity, anisotropy_level, anisotropy_angle, mask, areas_basecolor, areas_normal, areas_height |
+| `x_material_color_blend` | Material Color Blend | `material_color_blend/material_color_blend` | diffuse, basecolor, normal, specular, emissive, glossiness, roughness, metallic, specularlevel, height, ambientocclusion, opacity, Input_20, Input_21 | diffuse, basecolor, normal, specular, emissive, glossiness, roughness, metallic, specularlevel, height, ambientocclusion, opacity |
+| `x_material_crop` | Material Crop | `crop/material_crop` | diffuse, basecolor, normal, specular, emissive, glossiness, roughness, metallic, specular_level, height, ambient_occlusion, opacity, anisotropy_level, anisotropy_angle, mask | diffuse, basecolor, normal, specular, emissive, glossiness, roughness, metallic, specular_level, height, ambient_occlusion, opacity, anisotropy_level, anisotropy_angle, mask, area |
+| `x_material_height_blend` | Material Height Blend | `material_height_blend/material_height_blend` | material2_diffuse, material2_basecolor, material2_normal, material2_specular, material2_emissive, material2_glossiness, material2_roughness, material2_metallic, material2_specularlevel, material2_height, material2_ambientocclusion, material2_opacity, material1_diffuse, material1_basecolor, material1_normal, material1_specular, material1_emissive, material1_glossiness, material1_roughness, material1_metallic, material1_specularlevel, material1_height, material1_ambientocclusion, material1_opacity | diffuse, basecolor, normal, specular, emissive, glossiness, roughness, metallic, specularlevel, height, ambientocclusion, opacity, height_mask |
+| `x_material_mesh_data_blender` | Material Mesh Data Blender | `material_mesh_data_blender/material_mesh_data_blender` | diffuse, basecolor, normal_2, specular, glossiness, roughness, metallic, Input_10, ambient_occlusion_2, ambient_occlusion, curvature, height, normal, vertex_color, normalWS | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_material_selector` | Material Selector | `material_selector/material_selector` | Input | output |
+| `x_material_switch` | Material Switch | `material_switch/material_switch` | material2_diffuse, material2_basecolor, material2_normal, material2_specular, material2_emissive, material2_glossiness, material2_roughness, material2_metallic, material2_specularlevel, material2_height, material2_ambientocclusion, material2_opacity, material1_diffuse, material1_basecolor, material1_normal, material1_specular, material1_emissive, material1_glossiness, material1_roughness, material1_metallic, material1_specularlevel, material1_height, material1_ambientocclusion, material1_opacity | diffuse, basecolor, normal, specular, emissive, glossiness, roughness, metallic, specularlevel, height, ambientocclusion, opacity |
+| `x_material_transform` | Material Transform | `material_transform/material_transform` | Input_12, Input_14, Input_11, Input_15, Input_20, Input_18, Input_13, Input_16, Input_21, Input_10, Input_19, Input_17 | diffuse, basecolor, normal, specular, emissive, glossiness, roughness, metallic, specularlevel, height, ambient_occlusion, opacity |
+| `x_mesh_data_combiner` | Mesh Data Combiner | `mesh_data_combiner/mesh_data_combiner` | ambient_occlusion, curvature, height, position_grayscale, thickness, normal, position, uv_masks, vertex_color, direction, normalWS | ambient_occlusion, curvature, height, position_grayscale, thickness, normal, position, uv_masks, vertex_color, direction, normalWS |
+| `x_metal_002` | Metal 002 | `metal_002/metal_002` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_metal_003` | Metal 003 | `metal_003/metal_003` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_metal_006` | Metal 006 | `metal_006/metal_006` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_metal_plate_001` | Metal Plate 001 | `metal_plate_001/metal_plate_001` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_metal_plate_004` | Metal Plate 004 | `metal_plate_004/metal_plate_004` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_mg_bottom_to_top` | MG Bottom To Top | `mg_bottom_to_top/mg_bottom_to_top` | position, Input, mask | output |
+| `x_mg_cloth_wear` | MG Cloth Wear | `mg_cloth_wear/mg_cloth_wear` | curvature, height, mask | output |
+| `x_mg_dirt` | MG Dirt | `mg_dirt/mg_dirt` | ambient_occlusion, curvature, input, mask, position, world_space_normals | output |
+| `x_mg_dripping_rust` | MG Dripping Rust | `mg_dripping_rust/mg_dripping_rust` | ambientOcclusion, curvature, position, mask_1 | output |
+| `x_mg_dust` | MG Dust | `mg_dust/mg_dust` | ambient_occlusion, normalWS, noise, mask | output |
+| `x_mg_edge_blur` | MG Edge Blur | `mg_edge_blur/mg_edge_blur` | curvature, mask | output |
+| `x_mg_edge_damages` | MG Edge Damages | `mg_edge_damages/mg_edge_damages` | ambient_occlusion, curvature, mask | output |
+| `x_mg_edge_dirt` | MG Edge Dirt | `mg_edge_dirt/mg_edge_dirt` | curvature, variation_mask, mask | output |
+| `x_mg_edge_notch` | MG Edge Notch | `mg_edge_notch/mg_edge_notch` | curvature, mask | output |
+| `x_mg_edge_select` | MG Edge Select | `mg_edge_select/mg_edge_select` | curvature, mask | output |
+| `x_mg_edge_speckle` | MG Edge Speckle | `mg_edge_speckle/mg_edge_speckle` | curvature, variation_mask, mask | output |
+| `x_mg_edge_wear` | MG Edge Wear | `mg_edge_wear/mg_edge_wear` | curvature, mask | output |
+| `x_mg_fiber_glass_edge_wear` | MG Fiber Glass Edge Wear | `mg_fiber_glass_edge_wear/mg_fiber_glass_edge_wear` | ambient_occlusion, curvature, input, mask, position, normalWS | output |
+| `x_mg_grease` | MG Grease | `mg_grease/mg_grease` | thickness, noise, mask | output |
+| `x_mg_ground_dirt` | MG Ground Dirt | `mg_ground_dirt/mg_ground_dirt` | position, mask | output |
+| `x_mg_leaks` | MG Leaks | `mg_leaks/mg_leaks` | ambient_occlusion, curvature, position, normalws, variation_mask, mask | output |
+| `x_mg_leather_wear` | MG Leather Wear | `mg_leather_wear/mg_leather_wear` | ambient_occlusion, curvature, input, mask | output |
+| `x_mg_light` | MG Light | `mg_light/mg_light` | normalWS | output |
+| `x_mg_mask_builder_2` | MG Mask Builder 2 | `mg_mask_builder/mg_mask_builder_2` | ambient_occlusion, curvature, position, normalWS, grunge, grunge2, scatter, mask | output |
+| `x_mg_metal_edge_wear` | MG Metal Edge Wear | `mg_metal_edge_wear/mg_metal_edge_wear` | ambient_occlusion, curvature, position, normalWS, input, mask | output |
+| `x_mg_paint_wear` | MG Paint Wear | `mg_paint_wear/mg_paint_wear` | ambient_occlusion, curvature, variation_mask, mask | output |
+| `x_mg_selective_dirt` | MG Selective Dirt | `mg_selective_dirt/mg_selective_dirt` | curvature, variation_mask, mask | output |
+| `x_mg_sun_bleach` | MG Sun Bleach | `mg_sun_bleach/mg_sun_bleach` | ambient_occlusion, normalws, mask | output |
+| `x_mg_surface_brush` | MG Surface Brush | `mg_surface_brush/mg_surface_brush` | ambient_occlusion, curvature, position, world_space_normal, mask | output |
+| `x_moss_weathering` | Moss Weathering | `moss_weathering_material/moss_weathering` | Input_2, Input_5, Input, Input_7, Input_6, Input_8, Input_9, Input_11, Input_10, Input_3, Input_4, Input_12 | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, ambient_Oolusion, height |
+| `x_multi_material_blend` | Multi Material Blend | `multi_material_blend/multi_material_blend` | material16_diffuse, material16_basecolor, Input_123, material16_specular, material16_emissive, material16_glossiness, material16_roughness, material16_metallic, material16_specularlevel, material16_height, material16_ambientocclusion, material16_opacity, material15_diffuse, material15_basecolor, Input_124, material15_specular, material15_emissive, material15_glossiness, material15_roughness, material15_metallic, material15_specularlevel, material15_height, material15_ambientocclusion, material15_opacity, material14_diffuse, material14_basecolor, Input_126, material14_specular, material14_emissive, material14_glossiness, material14_roughness, material14_metallic, material14_specularlevel, material14_height, material14_ambientocclusion, material14_opacity, material13_diffuse, material13_basecolor, material13_normal, material13_specular, material13_emissive, material13_glossiness, material13_roughness, material13_metallic, material13_specularlevel, material13_height, material13_ambientocclusion, material13_opacity, material12_diffuse, material12_basecolor, material12_normal, material12_specular, material12_emissive, material12_glossiness, material12_roughness, material12_metallic, material12_specularlevel, material12_height, material12_ambientocclusion, material12_opacity, material11_diffuse, material11_basecolor, material11_normal, material11_specular, material11_emissive, material11_glossiness, material11_roughness, material11_metallic, material11_specularlevel, material11_height, material11_ambientocclusion, material11_opacity, material10_diffuse, material10_basecolor, material10_normal, material10_specular, material10_emissive, material10_glossiness, material10_roughness, material10_metallic, material10_specularlevel, material10_height, material10_ambientocclusion, material10_opacity, material9_diffuse, material9_basecolor, material9_normal, material9_specular, material9_emissive, material9_glossiness, material9_roughness, material9_metallic, material9_specularlevel, material9_height, material9_ambientocclusion, material9_opacity, material8_diffuse, material8_basecolor, material8_normal, material8_specular, material8_emissive, material8_glossiness, material8_roughness, material8_metallic, material8_specularlevel, material8_height, material8_ambientocclusion, material8_opacity, material7_diffuse, material7_basecolor, material7_normal, material7_specular, material7_emissive, material7_glossiness, material7_roughness, material7_metallic, material7_specularlevel, material7_height, material7_ambientocclusion, material7_opacity, material6_diffuse, material6_basecolor, material6_normal, material6_specular, material6_emissive, material6_glossiness, material6_roughness, material6_metallic, material6_specularlevel, material6_height, material6_ambientocclusion, material6_opacity, material5_diffuse, material5_basecolor, material5_normal, material5_specular, material5_emissive, material5_glossiness, material5_roughness, material5_metallic, material5_specularlevel, material5_height, material5_ambientocclusion, material5_opacity, material4_diffuse, material4_basecolor, material4_normal, material4_specular, material4_emissive, material4_glossiness, material4_roughness, material4_metallic, material4_specularlevel, material4_height, material4_ambientocclusion, material4_opacity, material3_diffuse, material3_basecolor, material3_normal, material3_specular, material3_emissive, material3_glossiness, material3_roughness, material3_metallic, material3_specularlevel, material3_height, material3_ambientocclusion, material3_opacity, material2_diffuse, material2_basecolor, material2_normal, material2_specular, material2_emissive, material2_glossiness, material2_roughness, material2_metallic, material2_specularlevel, material2_height, material2_ambientocclusion, material2_opacity, material1_diffuse, material1_basecolor, material1_normal, material1_specular, material1_emissive, material1_glossiness, material1_roughness, material1_metallic, material1_specularlevel, material1_height, material1_ambientocclusion, material1_opacity, Input_160 | Diffuse, basecolor, Normal, Specular, Emissive, Glossiness, Roughness, Metallic, specularlevel, AmbientOcclusion, Height, opacity |
+| `x_old_painted_planks` | Old Painted Planks | `old_painted_planks/old_painted_planks` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_painted_metal_weathering` | Painted Metal Weathering | `painted_metal_weathering_material/painted_metal_weathering` | Diffuse, basecolor_1, Normal_High_Poly_1, Specular, Input, Input_1, Input_2, Height, Input_3, Normal_Wold_Space, AO, Input_12 | diffuse, basecolor, normal, Specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_paper_005` | Paper 005 | `paper_005/paper_005` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_pbr_albedo_safe_color` | PBR Albedo Safe Color | `pbr_albedo_safe_color/pbr_albedo_safe_color` | basecolor_diffuse, metallic | output |
+| `x_pbr_base_material` | PBR Base Material | `pbr_base_material/pbr_base_material` | diffuse_input, basecolor_input, normal_input, specular_input, glossiness_input, roughness_input, metallic_input, height_input, ambientOcclusion_input, grunge_input | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambientOcclusion |
+| `x_pbr_basecolor_metallic_validate_2` | PBR Basecolor Metallic Validate 2 | `pbr_basecolor_metallic_validate/pbr_basecolor_metallic_validate_2` | baseColor, metallic | output |
+| `x_pbr_dielectric_f0` | PBR Dielectric F0 | `pbr_dielectric_F0/pbr_dielectric_F0` |  | output |
+| `x_pbr_metal_reflectance` | PBR Metal Reflectance | `pbr_metal_reflectance/pbr_metal_reflectance` |  | output |
+| `x_pbr_render` | PBR Render | `pbr_render2/PBR_render` | basecolor, normal, emissive, roughness, metallic, specularlevel, height, ambient_occlusion, opacity, anisotropyLevel, anisotropyAngle, translucency, scatteringdistancescale, lens_dirt_map, lens_aperture_map, background_input, environment_map | output, raw_irradiance, raw_specular, normalws, normal, uv |
+| `x_pbr_render_mapping_color` | PBR Render Mapping Color | `pbr_render2/PBR_render_mapping_color` | texture, uv | output |
+| `x_pbr_render_mapping_grayscale` | PBR Render Mapping Grayscale | `pbr_render2/PBR_render_mapping_grayscale` | texture, uv | output |
+| `x_rock_weathering` | Rock Weathering | `rock_weathering_material/rock_weathering` | Diffuse, basecolor_1, Input, Specular, Input_1, Input_3, Input_4, Height, Input_2, AO, Curvature, Normal_Wold_Space, Input_12 | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_rough_concrete_with_lines` | Rough Concrete With Lines | `rough_concrete_with_lines/rough_concrete_with_lines` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_rust_weathering` | Rust Weathering | `rust_weathering_material/rust_weathering` | diffuse_1, basecolor_1, normal_1, specular_1, glossiness_1, roughness_1, metallic_1, height_1, ambientOcclusion_1, ambientOcclusion, curvature, position, mask_1 | Diffuse, basecolor, Normal, Specular, Glossiness, Roughness, Metallic, Height, ambient_occlusion |
+| `x_snow_cover` | Snow Cover | `me_snow_cover/snow_cover` | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion, mask | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_tiles_002` | Tiles 002 | `tiles_002/tiles_002` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_tiles_008` | Tiles 008 | `tiles_008/tiles_008` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_tiles_011` | Tiles 011 | `tiles_011/tiles_011` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_tiles_025` | Tiles 025 | `tiles_025/tiles_025` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_water_level` | Water Level | `me_water_level/water_level` | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion, mask | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion, mask |
+| `x_wood_american_cherry` | Wood American Cherry | `wood_american_cherry/wood_american_cherry` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+
 ## Planned node families
 
 Described by what they do; see `RELEASE_PLAN.md` for the order.
 
 - More noises: simplex and ridged 3D noises, and more grunge and dirt recipes.
-- More patterns: brick variants, shape splatter with data extraction.
+- More patterns: brick variants.
 - More adjustments: contrast / luminosity, linear / sRGB conversion, colour lookup tables, histogram select and equalise, frequency tools, pre-multiplied conversion.
-- More effects: UV-aware diffusion variants, extend shape.
-- More transforms: auto crop, polar conversion, clone, noise upscaling, safe and non-square transforms, trapezoid / quad transforms.
+- More effects: UV-aware diffusion variants.
+- More transforms: auto crop, polar conversion, noise upscaling, safe transforms, trapezoid transforms.
 - Normal tools: bent and facing normals, height-normal blending, world-unit height to normal, normal transform.
-- Material tools: PBR validators, layers, more palette tools.
-- Path extras: quadratic and circle helpers, vertex processing.
-- Splines and paths with shape, scatter and mapping nodes.
+- Material tools: layers.

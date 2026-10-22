@@ -903,6 +903,47 @@ pub fn emboss(t: &Tex, angle: f32, intensity: f32) -> Tex {
     })
 }
 
+/// Emboss as Substance Designer's Emboss node does it: the source lit by the slopes of a height map.
+/// Slopes facing the light add the highlight colour, slopes facing away take light out where the shadow colour
+/// is dark; `gloss` (0 = off) adds a sharp specular highlight in the highlight colour.
+pub fn emboss_lit(src: &Tex, height: Option<&Tex>, angle: f32, intensity: f32, hl: [f32; 3], sh: [f32; 3], gloss: f32) -> Tex {
+    let Some(h) = height else { return src.clone() };
+    let (s, c) = (angle * TAU).sin_cos();
+    // light 45 degrees above the surface, towards the light angle
+    let l = {
+        let v = [c, s, 1.0];
+        let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        [v[0] / n, v[1] / n, v[2] / n]
+    };
+    let hv = {
+        let v = [l[0], l[1], l[2] + 1.0];
+        let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        [v[0] / n, v[1] / n, v[2] / n]
+    };
+    let flat_spec = hv[2];
+    let expo = if gloss > 1e-4 { (2.0 / (gloss * gloss)).clamp(2.0, 4096.0) } else { 0.0 };
+    let (w, hh) = (src.w, src.h);
+    Tex::from_fn(w, hh, |u, v| {
+        let p = src.sample(u, v);
+        let x = (u * h.w as f32) as i64;
+        let y = (v * h.h as f32) as i64;
+        let dx = h.gray_at(x + 1, y) - h.gray_at(x - 1, y);
+        let dy = h.gray_at(x, y + 1) - h.gray_at(x, y - 1);
+        let d = (dx * c + dy * s) * intensity;
+        let (lit, shade) = (d.max(0.0), (-d).max(0.0));
+        let mut spec = 0.0;
+        if expo > 0.0 {
+            let n = [-dx * intensity, -dy * intensity, 1.0];
+            let nl = (n[0] * n[0] + n[1] * n[1] + 1.0).sqrt();
+            let ndh = (n[0] * hv[0] + n[1] * hv[1] + n[2] * hv[2]) / nl;
+            // only the part brighter than a flat surface's reflection, so flat areas stay as they are
+            spec = ((ndh.max(0.0).powf(expo) - flat_spec.powf(expo)).max(0.0) * gloss * 2.0).min(1.0);
+        }
+        let ch = |k: usize| (p[k] + hl[k] * (lit + spec) - (1.0 - sh[k]) * shade).clamp(0.0, 1.0);
+        [ch(0), ch(1), ch(2), p[3]]
+    })
+}
+
 // ---------- shapes ----------
 pub fn polygon_sdf(x: f32, y: f32, sides: f32, radius: f32, rot: f32) -> f32 {
     let n = sides.round().max(3.0);
@@ -1981,37 +2022,123 @@ pub fn hbao(h: &Tex, radius_uv: f32, height_scale: f32, dirs: u32, intensity: f3
     drop(g);
     let dirs = dirs.clamp(2, 64) as usize;
     let steps = 14usize;
-    let tab: Vec<(f32, f32)> = (0..dirs).map(|k| ((k as f32 / dirs as f32 * std::f32::consts::TAU).cos(), (k as f32 / dirs as f32 * std::f32::consts::TAU).sin())).collect();
-    // distance, squared distance and falloff of every step, computed once instead of once per pixel and direction
-    let st: Vec<(f32, f32, f32)> = (1..=steps)
-        .map(|j| {
+    // Every pixel looks at the same offsets, so the whole-pixel shift and the bilinear weights of each (direction,
+    // step) are the same for all pixels: they are worked out once here, and a row of pixels is then handled with
+    // straight, contiguous reads that the compiler turns into SIMD code.
+    let mut taps: Vec<HbaoTap> = Vec::with_capacity(dirs * steps);
+    for k in 0..dirs {
+        let a = k as f32 / dirs as f32 * std::f32::consts::TAU;
+        let (dx, dy) = (a.cos(), a.sin());
+        for j in 1..=steps {
             let t = j as f32 / steps as f32;
             let d = radius_uv * t;
-            (d, d * d, 1.0 - t * t)
-        })
-        .collect();
-    let rows = crate::tex::par_map(hh, |y| {
-        let mut row = vec![[0.0f32; 4]; w];
-        for x in 0..w {
-            let (u, v) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / hh as f32);
-            let h0 = p.v[y * w + x];
-            let mut occ = 0.0f32;
-            for &(dx, dy) in &tab {
-                let mut best = 0.0f32;
-                for &(d, d2, falloff) in &st {
-                    let hs = p.sample(u + dx * d, v + dy * d);
-                    let dz = (hs - h0) * height_scale;
-                    let s = dz / (dz * dz + d2).sqrt().max(1e-9);
-                    best = best.max(s * falloff);
-                }
-                occ += best;
-            }
-            let a = (1.0 - occ / dirs as f32 * intensity).clamp(0.0, 1.0);
-            row[x] = [a, a, a, 1.0];
+            let (ox, oy) = (dx * d * w as f32, dy * d * hh as f32);
+            let (fxl, fyl) = (ox.floor(), oy.floor());
+            taps.push(HbaoTap {
+                ix: (fxl as i64).rem_euclid(w as i64) as usize,
+                iy: (fyl as i64).rem_euclid(hh as i64) as usize,
+                fx: ox - fxl,
+                fy: oy - fyl,
+                d2: d * d,
+                falloff: 1.0 - t * t,
+            });
         }
-        row
-    });
+    }
+    let rows = crate::tex::par_map(hh, |y| hbao_row(&p, &taps, dirs, steps, y, height_scale, intensity));
     Tex { w, h: hh, px: rows.concat() }
+}
+
+/// One (direction, step) of the horizon search: the whole-pixel offset (already wrapped into the image), the
+/// fractional part that sets the bilinear weights, and the step's squared distance and falloff.
+struct HbaoTap {
+    ix: usize,
+    iy: usize,
+    fx: f32,
+    fy: f32,
+    d2: f32,
+    falloff: f32,
+}
+
+/// Horizon of one run of pixels: `best[i]` takes the larger of itself and the slope seen through this tap. All the
+/// slices have the same length; `a b / c d` are the four texels the bilinear read blends.
+#[inline(always)]
+fn hbao_run(best: &mut [f32], h0: &[f32], a: &[f32], b: &[f32], c: &[f32], d: &[f32], tap: &HbaoTap, scale: f32) {
+    let n = best.len();
+    let (h0, a, b, c, d) = (&h0[..n], &a[..n], &b[..n], &c[..n], &d[..n]);
+    let (fx, fy, d2, fall) = (tap.fx, tap.fy, tap.d2, tap.falloff);
+    for i in 0..n {
+        let top = a[i] + (b[i] - a[i]) * fx;
+        let bot = c[i] + (d[i] - c[i]) * fx;
+        let hs = top + (bot - top) * fy;
+        let dz = (hs - h0[i]) * scale;
+        let q = (dz * dz + d2).sqrt();
+        let q = if q > 1e-9 { q } else { 1e-9 };
+        let v = dz / q * fall;
+        best[i] = if v > best[i] { v } else { best[i] };
+    }
+}
+
+/// The occlusion of row `y`, as RGBA pixels.
+fn hbao_row(p: &crate::tex::Plane, taps: &[HbaoTap], dirs: usize, steps: usize, y: usize, scale: f32, intensity: f32) -> Vec<[f32; 4]> {
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    {
+        if std::is_x86_feature_detected!("avx2") {
+            // SAFETY: the CPU reports AVX2; the function only reads and writes safe slices
+            return unsafe { hbao_row_avx2(p, taps, dirs, steps, y, scale, intensity) };
+        }
+    }
+    hbao_row_generic(p, taps, dirs, steps, y, scale, intensity)
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+#[target_feature(enable = "avx2")]
+unsafe fn hbao_row_avx2(p: &crate::tex::Plane, taps: &[HbaoTap], dirs: usize, steps: usize, y: usize, scale: f32, intensity: f32) -> Vec<[f32; 4]> {
+    hbao_row_generic(p, taps, dirs, steps, y, scale, intensity)
+}
+
+#[inline(always)]
+fn hbao_row_generic(p: &crate::tex::Plane, taps: &[HbaoTap], dirs: usize, steps: usize, y: usize, scale: f32, intensity: f32) -> Vec<[f32; 4]> {
+    let (w, hh) = (p.w, p.h);
+    let h0 = &p.v[y * w..(y + 1) * w];
+    let mut occ = vec![0.0f32; w];
+    let mut best = vec![0.0f32; w];
+    for k in 0..dirs {
+        best.iter_mut().for_each(|b| *b = 0.0);
+        for tap in &taps[k * steps..(k + 1) * steps] {
+            let ya = (y + tap.iy) % hh;
+            let yb = if ya + 1 == hh { 0 } else { ya + 1 };
+            let (r0, r1) = (&p.v[ya * w..(ya + 1) * w], &p.v[yb * w..(yb + 1) * w]);
+            // pixels x = 0 .. w - ix read columns ix .. w; the rest wrap round to columns 0 ..
+            let first = w - tap.ix;
+            // the last column of the first run has its right neighbour at column 0
+            let n1 = first.saturating_sub(1);
+            if n1 > 0 {
+                let s = tap.ix;
+                hbao_run(&mut best[..n1], &h0[..n1], &r0[s..s + n1], &r0[s + 1..s + 1 + n1], &r1[s..s + n1], &r1[s + 1..s + 1 + n1], tap, scale);
+            }
+            if first >= 1 {
+                // x = first - 1: column w - 1 and its wrapped neighbour 0
+                let x = first - 1;
+                let c = w - 1;
+                let (a, b, cc, d) = ([r0[c]], [r0[0]], [r1[c]], [r1[0]]);
+                hbao_run(&mut best[x..x + 1], &h0[x..x + 1], &a, &b, &cc, &d, tap, scale);
+            }
+            if first < w {
+                // x = first .. w: columns 0 .. ix, neighbours 1 ..= ix
+                let n2 = w - first;
+                hbao_run(&mut best[first..], &h0[first..], &r0[..n2], &r0[1..1 + n2], &r1[..n2], &r1[1..1 + n2], tap, scale);
+            }
+        }
+        for (o, b) in occ.iter_mut().zip(&best) {
+            *o += *b;
+        }
+    }
+    occ.iter()
+        .map(|o| {
+            let a = (1.0 - o / dirs as f32 * intensity).clamp(0.0, 1.0);
+            [a, a, a, 1.0]
+        })
+        .collect()
 }
 
 // ---------- colour quantisation (k-means) ----------

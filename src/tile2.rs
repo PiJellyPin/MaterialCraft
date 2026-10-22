@@ -32,6 +32,31 @@ pub struct Tiles {
     rows: Vec<f32>,
     cols: Vec<Vec<f32>>,
     avg: f32,
+    /// everything that only depends on the tile (not on the pixel), worked out on the first lookup
+    prep: std::sync::OnceLock<Prep>,
+}
+
+/// The shape of one tile, fixed once the settings are: its four corners and the edges between them.
+struct Geom {
+    /// the mask leaves this tile out: height 0 everywhere
+    off: bool,
+    p: [[f32; 2]; 4],
+    /// per edge: its vector, its length (at least 1e-9) and whether it runs mostly along x
+    e: [[f32; 2]; 4],
+    l: [f32; 4],
+    horizontal: [bool; 4],
+    /// corner rounding radius
+    rad: f32,
+}
+
+struct Prep {
+    /// per cell (row * nx + column): where the cell is cut into two stacked halves, if it is
+    cut: Vec<Option<f32>>,
+    /// per cell and half (cell * 2 + half)
+    geoms: Vec<Option<Geom>>,
+    /// no tile reaches over the edge of its cell (no random position, slant, corners or rotation, and not larger than
+    /// the cell), so the point's own cell is the only one that can hold it
+    contained: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -86,6 +111,7 @@ impl Tiles {
             rows,
             cols,
             avg: 1.0 / ((nx * ny) as f32).sqrt(),
+            prep: std::sync::OnceLock::new(),
         }
     }
 
@@ -94,7 +120,8 @@ impl Tiles {
         self.avg
     }
 
-    fn cell_at(&self, x: f32, y: f32) -> Rect {
+    /// The cell holding the point, as the whole cell or the stacked half the point lies in.
+    fn cell_at(&self, prep: &Prep, x: f32, y: f32) -> Rect {
         let (x, y) = (x.rem_euclid(1.0), y.rem_euclid(1.0));
         let j = self.rows.partition_point(|b| *b <= y).saturating_sub(1).min(self.ny as usize - 1);
         let c = &self.cols[j];
@@ -102,8 +129,7 @@ impl Tiles {
         let (y0, y1) = (self.rows[j], self.rows[j + 1]);
         let mut r = Rect { x0: c[i], x1: c[i + 1], y0, y1, id: (i as i32, j as i32, 0) };
         // a tile is sometimes two stacked halves, when the rows are allowed to differ
-        if self.size_y > 0.0 && unit(i as i32, j as i32, self.seed.wrapping_add(21)) < 0.6 * self.size_y {
-            let cut = y0 + (y1 - y0) * (0.35 + 0.3 * unit(i as i32, j as i32, self.seed.wrapping_add(22)));
+        if let Some(cut) = prep.cut[j * self.nx as usize + i] {
             if y < cut {
                 r.y1 = cut;
             } else {
@@ -114,15 +140,58 @@ impl Tiles {
         r
     }
 
-    /// Height of the tile `r` at (x, y) (positions already moved next to the tile: no wrapping inside).
-    fn tile(&self, r: &Rect, x: f32, y: f32) -> f32 {
+    fn prepare(&self) -> Prep {
+        let nx = self.nx as usize;
+        let mut cut = vec![None; nx * self.ny as usize];
+        for j in 0..self.ny as usize {
+            for i in 0..nx {
+                let (y0, y1) = (self.rows[j], self.rows[j + 1]);
+                if self.size_y > 0.0 && unit(i as i32, j as i32, self.seed.wrapping_add(21)) < 0.6 * self.size_y {
+                    cut[j * nx + i] = Some(y0 + (y1 - y0) * (0.35 + 0.3 * unit(i as i32, j as i32, self.seed.wrapping_add(22))));
+                }
+            }
+        }
+        let mut geoms: Vec<Option<Geom>> = Vec::with_capacity(cut.len() * 2);
+        for j in 0..self.ny as usize {
+            for i in 0..nx {
+                let c = &self.cols[j];
+                let (y0, y1) = (self.rows[j], self.rows[j + 1]);
+                for half in 0..2 {
+                    let mut r = Rect { x0: c[i], x1: c[i + 1], y0, y1, id: (i as i32, j as i32, half) };
+                    match (cut[j * nx + i], half) {
+                        (None, 1) => {
+                            geoms.push(None);
+                            continue;
+                        }
+                        (Some(ct), 0) => r.y1 = ct,
+                        (Some(ct), _) => r.y0 = ct,
+                        (None, _) => {}
+                    }
+                    geoms.push(Some(self.geometry(&r)));
+                }
+            }
+        }
+        let contained = self.position == 0.0
+            && self.slant == [0.0, 0.0]
+            && self.corners == 0.0
+            && self.rotation == 0.0
+            && self.rotation_random == 0.0
+            && self.scale <= 1.0
+            && self.scale_random >= 0.0
+            && self.gap >= 0.0;
+        Prep { cut, geoms, contained }
+    }
+
+    /// The shape of the tile `r` (its corners, after scale, position, slant, corner pull and rotation).
+    fn geometry(&self, r: &Rect) -> Geom {
         let (i, j, k) = r.id;
         let key = |n: u32| unit(i.wrapping_mul(31).wrapping_add(k), j, self.seed.wrapping_add(n));
+        let mut off = false;
         if let Some((a, b, invert)) = self.mask {
             // tiles whose random value falls inside the range are kept (outside it, when inverted)
             let m = key(90);
             if (m >= a && m <= b) == invert {
-                return 0.0;
+                off = true;
             }
         }
         let (w, h) = (r.x1 - r.x0, r.y1 - r.y0);
@@ -159,28 +228,42 @@ impl Tiles {
                 *c = [sx + dx * cs - dy * sn, sy + dx * sn + dy * cs];
             }
         }
-        // distance inside each edge, the nearest two decide corners
-        let mut d = [0.0f32; 4];
+        let mut e = [[0.0f32; 2]; 4];
+        let mut l = [0.0f32; 4];
         let mut horizontal = [false; 4];
         for n in 0..4 {
             let (a, b) = (p[n], p[(n + 1) % 4]);
             let (ex, ey) = (b[0] - a[0], b[1] - a[1]);
-            let l = (ex * ex + ey * ey).sqrt().max(1e-9);
-            d[n] = (ex * (y - a[1]) - ey * (x - a[0])) / l;
+            e[n] = [ex, ey];
+            l[n] = (ex * ex + ey * ey).sqrt().max(1e-9);
             horizontal[n] = ex.abs() >= ey.abs();
+        }
+        let rad = (self.radius * 0.5 * (hw.min(hh) * 2.0)).max(0.0);
+        Geom { off, p, e, l, horizontal, rad }
+    }
+
+    /// Height of a tile at (x, y) (positions already moved next to the tile: no wrapping inside).
+    fn tile(&self, g: &Geom, x: f32, y: f32) -> f32 {
+        if g.off {
+            return 0.0;
+        }
+        // distance inside each edge, the nearest two decide corners
+        let mut d = [0.0f32; 4];
+        for n in 0..4 {
+            d[n] = (g.e[n][0] * (y - g.p[n][1]) - g.e[n][1] * (x - g.p[n][0])) / g.l[n];
         }
         let gap = self.gap * self.avg;
         let mut order = [0usize, 1, 2, 3];
         order.sort_by(|a, b| d[*a].partial_cmp(&d[*b]).unwrap_or(std::cmp::Ordering::Equal));
         let (n1, n2) = (order[0], order[1]);
         let mut dist = d[n1];
-        let rad = (self.radius * 0.5 * (hw.min(hh) * 2.0)).max(0.0);
+        let rad = g.rad;
         if rad > 1e-6 && d[n1] < rad && d[n2] < rad && n1 % 2 != n2 % 2 {
             let (u, v) = (rad - d[n1], rad - d[n2]);
             dist = rad - (u * u + v * v).sqrt();
         }
         let dist = dist - gap;
-        let bw = if horizontal[n1] { self.bevel[1] } else { self.bevel[0] }.max(self.px);
+        let bw = if g.horizontal[n1] { self.bevel[1] } else { self.bevel[0] }.max(self.px);
         let t = (dist / bw).clamp(0.0, 1.0);
         let round = (1.0 - (1.0 - t) * (1.0 - t)).max(0.0).sqrt();
         let h = t + (round - t) * self.curve.clamp(0.0, 1.0);
@@ -189,14 +272,19 @@ impl Tiles {
 
     /// The height at (u, v).
     pub fn at(&self, u: f32, v: f32) -> f32 {
+        let prep = self.prep.get_or_init(|| self.prepare());
+        let geom = |r: &Rect| prep.geoms[((r.id.1 as usize) * self.nx as usize + r.id.0 as usize) * 2 + r.id.2 as usize].as_ref();
         // the cell holding the point and the ones just around it (corners and slants reach over the edge)
         let m = self.avg * 0.6;
         let mut best = 0.0f32;
         let mut seen: [((i32, i32, i32), i32, i32); 9] = [((-1, -1, -1), 0, 0); 9];
         let mut n = 0;
-        for (ox, oy) in [(0.0, 0.0), (m, 0.0), (-m, 0.0), (0.0, m), (0.0, -m), (m, m), (-m, m), (m, -m), (-m, -m)] {
+        const AROUND: [(f32, f32); 9] = [(0.0, 0.0), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)];
+        let around = if prep.contained { &AROUND[..1] } else { &AROUND[..] };
+        for &(ox, oy) in around {
+            let (ox, oy) = (ox * m, oy * m);
             let (wx, wy) = (u + ox, v + oy);
-            let r = self.cell_at(wx, wy);
+            let r = self.cell_at(prep, wx, wy);
             // the point in the frame of the cell that was found (the layout repeats every 1.0)
             let (kx, ky) = ((wx.rem_euclid(1.0) - wx).round() as i32, (wy.rem_euclid(1.0) - wy).round() as i32);
             let key = (r.id, kx, ky);
@@ -205,7 +293,9 @@ impl Tiles {
             }
             seen[n] = key;
             n += 1;
-            best = best.max(self.tile(&r, u + kx as f32, v + ky as f32));
+            if let Some(g) = geom(&r) {
+                best = best.max(self.tile(g, u + kx as f32, v + ky as f32));
+            }
         }
         best
     }

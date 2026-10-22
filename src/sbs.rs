@@ -613,6 +613,18 @@ fn read_graph(e: &Element, folder: &str, warnings: &mut Vec<String>) -> Graph {
     }
 }
 
+/// A length-prefixed zlib stream: 4 bytes of big-endian uncompressed length (matching `datalength` when the file
+/// gives it), then a zlib header (deflate, valid check bits).
+fn is_prefixed_zlib(raw: &[u8], datalength: Option<usize>) -> bool {
+    if raw.len() < 7 {
+        return false;
+    }
+    let len = u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize;
+    let (cmf, flg) = (raw[4], raw[5]);
+    let header_ok = cmf & 0x0F == 8 && (((cmf as u16) << 8) | flg as u16) % 31 == 0 && flg & 0x20 == 0;
+    header_ok && datalength.map(|d| d == len).unwrap_or(len > 0)
+}
+
 fn read_resource(e: &Element, folder: &str, warnings: &mut Vec<String>) -> Resource {
     let identifier = e.v("identifier").unwrap_or_default().to_string();
     let embedded = e.path(&["source", "embedded"]).or_else(|| e.path(&["source", "binembedded"])).and_then(|b| {
@@ -625,7 +637,18 @@ fn read_resource(e: &Element, folder: &str, warnings: &mut Vec<String>) -> Resou
                 return None;
             }
         };
-        let fmt = b.v("format").unwrap_or("rawbase64").to_ascii_lowercase();
+        let declared = b.v("format");
+        let fmt = declared.unwrap_or("rawbase64").to_ascii_lowercase();
+        // without a declared format, a binary embedding is a 4-byte big-endian length followed by a zlib stream
+        if declared.is_none() && is_prefixed_zlib(&raw, b.v("datalength").and_then(|v| v.trim().parse::<usize>().ok())) {
+            return match crate::png::inflate(&raw[6..]) {
+                Ok(d) => Some(d),
+                Err(e) => {
+                    warnings.push(format!("resource '{identifier}': {e}"));
+                    None
+                }
+            };
+        }
         if fmt.starts_with("zlib") {
             // zlib stream: 2-byte header, deflate data, 4-byte checksum
             let body = if raw.len() > 2 && raw[0] & 0x0F == 8 { &raw[2..] } else { &raw[..] };

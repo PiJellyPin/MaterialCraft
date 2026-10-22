@@ -62,6 +62,10 @@ pub struct GpuMaps {
     pub emissive: Option<Vec<u8>>,
     /// luminance height (w, h, values)
     pub height: Option<(usize, usize, Arc<Vec<f32>>)>,
+    /// the same height as 16-bit floats, the form the GPU stores it in (converted here, off the paint thread)
+    pub height_half: Option<Vec<u16>>,
+    /// fingerprints of base, normal, rma, emissive and height: a map that did not change is not uploaded again
+    pub hashes: [u64; 5],
 }
 
 pub struct MapInputs<'a> {
@@ -140,7 +144,81 @@ pub fn prepare(m: &MapInputs) -> GpuMaps {
     let emissive = m.emissive.map(|e| rgba(5, Some(e), [0.0, 0.0, 0.0, 1.0]));
     let height = m.height.map(|h| (h.w, h.h, h.px.iter().map(|p| lum(*p)).collect::<Vec<f32>>()));
     let height = height.map(|(w, h, v)| (w, h, Arc::new(v)));
-    GpuMaps { size, base, normal, rma, emissive, height }
+    let height_half = height.as_ref().map(|(_, _, v)| to_half(v));
+    let hashes = [
+        fingerprint(&base, size as u64),
+        fingerprint(&normal, size as u64),
+        fingerprint(&rma, size as u64),
+        emissive.as_ref().map(|e| fingerprint(e, size as u64)).unwrap_or(0),
+        height_half.as_ref().map(|h| fingerprint(bytes_of(h), height.as_ref().map(|x| (x.0 * 65536 + x.1) as u64).unwrap_or(0))).unwrap_or(0),
+    ];
+    GpuMaps { size, base, normal, rma, emissive, height, height_half, hashes }
+}
+
+/// 32-bit floats to 16-bit floats (round to nearest even; values past the 16-bit range become infinity).
+fn f32_to_f16(x: f32) -> u16 {
+    let b = x.to_bits();
+    let sign = ((b >> 16) & 0x8000) as u16;
+    let exp = ((b >> 23) & 0xff) as i32;
+    let man = b & 0x007f_ffff;
+    if exp == 0xff {
+        // infinity or NaN
+        return sign | 0x7c00 | if man != 0 { 0x0200 } else { 0 };
+    }
+    let e = exp - 127 + 15;
+    if e >= 0x1f {
+        return sign | 0x7c00;
+    }
+    if e <= 0 {
+        // below the normal range: a subnormal half, or zero
+        if e < -10 {
+            return sign;
+        }
+        let m = man | 0x0080_0000;
+        let shift = (14 - e) as u32;
+        let half = m >> shift;
+        let rem = m & ((1 << shift) - 1);
+        let mid = 1 << (shift - 1);
+        let up = rem > mid || (rem == mid && (half & 1) == 1);
+        return sign | (half + up as u32) as u16;
+    }
+    let half = ((e as u32) << 10) | (man >> 13);
+    let rem = man & 0x1fff;
+    let up = rem > 0x1000 || (rem == 0x1000 && (half & 1) == 1);
+    // a carry out of the mantissa correctly bumps the exponent (and may reach infinity)
+    sign | (half + up as u32) as u16
+}
+
+fn to_half(v: &[f32]) -> Vec<u16> {
+    const CHUNK: usize = 1 << 16;
+    let parts: Vec<Vec<u16>> = par_map(v.len().div_ceil(CHUNK), |c| v[c * CHUNK..((c + 1) * CHUNK).min(v.len())].iter().map(|x| f32_to_f16(*x)).collect());
+    parts.concat()
+}
+
+/// A fast 64-bit fingerprint of some bytes (and a salt), computed in parallel pieces. It only tells "the same map as
+/// last time" from "a different one", so it is not a cryptographic hash.
+fn fingerprint(bytes: &[u8], salt: u64) -> u64 {
+    const CHUNK: usize = 1 << 20;
+    let parts: Vec<u64> = par_map(bytes.len().div_ceil(CHUNK).max(1), |c| {
+        let piece = &bytes[(c * CHUNK).min(bytes.len())..((c + 1) * CHUNK).min(bytes.len())];
+        let mut h: u64 = 0x9e37_79b9_7f4a_7c15 ^ (c as u64).wrapping_mul(0xff51_afd7_ed55_8ccd);
+        let mut words = piece.chunks_exact(8);
+        for w in &mut words {
+            let x = u64::from_le_bytes([w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]]);
+            h = (h ^ x).wrapping_mul(0x2545_f491_4f6c_dd1d);
+            h ^= h >> 29;
+        }
+        for &b in words.remainder() {
+            h = (h ^ b as u64).wrapping_mul(0x100_0000_01b3);
+        }
+        h
+    });
+    let mut h = salt ^ (bytes.len() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    for p in parts {
+        h = (h ^ p).wrapping_mul(0x2545_f491_4f6c_dd1d);
+        h ^= h >> 32;
+    }
+    h | 1 // never 0, which stands for "no map"
 }
 
 // ------------------------------------------------------------------------------------------------ GL state
@@ -148,6 +226,9 @@ struct Tx {
     id: glow::Texture,
     w: usize,
     h: usize,
+    /// GL internal format, and the fingerprint of the picture it holds (0 = unknown)
+    internal: u32,
+    hash: u64,
 }
 
 struct Prog {
@@ -408,7 +489,7 @@ unsafe fn make_tex(gl: &glow::Context, internal: u32, fmt: u32, ty: u32, w: usiz
     if aniso > 1.0 {
         gl.tex_parameter_f32(glow::TEXTURE_2D, ANISO_PARAM, aniso);
     }
-    Ok(Tx { id, w, h })
+    Ok(Tx { id, w, h, internal, hash: 0 })
 }
 
 /// Sampling state of one texture: filtering, mip maps, wrapping, LOD bias and anisotropy.
@@ -590,16 +671,27 @@ unsafe fn init(gl: &glow::Context, maps: &GpuMaps, aniso_req: f32) -> Result<Res
     let max_samples = gl.get_parameter_i32(glow::MAX_SAMPLES);
     let empty_vao = gl.create_vertex_array()?;
     let s = maps.size;
-    let base = make_tex(gl, glow::SRGB8_ALPHA8, glow::RGBA, glow::UNSIGNED_BYTE, s, s, &maps.base, aniso)?;
-    let normal = make_tex(gl, glow::RGBA8, glow::RGBA, glow::UNSIGNED_BYTE, s, s, &maps.normal, aniso)?;
-    let rma = make_tex(gl, glow::RGBA8, glow::RGBA, glow::UNSIGNED_BYTE, s, s, &maps.rma, aniso)?;
+    let mut base = make_tex(gl, glow::SRGB8_ALPHA8, glow::RGBA, glow::UNSIGNED_BYTE, s, s, &maps.base, aniso)?;
+    base.hash = maps.hashes[0];
+    let mut normal = make_tex(gl, glow::RGBA8, glow::RGBA, glow::UNSIGNED_BYTE, s, s, &maps.normal, aniso)?;
+    normal.hash = maps.hashes[1];
+    let mut rma = make_tex(gl, glow::RGBA8, glow::RGBA, glow::UNSIGNED_BYTE, s, s, &maps.rma, aniso)?;
+    rma.hash = maps.hashes[2];
     let emis = match &maps.emissive {
-        Some(e) => Some(make_tex(gl, glow::SRGB8_ALPHA8, glow::RGBA, glow::UNSIGNED_BYTE, s, s, e, aniso)?),
+        Some(e) => {
+            let mut t = make_tex(gl, glow::SRGB8_ALPHA8, glow::RGBA, glow::UNSIGNED_BYTE, s, s, e, aniso)?;
+            t.hash = maps.hashes[3];
+            Some(t)
+        }
         None => None,
     };
-    let height = match &maps.height {
-        Some((w, h, v)) => Some(make_tex(gl, glow::R16F, glow::RED, glow::FLOAT, *w, *h, bytes_of(&v[..]), aniso)?),
-        None => None,
+    let height = match (&maps.height, &maps.height_half) {
+        (Some((w, h, _)), Some(v)) => {
+            let mut t = make_tex(gl, glow::R16F, glow::RED, glow::HALF_FLOAT, *w, *h, bytes_of(&v[..]), aniso)?;
+            t.hash = maps.hashes[4];
+            Some(t)
+        }
+        _ => None,
     };
     let dummy_h = make_tex(gl, glow::R16F, glow::RED, glow::FLOAT, 1, 1, bytes_of(&[0.0f32]), 1.0)?;
     // 1x1 stand-in so the shadow sampler is always complete
@@ -635,34 +727,56 @@ unsafe fn free_tex(gl: &glow::Context, t: &Tx) {
     gl.delete_texture(t.id);
 }
 
+/// Puts a picture into a texture slot. The texture already there is kept when it holds the same picture, refilled
+/// in place when only the picture changed, and replaced when its size or format changed.
+#[allow(clippy::too_many_arguments)]
+unsafe fn put_tex(gl: &glow::Context, slot: &mut Tx, internal: u32, fmt: u32, ty: u32, w: usize, h: usize, data: &[u8], hash: u64, aniso: f32) -> Result<(), String> {
+    if slot.w == w && slot.h == h && slot.internal == internal {
+        if slot.hash == 0 || slot.hash != hash {
+            gl.bind_texture(glow::TEXTURE_2D, Some(slot.id));
+            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+            gl.tex_sub_image_2d(glow::TEXTURE_2D, 0, 0, 0, w as i32, h as i32, fmt, ty, glow::PixelUnpackData::Slice(Some(data)));
+            gl.generate_mipmap(glow::TEXTURE_2D);
+            slot.hash = hash;
+        }
+        return Ok(());
+    }
+    let mut t = make_tex(gl, internal, fmt, ty, w, h, data, aniso)?;
+    t.hash = hash;
+    free_tex(gl, slot);
+    *slot = t;
+    Ok(())
+}
+
+/// Same for a slot that may be empty.
+#[allow(clippy::too_many_arguments)]
+unsafe fn put_opt(gl: &glow::Context, slot: &mut Option<Tx>, internal: u32, fmt: u32, ty: u32, size: Option<(usize, usize)>, data: Option<&[u8]>, hash: u64, aniso: f32) -> Result<(), String> {
+    match (slot.as_mut(), size, data) {
+        (Some(t), Some((w, h)), Some(d)) => put_tex(gl, t, internal, fmt, ty, w, h, d, hash, aniso),
+        (None, Some((w, h)), Some(d)) => {
+            let mut t = make_tex(gl, internal, fmt, ty, w, h, d, aniso)?;
+            t.hash = hash;
+            *slot = Some(t);
+            Ok(())
+        }
+        _ => {
+            if let Some(t) = slot.take() {
+                free_tex(gl, &t);
+            }
+            Ok(())
+        }
+    }
+}
+
 unsafe fn upload_maps(gl: &glow::Context, r: &mut Res, maps: &GpuMaps, aniso_req: f32) -> Result<(), String> {
     let aniso = if aniso_req <= 0.0 { r.max_aniso } else { aniso_req.min(r.max_aniso) };
     let s = maps.size;
-    let base = make_tex(gl, glow::SRGB8_ALPHA8, glow::RGBA, glow::UNSIGNED_BYTE, s, s, &maps.base, aniso)?;
-    let normal = make_tex(gl, glow::RGBA8, glow::RGBA, glow::UNSIGNED_BYTE, s, s, &maps.normal, aniso)?;
-    let rma = make_tex(gl, glow::RGBA8, glow::RGBA, glow::UNSIGNED_BYTE, s, s, &maps.rma, aniso)?;
-    let emis = match &maps.emissive {
-        Some(e) => Some(make_tex(gl, glow::SRGB8_ALPHA8, glow::RGBA, glow::UNSIGNED_BYTE, s, s, e, aniso)?),
-        None => None,
-    };
-    let height = match &maps.height {
-        Some((w, h, v)) => Some(make_tex(gl, glow::R16F, glow::RED, glow::FLOAT, *w, *h, bytes_of(&v[..]), aniso)?),
-        None => None,
-    };
-    free_tex(gl, &r.base);
-    free_tex(gl, &r.normal);
-    free_tex(gl, &r.rma);
-    if let Some(t) = &r.emis {
-        free_tex(gl, t);
-    }
-    if let Some(t) = &r.height {
-        free_tex(gl, t);
-    }
-    r.base = base;
-    r.normal = normal;
-    r.rma = rma;
-    r.emis = emis;
-    r.height = height;
+    put_tex(gl, &mut r.base, glow::SRGB8_ALPHA8, glow::RGBA, glow::UNSIGNED_BYTE, s, s, &maps.base, maps.hashes[0], aniso)?;
+    put_tex(gl, &mut r.normal, glow::RGBA8, glow::RGBA, glow::UNSIGNED_BYTE, s, s, &maps.normal, maps.hashes[1], aniso)?;
+    put_tex(gl, &mut r.rma, glow::RGBA8, glow::RGBA, glow::UNSIGNED_BYTE, s, s, &maps.rma, maps.hashes[2], aniso)?;
+    put_opt(gl, &mut r.emis, glow::SRGB8_ALPHA8, glow::RGBA, glow::UNSIGNED_BYTE, Some((s, s)).filter(|_| maps.emissive.is_some()), maps.emissive.as_deref(), maps.hashes[3], aniso)?;
+    let hs = maps.height.as_ref().map(|(w, h, _)| (*w, *h));
+    put_opt(gl, &mut r.height, glow::R16F, glow::RED, glow::HALF_FLOAT, hs, maps.height_half.as_deref().map(bytes_of), maps.hashes[4], aniso)?;
     Ok(())
 }
 

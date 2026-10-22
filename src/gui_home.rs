@@ -1986,11 +1986,15 @@ impl eframe::App for App {
             // a value changed this frame: show it at once with a cheap pass over just the on-screen nodes, and
             // (re)arm the settle timer so the passes over the whole graph run only once the input stops moving
             self.dirty = false;
+            if let Ok(mut t) = EDIT_AT.lock() {
+                *t = Some(now);
+            }
             self.refine = false;
             self.thumbs_due = true;
             self.final_due = true;
             self.settle_at = Some(now + SETTLE);
-            let first = self.first_tier();
+            let first = self.interactive_size();
+            self.maps_size = 0;
             self.spawn_eval(first, Pass::Interactive);
         } else if self.job.is_none() {
             let settled = self.settle_at.map_or(true, |t| now >= t);
@@ -2006,12 +2010,20 @@ impl eframe::App for App {
                     self.spawn_eval(sz, Pass::Interactive);
                 }
             } else if settled && self.final_due {
-                // the outputs at the full preview size: the final 3D maps
-                self.final_due = false;
-                self.settle_at = None;
-                let size = self.target_3d().max(self.preview_full());
-                if size > self.first_tier() {
-                    self.spawn_eval(size, Pass::Final);
+                // the outputs at the full preview size: the final 3D maps. They get there in steps of at most
+                // double the size, so the 3D view sharpens as soon as each step is done instead of after the last
+                let target = self.target_3d().max(self.preview_full());
+                let have = self.maps_size.max(self.first_tier());
+                if have >= target {
+                    self.final_due = false;
+                    self.settle_at = None;
+                } else {
+                    let next = (have * 2).min(target);
+                    if next >= target {
+                        self.final_due = false;
+                        self.settle_at = None;
+                    }
+                    self.spawn_eval(next, Pass::Final);
                 }
             }
         }
