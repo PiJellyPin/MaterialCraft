@@ -825,9 +825,11 @@ pub fn edge_detect_ex(t: &Tex, width: f32, roundness: f32, invert: bool, toleran
         let gx = -g.gray_at(x - 1, y - 1) - 2.0 * g.gray_at(x - 1, y) - g.gray_at(x - 1, y + 1) + g.gray_at(x + 1, y - 1) + 2.0 * g.gray_at(x + 1, y) + g.gray_at(x + 1, y + 1);
         let gy = -g.gray_at(x - 1, y - 1) - 2.0 * g.gray_at(x, y - 1) - g.gray_at(x + 1, y - 1) + g.gray_at(x - 1, y + 1) + 2.0 * g.gray_at(x, y + 1) + g.gray_at(x + 1, y + 1);
         let m = (gx * gx + gy * gy).sqrt() * 0.25;
-        let k = tolerance.clamp(0.0, 0.999);
-        // everything below the tolerance is no edge; a step of the tolerance size already counts as a full edge
-        let o = if m <= k * 0.5 { 0.0 } else { ((m - k * 0.5) / (0.5 * (1.0 - k)).max(1e-3)).clamp(0.0, 1.0) };
+        // Sensitive by default: any step of about three grey levels is an edge, so soft height maps show lines too;
+        // the tolerance raises the smallest step that counts (quadratically, up to a full black / white step).
+        let k = tolerance.clamp(0.0, 1.0);
+        let thr = 0.012 + k * k * 0.5;
+        let o = ((m - thr) / thr.max(0.02)).clamp(0.0, 1.0);
         [o, o, o, 1.0]
     });
     let mut d = dilate(&e, ((width.max(1.0) - 1.0) * 0.5).round() as i64);
