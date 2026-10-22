@@ -4,9 +4,10 @@ Roadmap items are listed in no particular order. Milestone tracking will be avai
 
 ## Initial Release
 
-- [ ] Use `.sbs` as the standard project format, interoperable with [Adobe Substance 3D Designer](https://experienceleague.adobe.com/en/docs/substance-3d-designer/using/getting-started/overview/overview).
-- [ ] Support all native Adobe Substance 3D Designer nodes, including [atomic and library nodes](https://experienceleague.adobe.com/en/docs/substance-3d-designer/using/substance-graphs/nodes-reference-for-substance-graphs/nodes-reference-for-substance-compositing-graphs) and [function nodes](https://experienceleague.adobe.com/en/docs/substance-3d-designer/using/substance-function-graphs/nodes-reference-for-substance-function-graphs/function-nodes-overview).
+- [x] Use `.sbs` as the standard project format, interoperable with [Adobe Substance 3D Designer](https://experienceleague.adobe.com/en/docs/substance-3d-designer/using/getting-started/overview/overview).
+- [x] Support all native Adobe Substance 3D Designer nodes, including [atomic and library nodes](https://experienceleague.adobe.com/en/docs/substance-3d-designer/using/substance-graphs/nodes-reference-for-substance-graphs/nodes-reference-for-substance-compositing-graphs) and [function nodes](https://experienceleague.adobe.com/en/docs/substance-3d-designer/using/substance-function-graphs/nodes-reference-for-substance-function-graphs/function-nodes-overview).
 - [ ] Provide a complete workflow from project creation through editing, previewing, saving, and export, with minimum necessary keyboard shortcuts, buttons, menus, and panels.
+- [x] Have sample HDRI panoramas
 - [ ] Export [MaterialX](https://materialx.org/Specification.html) (`.mtlx`) and image files only, with controls matching [Adobe Substance 3D Designer](https://experienceleague.adobe.com/en/docs/substance-3d-designer/using/substance-graphs/exporting-bitmaps)
 - [ ] Verified [Unreal Engine support](https://dev.epicgames.com/documentation/unreal-engine/importing-materialx-files-in-unreal-engine).
 
