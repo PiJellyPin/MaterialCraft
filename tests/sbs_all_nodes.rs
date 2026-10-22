@@ -33,9 +33,9 @@ fn original() -> Graph {
     let source = std::fs::read_to_string(&path).expect("read all_nodes.sbs");
     let package = materialcraft::sbs::Package::parse(&source).expect("parse all_nodes.sbs");
     assert_eq!(package.graphs.len(), 1, "{FIXTURE}: package graph inventory changed");
-    assert_eq!(package.resources.len(), 36, "{FIXTURE}: resource inventory changed");
+    assert_eq!(package.resources.len(), 6, "{FIXTURE}: resource inventory changed"); // PNG, embedded SVG and four panorama EXRs.
     let g = open(&path, "import");
-    assert_eq!(g.nodes.len(), 566, "{FIXTURE}: import lost compositing nodes or the fixture inventory changed");
+    assert_eq!(g.nodes.len(), 536, "{FIXTURE}: import lost compositing nodes or the fixture inventory changed");
     assert_eq!(g.nodes.values().map(|n| n.ins.len()).sum::<usize>(), 6, "{FIXTURE}: import changed the connection inventory");
     let mut outputs: Vec<_> = g.output_nodes().into_iter().map(|(_, name, _)| name).collect();
     outputs.sort();
@@ -289,7 +289,7 @@ fn all_nodes_import_maps_and_renders_every_node() {
         rendered.kept.len(),
         rendered.errors.len()
     );
-    diagnostic.push_str("Output rendering alone is insufficient: this fixture has 553 disconnected nodes.\nSuccessful gray placeholders do not count as implemented nodes.\n");
+    diagnostic.push_str("Output rendering alone is insufficient: this fixture has 523 disconnected nodes.\nSuccessful gray placeholders do not count as implemented nodes.\n");
     for (section, details) in &failures {
         let _ = write!(diagnostic, "\n{section} ({} diagnostics):\n", details.len());
         for detail in details {
