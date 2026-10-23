@@ -1734,11 +1734,10 @@ impl Cx {
                 c
             }
             "blur" => {
-                let mut c = Conv::new("blur", Level::Approx).slot("input1", "in");
-                // the format's intensity counts the reach of the blur in pixels of a 256-pixel image; ours is the standard
-                // deviation of a Gaussian (the reach is about three of them) in pixels of a 512-pixel image
-                c.lin(p, "intensity", 10.0, "radius", 2.0 / 3.0, 0.0);
-                c.notes.push((Level::Approx, "blur strength is converted (intensity / 1.5 as a Gaussian deviation); compare with a reference render".into()));
+                let mut c = Conv::new("blur", Level::Info).slot("input1", "in");
+                // measured on the original: a box filter whose full width is 2 x intensity pixels (the same at 256 and 512);
+                // a Gaussian of equal variance has a deviation of width / sqrt(12)
+                c.lin(p, "intensity", 10.0, "radius", 2.0 / 12f32.sqrt(), 0.0);
                 c
             }
             "sharpen" => {
@@ -1817,8 +1816,11 @@ impl Cx {
                 c
             }
             "normal" => {
-                let mut c = Conv::new("normal", Level::Approx).slot("input1", "in");
-                c.lin(p, "intensity", 1.0, "strength", 2.0, 0.0);
+                let mut c = Conv::new("normal", Level::Info).slot("input1", "in");
+                // measured against the original: a height ramp of slope 1 per picture width tilts the normal by
+                // intensity / 256 at every resolution, and our strength tilts it by strength * 0.05 (see
+                // `ops::normal_from_height`), so strength = intensity / 12.8
+                c.lin(p, "intensity", 1.0, "strength", 1.0 / 12.8, 0.0);
                 // the flag inverts the Y slope relative to the program's own (DirectX) convention: set = OpenGL
                 c.num("directx", if int("inversedy", 0) != 0 { 0.0 } else { 1.0 });
                 c.num("alpha_from_input", if int("input2alpha", 0) != 0 { 1.0 } else { 0.0 });

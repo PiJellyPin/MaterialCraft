@@ -1463,8 +1463,9 @@ impl App {
 
     fn first_tier(&self) -> usize {
         let full = self.preview_full();
-        if full > 256 {
-            256
+        // thin lines (edges, borders) look the same on a card as in the 2D view only from about 512 pixels up
+        if full > 512 {
+            512
         } else {
             full
         }
