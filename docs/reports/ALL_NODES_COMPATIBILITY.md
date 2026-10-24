@@ -4,6 +4,8 @@
 
 The previous run of this report found 207 unconverted nodes, 35 unresolved images, 28 missing definitions, an undecodable SVG, an empty value processor and an ignored output-size function. [What changed](#what-changed-since-the-previous-report) addresses each finding. [The complete node mapping](ALL_NODES_NODE_MAPPING.md) lists all 566 nodes.
 
+**Subsequent fixture update:** The 34 unavailable HDRI references and bitmap nodes have been replaced with four EXRs from `assets/panorama/`. The missing `Untitled_Bitmap` PNG now uses the logo from `assets/logo.png`. All five references store only their filenames, allowing lookup in the package folders and fallback to application `assets/` and `assets/panorama/` folders. The current fixture has 536 compositing nodes and six resources. All four panoramas and the logo resolve and render through direct import and native conversion. The audit counts and missing-file list below describe the earlier fixture.
+
 ## Run and reproduction
 
 - Completed: `2026-10-21`.

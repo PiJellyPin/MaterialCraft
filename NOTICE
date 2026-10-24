@@ -11,6 +11,8 @@ list (author, source, license) is in ATTRIBUTION.md.
 libwebp data tables (src/webp_tables.rs) — BSD-3-Clause, Copyright (c) 2010, Google Inc. All rights reserved. See src/LICENSE-libwebp.
 DirectXTex data tables (src/dds_tables.rs) — MIT, Copyright (c) Microsoft Corporation. See src/LICENSE-DirectXTex.
 
+OpenEXR import/export (exr crate) — BSD-3-Clause, Copyright (c) Contributors to the exrs and OpenEXR projects. All rights reserved. See src/LICENSE-exr.
+
 GUI builds embed fonts from epaint_default_fonts: Hack (MIT and Bitstream Vera License;
 DejaVu contributions are public domain), Ubuntu-Light (Ubuntu Font Licence 1.0),
 NotoEmoji-Regular (SIL Open Font License 1.1), and emoji-icon-font (MIT).

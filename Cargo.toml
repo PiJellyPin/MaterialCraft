@@ -27,6 +27,7 @@ craft-cms = { git = "https://github.com/storytold/craft-libs", rev = "04e83f095a
 craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "04e83f095ab080c5672243514f9a44ca6364b0e2", optional = true, features = ["serde"] }
 craft-quit = { git = "https://github.com/storytold/craft-libs", rev = "04e83f095ab080c5672243514f9a44ca6364b0e2", optional = true, features = ["egui"] }
 serde = { version = "1", features = ["derive"], optional = true }
+exr = { version = "1.74", default-features = false }
 
 [[bin]]
 name = "materialcraft"
