@@ -18,6 +18,7 @@ Note: Initial MaterialX exports may not fully reproduce advanced node graph beha
 - [ ] Build on [craft-libs](https://github.com/storytold/craft-libs) for shared controls, settings, color management, safe saving, translations, and AI features; contribute reusable improvements upstream.
 - [ ] Follow ArtCraft conventions for installation, launcher support, updates, and user experience.
 - [ ] Become an official [ArtCraft application](https://getartcraft.com/apps).
+- [ ] Support for Android and Web deployments
 
 ## Optimized MaterialX Graphs
 
