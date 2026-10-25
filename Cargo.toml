@@ -1,6 +1,6 @@
 [package]
 name = "materialcraft"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "Procedural, node-based material authoring engine in pure Rust"
 license = "MIT OR Apache-2.0"
