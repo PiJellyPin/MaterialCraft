@@ -37,11 +37,19 @@ fn renders(g: &Graph, expected: [f32; 4], context: &str) {
     assert!(t.px.iter().all(|p| p.iter().zip(expected).all(|(a, b)| (a - b).abs() <= 1.0 / 255.0)), "{context}: wrong image, first pixel {:?}", t.px[0]);
 }
 
+fn assert_same_file(found: Option<PathBuf>, expected: &Path, context: &str) {
+    let found = found.unwrap_or_else(|| panic!("{context}: expected {} to resolve", expected.display()));
+    // current_dir/current_exe can resolve symlinks, including macOS's /var -> /private/var.
+    // Both files must exist, and a different target must still fail the lookup-priority checks.
+    let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|e| panic!("{context}: cannot resolve {}: {e}", p.display()));
+    assert_eq!(canonical(&found), canonical(expected), "{context}: resolved {}, expected {}", found.display(), expected.display());
+}
+
 fn imported_and_native(path: &Path, expected_file: &Path, color: [f32; 4]) {
     let source = std::fs::read_to_string(path).unwrap();
     let imported = sbs_import::import_file(path).unwrap();
     assert!(!imported.report.notes.iter().any(|n| n.text.contains("Untitled_Bitmap")), "{}: unexpected diagnostics:\n{}", path.display(), imported.report.to_text());
-    assert_eq!(imported.graph.nodes[&BITMAP].strs.get("file").map(PathBuf::from), Some(expected_file.to_path_buf()), "{}: wrong resolved image", path.display());
+    assert_same_file(imported.graph.nodes[&BITMAP].strs.get("file").map(PathBuf::from), expected_file, &format!("{}: wrong resolved image", path.display()));
     renders(&imported.graph, color, "direct import");
     let (native, warnings) = sbs_native::open(path).unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
@@ -148,35 +156,46 @@ fn application_assets_recover_images_and_package_files_take_priority() {
             let name = file.file_name().unwrap().to_str().unwrap();
             let stored = format!("sd-3dview-maps://{name}");
             let path = package(&root.join("project"), &stored);
-            assert_eq!(resources::resolve(&stored), Some(file.clone()), "renderer must search application assets");
+            assert_same_file(resources::resolve(&stored), &file, "renderer must search application assets");
             imported_and_native(&path, &file, COLOR);
 
             let local = root.join("project").join(name);
             picture(&local, [0.8, 0.2, 0.4, 1.0]);
             imported_and_native(&path, &local, [0.8, 0.2, 0.4, 1.0]);
             resources::set_search_dirs(vec![root.join("project")]);
-            assert_eq!(resources::resolve(&stored), Some(local), "package-local images must win over app assets");
+            assert_same_file(resources::resolve(&stored), &local, "package-local images must win over app assets");
             resources::set_search_dirs(vec![]);
         }
         return;
     }
 
+    let run = |root: &Path| {
+        for relative in FILES {
+            picture(&root.join(relative), COLOR);
+        }
+        // Direct assets win over panorama fallback within the same installation.
+        picture(&root.join("app/assets/panorama/exe_image.png"), [1.0, 0.0, 0.0, 1.0]);
+        picture(&root.join("working/assets/exe_panorama.png"), [1.0, 0.0, 0.0, 1.0]);
+        // An identically named fallback in the working directory must not override executable assets.
+        picture(&root.join("working/assets/exe_image.png"), [1.0, 0.0, 0.0, 1.0]);
+        let exe = root.join("app").join(format!("resource_test{}", std::env::consts::EXE_SUFFIX));
+        std::fs::copy(std::env::current_exe().unwrap(), &exe).unwrap();
+        let result = std::process::Command::new(exe)
+            .args(["--exact", "application_assets_recover_images_and_package_files_take_priority", "--nocapture"])
+            .current_dir(root.join("working"))
+            .env(CHILD, root)
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "isolated application-assets lookup failed:\n{}\n{}", String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
+    };
     let temp = TempDir::new();
-    for relative in FILES {
-        picture(&temp.0.join(relative), COLOR);
+    run(&temp.0);
+    #[cfg(unix)]
+    {
+        // Reproduce macOS's /var -> /private/var alias on every Unix test runner.
+        let real = TempDir::new();
+        let alias = temp.0.join("symlinked");
+        std::os::unix::fs::symlink(&real.0, &alias).unwrap();
+        run(&alias);
     }
-    // Direct assets win over panorama fallback within the same installation.
-    picture(&temp.0.join("app/assets/panorama/exe_image.png"), [1.0, 0.0, 0.0, 1.0]);
-    picture(&temp.0.join("working/assets/exe_panorama.png"), [1.0, 0.0, 0.0, 1.0]);
-    // An identically named fallback in the working directory must not override executable assets.
-    picture(&temp.0.join("working/assets/exe_image.png"), [1.0, 0.0, 0.0, 1.0]);
-    let exe = temp.0.join("app").join(format!("resource_test{}", std::env::consts::EXE_SUFFIX));
-    std::fs::copy(std::env::current_exe().unwrap(), &exe).unwrap();
-    let result = std::process::Command::new(exe)
-        .args(["--exact", "application_assets_recover_images_and_package_files_take_priority", "--nocapture"])
-        .current_dir(temp.0.join("working"))
-        .env(CHILD, &temp.0)
-        .output()
-        .unwrap();
-    assert!(result.status.success(), "isolated application-assets lookup failed:\n{}\n{}", String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
 }
