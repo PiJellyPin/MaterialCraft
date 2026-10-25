@@ -20,6 +20,11 @@ package (the first graph without it).
                   [--param \"name=value\"]... [--variations N] [--preview] [--render3d]
                   [--format png|jpg|tiff|exr|hdr] [--quality 1-100] [--only basecolor,normal]
                   [--colorspace srgb|p3|wide|romm|rec2020|linear]
+  materialcraft export-mtlx <package.sbs[#name]> <outdir> [--size N] [--shader standard|openpbr] [--normal directx|opengl]
+                  [--depth 8|16] [--no-displacement] [--displacement-scale F] [--bake-ao] [--tiling X,Y] [--name N]
+                  MaterialX (1.39) material for Unreal Engine 5.8 and other tools: a .mtlx file plus its textures;
+                  `export-mtlx calibration <outdir>` writes a test material (colour chart with an arrow, roughness ramp,
+                  metal half, raised dome) to check UV orientation, colour space and normal direction in the engine
   materialcraft render3d <package.sbs[#name]> <out.png> [options]   3D picture / turntable (raster or path traced), see: materialcraft render3d --help
   materialcraft review  <package.sbs[#name]> <out.png> [--reference image] [--json out.json]   review sheet: 3D preview, maps,
                   node graph with thumbnails, comparison with a reference picture (numbers and hints), the graph as text
@@ -40,6 +45,51 @@ The visual editor is a separate binary:  cargo run --release --features gui --bi
 
 fn write_png(path: &Path, t: &Tex, depth: u8) -> Result<(), String> {
     materialcraft::safeio::write_file(path, &png::encode(t.w, t.h, &t.px, depth)).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn mtlx_cli(args: &[String]) -> Result<(), String> {
+    use materialcraft::mtlx::{self, NormalY, Shader};
+    let gp = args.first().ok_or("usage: materialcraft export-mtlx <package.sbs[#name]|calibration> <outdir> [options]")?;
+    let dir = args.get(1).ok_or("missing <outdir>")?;
+    let g = if gp == "calibration" { None } else { Some(load(gp)?) };
+    let mut o = mtlx::Options::default();
+    let mut i = 2;
+    while i < args.len() {
+        let flag = args[i].clone();
+        let mut val = |what: &str| -> Result<String, String> {
+            i += 1;
+            args.get(i).cloned().ok_or(format!("{flag} needs {what}"))
+        };
+        match flag.as_str() {
+            "--size" => o.size = Some(val("a number")?.parse().map_err(|_| "--size needs a number")?),
+            "--shader" => o.shader = Shader::parse(&val("standard or openpbr")?).ok_or("--shader must be standard or openpbr")?,
+            "--normal" => o.normal = NormalY::parse(&val("directx or opengl")?).ok_or("--normal must be directx or opengl")?,
+            "--depth" => o.depth = val("8 or 16")?.parse().map_err(|_| "--depth must be 8 or 16")?,
+            "--no-displacement" => o.displacement = false,
+            "--displacement-scale" => o.displacement_scale = val("a number")?.parse().map_err(|_| "--displacement-scale needs a number")?,
+            "--bake-ao" => o.bake_ao = true,
+            "--tiling" => {
+                let v = val("X,Y")?;
+                let (a, b) = v.split_once(',').ok_or("--tiling needs X,Y")?;
+                o.tiling = [a.trim().parse().map_err(|_| "bad --tiling")?, b.trim().parse().map_err(|_| "bad --tiling")?];
+            }
+            "--name" => o.name = Some(val("a name")?),
+            x => return Err(format!("unknown option '{x}'")),
+        }
+        i += 1;
+    }
+    let r = match &g {
+        Some(g) => mtlx::export(g, Path::new(dir), &o)?,
+        None => mtlx::calibration(Path::new(dir), &o)?,
+    };
+    for f in &r.files {
+        println!("wrote {}", f.display());
+    }
+    println!("wrote {}", r.mtlx.display());
+    for w in &r.warnings {
+        println!("note: {w}");
+    }
+    Ok(())
 }
 
 fn load(path: &str) -> Result<Graph, String> {
@@ -371,6 +421,7 @@ fn run(args: &[String]) -> Result<(), String> {
         Some("bake") => bake_cli(&args[1..]),
         Some("render3d") => materialcraft::cli3d::run(&args[1..], &load),
         Some("review") => review_cli(&args[1..]),
+        Some("export-mtlx") => mtlx_cli(&args[1..]),
         Some("render") => {
             let gp = args.get(1).ok_or("usage: materialcraft render <graph> <outdir> [options]")?;
             let dir = args.get(2).ok_or("missing <outdir>")?;

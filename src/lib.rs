@@ -8,6 +8,7 @@ pub mod cli3d;
 pub mod safeio;
 #[cfg(any(feature = "cms", feature = "craft"))]
 pub mod colorspace;
+pub mod mtlx;
 pub mod export;
 pub mod curve;
 pub mod expr;

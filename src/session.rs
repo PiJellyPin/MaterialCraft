@@ -348,6 +348,7 @@ pub const COMMANDS: &[Command] = &[
         kind: Kind::Query,
         run: c_render_review,
     },
+    Command { id: "export.materialx", doc: "Write the graph as a MaterialX 1.39 material (.mtlx file plus textures in a sub-folder) that Unreal Engine 5.8 imports: colour maps are tagged srgb_texture, the normal map goes through a normalmap node, height becomes a displacement shader.", args: &[arg!("dir", "string", true, "folder"), arg!("size", "integer", false, "resolution (default: the graph's size)"), arg!("shader", "string", false, "standard (default, Standard Surface) or openpbr"), arg!("normal", "string", false, "directx (default) or opengl: the green channel of the written normal map"), arg!("depth", "integer", false, "8 (default) or 16"), arg!("displacement", "boolean", false, "write the height map as a displacement shader (default true)"), arg!("bake_ao", "boolean", false, "multiply ambient occlusion into the base colour (default false)"), arg!("name", "string", false, "material name (default: the graph's identifier)")], kind: Kind::Query, run: c_export_materialx },
     Command { id: "export", doc: "Write the output maps of a graph to a folder as image files (any graph of the package with its `graph` parameter).", args: &[arg!("dir", "string", true, "folder"), arg!("size", "integer", false, "resolution (default: the graph's size)"), arg!("format", "string", false, "png (default), jpg, tiff, exr, hdr"), arg!("depth", "integer", false, "8, 16 or 32")], kind: Kind::Query, run: c_export },
     // ---- history
     Command { id: "edit.undo", doc: "Undo the last change.", args: &[], kind: Kind::Special, run: c_noop },
@@ -364,7 +365,7 @@ pub static GRAPH_ARG: Arg = Arg { name: "graph", ty: "string", req: false, doc: 
 pub fn scoped(id: &str) -> bool {
     matches!(
         id,
-        "graph.inspect" | "graph.outline" | "graph.extract" | "graph.validate" | "graph.set" | "graph.layout" | "graph.expose" | "graph.unexpose" | "graph.set_input" | "comment.add" | "comment.remove" | "render.node" | "render.outputs" | "render.sheet" | "render.3d" | "render.review" | "export" | "function.probe"
+        "graph.inspect" | "graph.outline" | "graph.extract" | "graph.validate" | "graph.set" | "graph.layout" | "graph.expose" | "graph.unexpose" | "graph.set_input" | "comment.add" | "comment.remove" | "render.node" | "render.outputs" | "render.sheet" | "render.3d" | "render.review" | "export" | "export.materialx" | "function.probe"
     ) || (id.starts_with("node.") && !matches!(id, "node.types" | "node.describe"))
         || id == "macro.add"
         || id.starts_with("output.")
@@ -1863,6 +1864,38 @@ fn c_render_3d(s: &mut Session, p: &Json) -> Result<Outcome, String> {
     }
     j.set("view", view.to_text());
     Ok(Outcome { data: j, images: vec![Image { label: "3d".into(), png: png_of(&img) }] })
+}
+
+fn c_export_materialx(s: &mut Session, p: &Json) -> Result<Outcome, String> {
+    use crate::mtlx::{self, NormalY, Shader};
+    let dir = s.resolve_path(p.get("dir").and_then(Json::as_str).unwrap_or(""))?;
+    let mut o = mtlx::Options::default();
+    o.size = Some(opt_usize(p, "size", 16, 8192, s.graph.size)?);
+    if let Some(v) = p.get("shader").and_then(Json::as_str) {
+        o.shader = Shader::parse(v).ok_or("shader must be standard or openpbr")?;
+    }
+    if let Some(v) = p.get("normal").and_then(Json::as_str) {
+        o.normal = NormalY::parse(v).ok_or("normal must be directx or opengl")?;
+    }
+    o.depth = match opt_usize(p, "depth", 8, 16, 8)? {
+        8 => 8,
+        16 => 16,
+        _ => return Err("depth must be 8 or 16".into()),
+    };
+    if let Some(v) = p.get("displacement").and_then(Json::as_bool) {
+        o.displacement = v;
+    }
+    if let Some(v) = p.get("bake_ao").and_then(Json::as_bool) {
+        o.bake_ao = v;
+    }
+    o.name = p.get("name").and_then(Json::as_str).map(String::from).filter(|n| !n.is_empty());
+    let r = mtlx::export(&s.graph, &dir, &o)?;
+    Outcome::data(
+        Json::obj()
+            .with("mtlx", r.mtlx.display().to_string())
+            .with("textures", Json::Arr(r.files.iter().map(|f| Json::from(f.display().to_string())).collect::<Vec<_>>()))
+            .with("notes", Json::Arr(r.warnings.iter().map(|w| Json::from(w.as_str())).collect::<Vec<_>>())),
+    )
 }
 
 fn c_export(s: &mut Session, p: &Json) -> Result<Outcome, String> {

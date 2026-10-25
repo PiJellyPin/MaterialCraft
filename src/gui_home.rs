@@ -1441,7 +1441,7 @@ impl App {
                         }
                     });
                     ui.separator();
-                    for (label, a) in [("Export textures...", Act::Export)] {
+                    for (label, a) in [("Export textures...", Act::Export), ("Export MaterialX (Unreal Engine)...", Act::ExportMaterialX)] {
                         if ui.button(label).clicked() {
                             acts.push(a);
                             ui.close();

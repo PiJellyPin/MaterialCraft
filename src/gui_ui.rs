@@ -687,6 +687,10 @@ impl App {
                 self.export.target = None;
                 self.export.open = true;
             }
+            Act::ExportMaterialX => {
+                self.export.target = None;
+                self.mtlx_ui.open = true;
+            }
             Act::Bake => self.bake.open = true,
             Act::NewSpline => self.new_spline_node(),
             Act::Undo => self.undo(),
@@ -1038,6 +1042,71 @@ impl App {
                 }
             });
             self.export.open = open;
+        }
+        if self.mtlx_ui.open {
+            let mut open = true;
+            let (gtitle, _) = self.export_outputs();
+            egui::Window::new("Export MaterialX").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+                use materialcraft::mtlx::{NormalY, Shader};
+                ui.horizontal(|ui| {
+                    ui.label("Graph:");
+                    ui.strong(&gtitle);
+                });
+                ui.small("A .mtlx file (MaterialX 1.39, read by Unreal Engine 5.8) with its textures in a sub-folder.");
+                ui.horizontal(|ui| {
+                    if ui.button("Choose folder...").clicked() {
+                        if let Some(d) = rfd::FileDialog::new().pick_folder() {
+                            self.mtlx_ui.dir = Some(d);
+                        }
+                    }
+                    ui.label(self.mtlx_ui.dir.as_ref().map(|d| d.display().to_string()).unwrap_or_else(|| "(none)".into()));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Material name");
+                    ui.text_edit_singleline(&mut self.mtlx_ui.name).on_hover_text("Empty: the graph's name");
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Shader");
+                    egui::ComboBox::from_id_salt("mtlx_shader").selected_text(if self.mtlx_ui.opt.shader == Shader::StandardSurface { "Standard Surface" } else { "OpenPBR Surface" }).show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.mtlx_ui.opt.shader, Shader::StandardSurface, "Standard Surface (works with and without Substrate)");
+                        ui.selectable_value(&mut self.mtlx_ui.opt.shader, Shader::OpenPbr, "OpenPBR Surface (Unreal with Substrate)");
+                    });
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Normal map green channel");
+                    egui::ComboBox::from_id_salt("mtlx_normal").selected_text(if self.mtlx_ui.opt.normal == NormalY::DirectX { "DirectX (down)" } else { "OpenGL (up)" }).show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.mtlx_ui.opt.normal, NormalY::DirectX, "DirectX (down)");
+                        ui.selectable_value(&mut self.mtlx_ui.opt.normal, NormalY::OpenGl, "OpenGL (up)");
+                    });
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Resolution");
+                    let names = ["Graph size", "256", "512", "1024", "2048", "4096", "8192"];
+                    egui::ComboBox::from_id_salt("mtlx_size").selected_text(names[self.mtlx_ui.size.min(6)]).show_ui(ui, |ui| {
+                        for (i, n) in names.iter().enumerate() {
+                            ui.selectable_value(&mut self.mtlx_ui.size, i, *n);
+                        }
+                    });
+                    let mut d16 = self.mtlx_ui.opt.depth == 16;
+                    ui.checkbox(&mut d16, "16-bit");
+                    self.mtlx_ui.opt.depth = if d16 { 16 } else { 8 };
+                });
+                ui.checkbox(&mut self.mtlx_ui.opt.displacement, "Height as displacement (Unreal shows it with Nanite)");
+                if self.mtlx_ui.opt.displacement {
+                    ui.add(egui::DragValue::new(&mut self.mtlx_ui.opt.displacement_scale).speed(0.01).range(0.0..=100.0).prefix("Displacement scale "));
+                }
+                ui.checkbox(&mut self.mtlx_ui.opt.bake_ao, "Multiply ambient occlusion into the base colour");
+                ui.horizontal(|ui| {
+                    ui.label("Texture repeat");
+                    ui.add(egui::DragValue::new(&mut self.mtlx_ui.opt.tiling[0]).speed(0.05).range(0.01..=1000.0));
+                    ui.add(egui::DragValue::new(&mut self.mtlx_ui.opt.tiling[1]).speed(0.05).range(0.01..=1000.0));
+                });
+                ui.add_space(4.0);
+                if ui.button("Export").clicked() {
+                    self.run_mtlx_export();
+                }
+            });
+            self.mtlx_ui.open = open;
         }
         if self.bake.open {
             self.bake_window(ctx);

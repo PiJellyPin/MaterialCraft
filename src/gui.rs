@@ -193,6 +193,8 @@ enum Act {
     Save,
     SaveAs,
     Export,
+    /// Export the graph on screen as a MaterialX material (.mtlx + textures).
+    ExportMaterialX,
     Bake,
     Undo,
     Redo,
@@ -315,6 +317,15 @@ struct Partial {
     img_for: u32,
 }
 
+struct MtlxUi {
+    open: bool,
+    dir: Option<PathBuf>,
+    opt: materialcraft::mtlx::Options,
+    /// index into [graph size, 256, 512, 1024, 2048, 4096, 8192]
+    size: usize,
+    name: String,
+}
+
 struct ExportUi {
     open: bool,
     dir: Option<PathBuf>,
@@ -432,6 +443,7 @@ struct App {
     lib_search: String,
     text_focus: bool,
     export: ExportUi,
+    mtlx_ui: MtlxUi,
     bake: BakeUi,
     res_dirs: Vec<PathBuf>,
     show_about: bool,
@@ -570,6 +582,7 @@ impl App {
             node_cache: std::sync::Arc::new(NodeCache::with_default_budget()),
             lib_search: String::new(),
             text_focus: false,
+            mtlx_ui: MtlxUi { open: false, dir: None, opt: materialcraft::mtlx::Options::default(), size: 0, name: String::new() },
             export: ExportUi { open: false, dir: None, prefix: String::new(), sizes: [false, true, false, false, false, false], depth16: false, depth32: false, fmt: Format::Png, quality: 92, skip: BTreeSet::new(), space: 0, target: None },
             bake: BakeUi::new(),
             res_dirs: Vec::new(),
@@ -1360,6 +1373,26 @@ impl App {
         match &self.export.target {
             Some((i, name)) => self.package_root(*i).ok_or_else(|| "that package is no longer open".to_string())?.graph_view(name.as_deref()),
             None => self.package_root(self.pkg_active).ok_or_else(|| "nothing is open".to_string())?.graph_view(self.parents.last().map(|(_, n)| n.as_str())),
+        }
+    }
+
+    fn run_mtlx_export(&mut self) {
+        let Some(dir) = self.mtlx_ui.dir.clone() else {
+            return self.status("Choose an export folder first.", false);
+        };
+        let g = match self.export_graph() {
+            Ok(g) => g,
+            Err(e) => return self.status(format!("Export failed: {e}"), false),
+        };
+        let mut o = self.mtlx_ui.opt.clone();
+        o.size = [None, Some(256), Some(512), Some(1024), Some(2048), Some(4096), Some(8192)][self.mtlx_ui.size.min(6)];
+        o.name = Some(self.mtlx_ui.name.trim().to_string()).filter(|n| !n.is_empty());
+        match materialcraft::mtlx::export(&g, &dir, &o) {
+            Ok(r) => {
+                let note = r.warnings.first().map(|w| format!(" ({w})")).unwrap_or_default();
+                self.status(format!("Exported {} with {} texture(s){note}", r.mtlx.display(), r.files.len()), true);
+            }
+            Err(e) => self.status(format!("MaterialX export failed: {e}"), false),
         }
     }
 
