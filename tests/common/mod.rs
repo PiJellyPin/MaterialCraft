@@ -24,10 +24,21 @@ pub struct TempDir(pub PathBuf);
 
 impl TempDir {
     pub fn new() -> Self {
-        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let path = std::env::temp_dir().join(format!("materialcraft_sbs_{}_{stamp}", std::process::id()));
-        std::fs::create_dir(&path).unwrap_or_else(|e| panic!("create {}: {e}", path.display()));
-        Self(path)
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let root = std::env::temp_dir();
+        let pid = std::process::id();
+        loop {
+            // Clock ticks can repeat across threads. Reserve each name atomically, and skip
+            // existing paths (including leftovers from an earlier process with the same PID).
+            let id = NEXT.fetch_add(1, Ordering::Relaxed);
+            let path = root.join(format!("materialcraft_sbs_{pid}_{id}"));
+            match std::fs::create_dir(&path) {
+                Ok(()) => return Self(path),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => panic!("create {}: {e}", path.display()),
+            }
+        }
     }
 
     pub fn write(&self, name: &str, text: &str) -> PathBuf {
