@@ -71,7 +71,7 @@ fn tokenize(s: &str) -> Result<Vec<Tok>, String> {
 }
 
 #[derive(Debug, Clone)]
-enum E {
+pub(crate) enum E {
     Num(f32),
     Var(String),
     Call(String, Vec<E>),
@@ -240,7 +240,7 @@ impl P {
 }
 
 /// `name = expression;` lines (each name can be used by the lines after it), then the result expression.
-fn parse(src: &str) -> Result<(Vec<(String, E)>, E), String> {
+pub(crate) fn parse(src: &str) -> Result<(Vec<(String, E)>, E), String> {
     let t = tokenize(src)?;
     if t.is_empty() {
         return Err("the expression is empty".into());

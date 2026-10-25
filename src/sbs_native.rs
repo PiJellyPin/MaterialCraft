@@ -17,6 +17,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[path = "sbs_native_cache.rs"]
+mod preview_cache;
+pub(crate) use preview_cache::LowerCache;
+
 /// Positions in the editor are the file's positions times this: 1, so nodes sit as densely as in the format's own
 /// editor (a node card is about as wide as the format's node spacing allows).
 pub const POS_SCALE: f32 = 1.0;
@@ -848,7 +852,8 @@ impl<'a> Writer<'a> {
     /// A function graph as a `dynamicValue`.
     fn dynamic_value(&mut self, g: &Graph) -> XElem {
         let mut d = XElem::new("dynamicValue");
-        let root = g.sd.as_ref().and_then(|s| s.root).or_else(|| g.nodes.keys().next_back().copied());
+        // a function without a result node stays without one (it yields its parameter's default, as in the file)
+        let root = g.sd.as_ref().and_then(|s| s.root);
         if let Some(r) = root {
             let uid = g.nodes.get(&r).map(|n| uid_of(r, n)).unwrap_or_else(|| r.to_string());
             push(&mut d, v("rootnode", &uid));

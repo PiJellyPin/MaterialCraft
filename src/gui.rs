@@ -6,11 +6,11 @@ use eframe::egui::{
     Sense, Stroke, TextStyle, Vec2, pos2, vec2,
 };
 use materialcraft::bake::{self, BakeSettings};
-use materialcraft::graph::{usage_label, Comment, Graph, Node, NodeCache, THUMB};
+use materialcraft::graph::{usage_label, Comment, Graph, Node, NodeCache, Pending, THUMB};
 use materialcraft::render3d::{self, Maps, View};
 use materialcraft::tex::{self, Tex};
 use materialcraft::export::{self, Format};
-use materialcraft::gpu3d::{self, MapInputs};
+use materialcraft::gpu3d::{self, DevInputs, MapInputs};
 use materialcraft::{ops, png};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -152,6 +152,20 @@ fn qimg(t: &Tex) -> ColorImage {
     ColorImage::from_rgba_unmultiplied([t.w, t.h], &bytes)
 }
 
+/// The 2D view's picture and value range from a node result: made on the device when the picture is there (4 bytes per
+/// pixel come back, nothing is converted on the host), otherwise from the pixels.
+fn view_of(p: &Pending) -> Result<(ColorImage, Option<(f32, f32)>), String> {
+    let (w, h) = p.dims();
+    if let Some((bytes, range)) = p.view() {
+        if bytes.len() == w * h * 4 {
+            return Ok((ColorImage::from_rgba_unmultiplied([w, h], &bytes), Some(range)));
+        }
+    }
+    let t = p.tex()?;
+    let range = t.px.iter().fold((f32::MAX, f32::MIN), |m, p| (m.0.min(p[0]).min(p[1]).min(p[2]), m.1.max(p[0]).max(p[1]).max(p[2])));
+    Ok((qimg(&t), Some(range)))
+}
+
 // ---------------------------------------------------------------- types
 #[derive(Clone)]
 struct Entry {
@@ -249,9 +263,38 @@ struct EvalResult {
     img2d: Option<ColorImage>,
     img_for: Option<u32>,
     gpu: Option<gpu3d::GpuMaps>,
+    /// the normal map turned to the OpenGL convention the viewers light (made on the worker thread too)
+    normal_gl: Option<std::sync::Arc<Tex>>,
+    /// material outputs that were packed for the 3D view on the device and never read back: (output name, result)
+    pending: Vec<(String, Pending)>,
+    /// the pending normal map is DirectX style and has to be flipped before a CPU viewer uses it
+    pending_flip: bool,
+    /// lowest and highest colour value of the 2D view's image (scanned on the worker thread)
+    range2d: Option<(f32, f32)>,
     /// resolution this pass was computed at
     size: usize,
+    /// how long the pass took (evaluation and conversion), in milliseconds, and the parts of it
+    ms: f32,
+    ms_eval: f32,
+    ms_prep: f32,
+    ms_2d: f32,
     pass: Pass,
+}
+
+/// `MC_TRACE_EVAL=1` prints a timeline of every edit to the console: when each pass starts and when the 3D view gets
+/// its maps, in milliseconds since the edit. It is how the speed of the edit -> 3D view path is measured.
+fn trace_on() -> bool {
+    static T: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *T.get_or_init(|| std::env::var_os("MC_TRACE_EVAL").is_some())
+}
+
+static EDIT_AT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+fn trace(msg: &str) {
+    if trace_on() {
+        let t = EDIT_AT.lock().ok().and_then(|g| *g).map(|t| t.elapsed().as_secs_f64() * 1000.0).unwrap_or(0.0);
+        eprintln!("[eval +{t:>7.0} ms] {msg}");
+    }
 }
 
 /// What an evaluation pass is for.
@@ -340,6 +383,10 @@ struct App {
     pass_size: usize,
     /// resolution of the maps the 3D view shows
     maps_size: usize,
+    /// milliseconds per pixel of the last interactive pass: the size used while a value moves follows it
+    drag_ms_px: f32,
+    /// per-pixel cost of the last few interactive passes (the worst one counts)
+    drag_hist: [f32; 4],
     tile_preview: bool,
     thumbs: HashMap<u32, egui::TextureHandle>,
     /// pixels behind each thumbnail texture (an unchanged thumbnail is not uploaded again)
@@ -348,9 +395,15 @@ struct App {
     tex2d: Option<egui::TextureHandle>,
     tex2d_size: (usize, usize),
     maps: BTreeMap<String, std::sync::Arc<Tex>>,
+    /// outputs still on the device (see `ensure_maps`), and whether the normal map needs its green channel flipped
+    maps_pending: Vec<(String, Pending)>,
+    maps_pending_flip: bool,
     view3d: View,
     v3: V3dUi,
     tex3d: Option<egui::TextureHandle>,
+    /// the GPU viewer's last picture (made on the device, shown as a texture) and its number
+    tex_gpu: Option<egui::TextureHandle>,
+    gpu_seq: u64,
     r3d_size: usize,
     gpu: gpu3d::Shared,
     gpu_on: bool,
@@ -365,6 +418,12 @@ struct App {
     /// the rename box of the Explorer: (package index, graph, new name being typed)
     rename_graph: Option<(usize, String, String)>,
     dirty: bool,
+    /// the selected node changed and nothing else: only the 2D view needs another node's cached picture
+    view_pending: bool,
+    /// the next pass is a view-only one (see `job_view_only`)
+    view_only_next: bool,
+    /// the running (or last) pass only serves the 2D view: no maps, no thumbnails
+    job_view_only: bool,
     dirty3d: bool,
     gen: u64,
     job: Option<Receiver<EvalResult>>,
@@ -474,6 +533,8 @@ impl App {
             node_sizes: HashMap::new(),
             pass_size: 0,
             maps_size: 0,
+            drag_ms_px: 0.0,
+            drag_hist: [0.0; 4],
             tile_preview: false,
             thumbs: HashMap::new(),
             thumb_px: HashMap::new(),
@@ -481,9 +542,13 @@ impl App {
             tex2d: None,
             tex2d_size: (0, 0),
             maps: BTreeMap::new(),
+            maps_pending: Vec::new(),
+            maps_pending_flip: false,
             view3d: View { tess: 512, ..View::default() },
             v3: V3dUi::default(),
             tex3d: None,
+            tex_gpu: None,
+            gpu_seq: 0,
             r3d_size: 420,
             gpu: gpu3d::new_shared(),
             gpu_on: true,
@@ -495,6 +560,9 @@ impl App {
             confirm_close: None,
             rename_graph: None,
             dirty: true,
+            view_pending: false,
+            view_only_next: false,
+            job_view_only: false,
             dirty3d: true,
             gen: 0,
             job: None,
@@ -1055,6 +1123,7 @@ impl App {
     /// instead of leaving them on screen until the new evaluation finishes.
     fn clear_views(&mut self) {
         self.maps.clear();
+        self.maps_pending.clear();
         self.tex2d = None;
         self.thumbs.clear();
         self.thumb_px.clear();
@@ -1375,10 +1444,28 @@ impl App {
         }
     }
 
+    /// The size of the passes that run while a value moves: as large as keeps a pass within about 80 ms (judged by
+    /// how long the last ones took per pixel), between 128 and 512 pixels. A light graph is then shown sharp while
+    /// it is dragged, a heavy one stays responsive at a coarser size, and the settled passes bring it to full size.
+    fn interactive_size(&self) -> usize {
+        const BUDGET_MS: f32 = 80.0;
+        let full = self.preview_full();
+        let cap = full.min(512);
+        if self.drag_ms_px <= 0.0 {
+            return self.first_tier();
+        }
+        let mut s = 128usize.min(cap);
+        while s * 2 <= cap && self.drag_ms_px * ((s * 2) * (s * 2)) as f32 <= BUDGET_MS {
+            s *= 2;
+        }
+        s
+    }
+
     fn first_tier(&self) -> usize {
         let full = self.preview_full();
-        if full > 256 {
-            256
+        // thin lines (edges, borders) look the same on a card as in the 2D view only from about 512 pixels up
+        if full > 512 {
+            512
         } else {
             full
         }
@@ -1400,7 +1487,8 @@ impl App {
     /// brings the outputs (and so the 3D view) to the full preview size.
     fn spawn_eval(&mut self, size: usize, pass: Pass) {
         let full = pass == Pass::Thumbs;
-        let maps = pass != Pass::Interactive;
+        // every pass feeds the 3D view (a drag too, at the small size it runs at), so the viewport follows the edit
+        let maps = true;
         let g = match self.g.preview_host() {
             Some((h, _)) => h,
             None => self.g.clone(),
@@ -1411,11 +1499,16 @@ impl App {
         let size = size.clamp(16, ceil.max(16));
         self.job_size = size;
         self.refine_size = None;
-        let mut keep: Vec<u32> = g.output_nodes().iter().map(|o| o.2).collect();
+        // a pass for the 2D view alone (another node was selected): the outputs, 3D maps and thumbnails stay as they are
+        let view_only = std::mem::take(&mut self.view_only_next);
+        self.job_view_only = view_only;
+        let maps = maps && !view_only;
+        let mut keep: Vec<u32> = if view_only { Vec::new() } else { g.output_nodes().iter().map(|o| o.2).collect() };
         let active = self.view_node();
         if let Some(a) = active {
             keep.push(a);
         }
+        trace(&format!("start {pass:?} pass at {size}px"));
         // a newer job makes every older one stale: their loops stop within a few rows
         self.gen += 1;
         let gen = self.gen;
@@ -1425,29 +1518,101 @@ impl App {
         let (ptx, prx) = channel();
         self.part = Some(prx);
         let cache = self.node_cache.clone();
+        // the GL viewer takes its maps packed from the device when the GPU evaluated them
+        let defer_outputs = self.gpu_on && materialcraft::gpu::active();
         std::thread::spawn(move || {
-            let mut on_first = |t: &Tex| {
+            let started = std::time::Instant::now();
+            let mut on_first = |p: &Pending| {
                 if let Some(a) = active {
                     if !tex::stale(gen) {
-                        let _ = ptx.send(Partial { gen, img2d: qimg(t), img_for: a });
+                        if let Ok((img, _)) = view_of(p) {
+                            let _ = ptx.send(Partial { gen, img2d: img, img_for: a });
+                        }
                     }
                 }
             };
-            let r = g.evaluate_all_cached(size, &keep, gen, &cache, active, full, &mut on_first);
+            let outputs: Vec<(String, u32)> = g.output_nodes().into_iter().map(|(u, _, id)| (u, id)).collect();
+            // the material outputs are not read back when the 3D view can take them packed from the device
+            // (and the node of the 2D view, which the viewer packs on the device as well)
+            let mut defer: Vec<u32> = if maps && defer_outputs { outputs.iter().map(|o| o.1).filter(|id| Some(*id) != active).collect() } else { Vec::new() };
+            if defer_outputs {
+                defer.extend(active);
+            }
+            let mut r = g.evaluate_all_cached_ex(size, &keep, &defer, gen, &cache, active, full, &mut on_first);
+            let ms_eval = started.elapsed().as_secs_f32() * 1000.0;
             if tex::stale(gen) {
                 return; // superseded: nobody waits for this result
             }
             tex::set_job(gen);
-            let outputs: Vec<(String, u32)> = g.output_nodes().into_iter().map(|(u, _, id)| (u, id)).collect();
-            // the GPU material maps are prepared only once the input has settled; a drag leaves the 3D view as it was
-            let gpu = if maps {
-                let named = |n: &str| outputs.iter().find(|o| o.0 == n).and_then(|o| r.kept.get(&o.1)).map(|a| a.as_ref());
+            // the 2D view's picture and range, from the device when the node is there
+            let mut view_pic: Option<(ColorImage, Option<(f32, f32)>)> = None;
+            if let Some(a) = active {
+                if let Some(p) = r.pending.get(&a).cloned() {
+                    if !outputs.iter().any(|o| o.1 == a) {
+                        r.pending.remove(&a);
+                    }
+                    match view_of(&p) {
+                        Ok(v) => view_pic = Some(v),
+                        Err(e) => {
+                            r.errors.insert(a, e);
+                        }
+                    }
+                }
+            }
+            let mut dev_maps: Option<gpu3d::GpuMaps> = None;
+            let mut pending: Vec<(String, Pending)> = Vec::new();
+            let pending_flip = g.normal_directx();
+            if !r.pending.is_empty() {
+                let pend = |n: &str| outputs.iter().find(|o| o.0 == n).and_then(|o| r.pending.get(&o.1));
+                let dev = |n: &str| pend(n).and_then(|p| p.device());
+                // only when every deferred output really is on the device; otherwise the host code does it all
+                if r.pending.values().all(|p| p.device().is_some()) {
+                    let base = ["basecolor", "out", "diffuse"].into_iter().find(|n| pend(n).is_some());
+                    let (rough, gloss) = (dev("roughness"), dev("glossiness"));
+                    let (base_t, normal_t, metal_t, ao_t, emis_t, height_t) = (base.and_then(dev), dev("normal"), dev("metallic"), dev("ambient_occlusion"), dev("emissive"), dev("height"));
+                    dev_maps = gpu3d::prepare_dev(&DevInputs {
+                        base: base_t.as_ref(),
+                        normal: normal_t.as_ref(),
+                        flip_normal_g: pending_flip,
+                        rough: rough.as_ref().or(gloss.as_ref()),
+                        rough_invert: rough.is_none() && gloss.is_some(),
+                        metal: metal_t.as_ref(),
+                        ao: ao_t.as_ref(),
+                        emissive: emis_t.as_ref(),
+                        height: height_t.as_ref(),
+                    });
+                }
+                if dev_maps.is_some() {
+                    for (name, id) in &outputs {
+                        if let Some(p) = r.pending.get(id) {
+                            pending.push((name.clone(), p.clone()));
+                        }
+                    }
+                    r.pending.clear();
+                } else {
+                    // read the outputs back and prepare them on the host
+                    for (id, p) in std::mem::take(&mut r.pending) {
+                        match p.tex() {
+                            Ok(t) => {
+                                r.kept.insert(id, t);
+                            }
+                            Err(e) => {
+                                r.errors.insert(id, e);
+                            }
+                        }
+                    }
+                }
+            }
+            let named = |n: &str| outputs.iter().find(|o| o.0 == n).and_then(|o| r.kept.get(&o.1)).map(|a| a.as_ref());
+            // DirectX normal maps are shown the right way up (done here once, for the GPU maps and the CPU viewers)
+            let normal_gl = named("normal").and_then(|t| g.normal_for_view(t)).map(std::sync::Arc::new);
+            let gpu = if dev_maps.is_some() {
+                dev_maps
+            } else if maps {
                 let inv_gloss = named("glossiness").map(ops::invert);
-                // DirectX normal maps are shown the right way up
-                let normal_gl = named("normal").and_then(|t| g.normal_for_view(t));
                 Some(gpu3d::prepare(&MapInputs {
                     base: named("basecolor").or_else(|| named("out")).or_else(|| named("diffuse")),
-                    normal: normal_gl.as_ref().or_else(|| named("normal")),
+                    normal: normal_gl.as_deref().or_else(|| named("normal")),
                     rough: named("roughness").or(inv_gloss.as_ref()),
                     metal: named("metallic"),
                     ao: named("ambient_occlusion"),
@@ -1457,7 +1622,14 @@ impl App {
             } else {
                 None
             };
-            let img2d = active.and_then(|a| r.kept.get(&a)).map(|a| qimg(a));
+            let ms_prep = started.elapsed().as_secs_f32() * 1000.0 - ms_eval;
+            let (img2d, range2d) = match view_pic {
+                Some((img, range)) => (Some(img), range),
+                None => (
+                    active.and_then(|a| r.kept.get(&a)).map(|a| qimg(a)),
+                    active.and_then(|a| r.kept.get(&a)).map(|t| t.px.iter().fold((f32::MAX, f32::MIN), |m, p| (m.0.min(p[0]).min(p[1]).min(p[2]), m.1.max(p[0]).max(p[1]).max(p[2])))),
+                ),
+            };
             tex::set_job(0);
             if tex::stale(gen) {
                 return;
@@ -1472,7 +1644,15 @@ impl App {
                 img2d,
                 img_for: active,
                 gpu,
+                normal_gl,
+                pending,
+                pending_flip,
+                range2d,
                 size,
+                ms: started.elapsed().as_secs_f32() * 1000.0,
+                ms_eval,
+                ms_prep,
+                ms_2d: started.elapsed().as_secs_f32() * 1000.0 - ms_eval - ms_prep,
                 pass,
             });
         });
@@ -1514,6 +1694,15 @@ impl App {
                 self.job = None;
                 if r.gen != self.gen {
                     return;
+                }
+                // how long an interactive pass costs per pixel: the size used while a value moves follows it
+                if r.pass == Pass::Interactive && r.size >= 64 {
+                    let per_px = r.ms / (r.size * r.size) as f32;
+                    self.drag_hist.rotate_left(1);
+                    self.drag_hist[3] = per_px;
+                    // passes that found most of the graph in the cache look cheaper than the next edit will be: the worst
+                    // of the last few is the guide
+                    self.drag_ms_px = self.drag_hist.iter().cloned().fold(0.0, f32::max);
                 }
                 // a thumbnail pass smaller than the picture already on screen leaves the 2D view (and its refinement) alone
                 let show2d = !(r.pass == Pass::Thumbs && r.size < self.pass_size);
@@ -1572,13 +1761,15 @@ impl App {
                     self.node_sizes.extend(scaled);
                 }
                 if !show2d {
-                    self.apply_maps(&mut r);
+                    if !self.job_view_only {
+                        self.apply_maps(&mut r);
+                    }
                     return;
                 }
                 self.pass_size = r.size;
-                self.tex2d_range = self.view_node().and_then(|a| r.kept.get(&a)).map(|t| {
+                self.tex2d_range = if self.view_node() == r.img_for { r.range2d } else { self.view_node().and_then(|a| r.kept.get(&a)).map(|t| {
                     t.px.iter().fold((f32::MAX, f32::MIN), |m, p| (m.0.min(p[0]).min(p[1]).min(p[2]), m.1.max(p[0]).max(p[1]).max(p[2])))
-                });
+                }) };
                 if let Some(a) = self.view_node() {
                     if let (Some(img), true) = (r.img2d.take(), r.img_for == Some(a)) {
                         self.tex2d_size = (img.size[0], img.size[1]);
@@ -1592,11 +1783,14 @@ impl App {
                 } else {
                     self.tex2d = None;
                 }
-                self.apply_maps(&mut r);
+                if !self.job_view_only {
+                    self.apply_maps(&mut r);
+                }
             }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => {
                 self.job = None;
+                self.final_due = false;
                 self.status("Evaluation failed unexpectedly.", false);
             }
         }
@@ -1604,26 +1798,27 @@ impl App {
 
     /// The material outputs and the 3D view follow the thumbnail and final passes; a drag leaves 3D as it was.
     fn apply_maps(&mut self, r: &mut EvalResult) {
-        if r.pass == Pass::Interactive {
-            return;
-        }
         // a thumbnail pass never replaces sharper maps from a final pass of the same graph state
-        if r.pass == Pass::Thumbs && self.maps_size > r.size && !self.final_due {
+        // (the size is reset to 0 whenever the graph changes, so this only keeps the picture of the current state)
+        if r.pass == Pass::Thumbs && self.maps_size > r.size {
             return;
         }
         self.maps_size = r.size;
+        trace(&format!("3D view gets {:?} maps at {}px (pass {:.0} ms = graph {:.0} + 3D maps {:.0} + 2D image {:.0})", r.pass, r.size, r.ms, r.ms_eval, r.ms_prep, r.ms_2d));
         self.maps.clear();
+        self.maps_pending = std::mem::take(&mut r.pending);
+        self.maps_pending_flip = r.pending_flip;
         for (name, id) in &r.outputs {
             if let Some(t) = r.kept.get(id) {
                 // the viewers light normal maps in the OpenGL convention: a DirectX one is flipped for them
-                let t = match (name.as_str(), self.g.normal_for_view(t)) {
-                    ("normal", Some(f)) => std::sync::Arc::new(f),
+                let t = match (name.as_str(), r.normal_gl.as_ref()) {
+                    ("normal", Some(f)) => f.clone(),
                     _ => t.clone(),
                 };
                 self.maps.insert(name.clone(), t);
             }
         }
-        if !self.maps.contains_key("basecolor") {
+        if self.maps_pending.is_empty() && !self.maps.contains_key("basecolor") {
             if let Some(t) = self.maps.get("out").cloned() {
                 self.maps.insert("basecolor".into(), t);
             }
@@ -1639,8 +1834,37 @@ impl App {
         }
     }
 
+    /// Brings the outputs that only exist on the device (packed straight into the 3D view) to the host: needed by the
+    /// CPU viewer, the path tracer, picture export and anything else that reads the pixels. A no-op when nothing is
+    /// pending.
+    fn ensure_maps(&mut self) {
+        if self.maps_pending.is_empty() {
+            return;
+        }
+        let pending = std::mem::take(&mut self.maps_pending);
+        let mut failed = None;
+        for (name, p) in pending {
+            match p.tex() {
+                Ok(t) => {
+                    let t = if name == "normal" && self.maps_pending_flip { std::sync::Arc::new(ops::flip_green(&t)) } else { t };
+                    self.maps.insert(name, t);
+                }
+                Err(e) => failed = Some(e),
+            }
+        }
+        if !self.maps.contains_key("basecolor") {
+            if let Some(t) = self.maps.get("out").cloned() {
+                self.maps.insert("basecolor".into(), t);
+            }
+        }
+        if let Some(e) = failed {
+            self.status(format!("Could not read a map back from the GPU: {e}"), false);
+        }
+    }
+
     /// Hand the current graph outputs to the GPU viewer (uploaded on its next paint).
     fn upload_gpu_maps(&mut self) {
+        self.ensure_maps();
         self.gpu_maps_dirty = false;
         let get = |k: &str| self.maps.get(k).map(|a| a.as_ref());
         let inv_gloss = get("glossiness").map(ops::invert);
@@ -1675,6 +1899,7 @@ impl App {
             ctx.request_repaint();
             return;
         }
+        self.ensure_maps();
         let fb = fallbacks(&self.maps);
         let m = build_maps(&self.maps, &fb);
         let mut cpu_view = self.view3d.clone();

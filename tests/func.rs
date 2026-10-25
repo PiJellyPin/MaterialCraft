@@ -94,6 +94,52 @@ fn function_drives_parameter_and_graph_input() {
 }
 
 #[test]
+fn shared_vector_bindings_match_separate_functions_across_edits() {
+    use materialcraft::graph::NodeCache;
+    use std::sync::Arc;
+    let body = "node 1 f_input name=\"amount\" type=0 v=0.1\n\
+        node 2 f_graph_input name=\"level\" type=0 v=0\n\
+        node 3 f_add a=@1 b=@2\n\
+        node 4 f_seed\nnode 5 f_add a=@3 b=@4\n\
+        node 6 f_size\nnode 7 f_swizzle a=@6 mask=\"x\"\nnode 8 f_add a=@5 b=@7\n\
+        node 9 f_random seed=3\nnode 10 f_vec2 x=@8 y=@9\nnode 11 f_out in=@10\n";
+    let text = format!("size 16\nsubgraph shared\nmeta kind \"function\"\n{body}end\n\
+        node 1 input_value name=\"level\" type=0 v=0.2\n\
+        node 2 color fn.r=\"shared\" fl.r=\"x\" fa.r.amount=0.1 fn.g=\"shared\" fl.g=\"x\" fa.g.amount=0.4 fn.b=\"shared\" fl.b=\"y\" fa.b.amount=0.1 fn.a=\"shared\" fl.a=\"x\" fa.a.amount=0.1\noutput o 2\n");
+    let mut shared = Graph::parse(&text).unwrap();
+    let cache = Arc::new(NodeCache::new(32));
+    for (size, seed, level, amount) in [(16, 0, 0.2, 0.1), (32, 7, 0.6, 0.3), (16, 2, 0.4, 0.5), (16, 2, 0.4, 0.5)] {
+        shared.seed_offset = seed;
+        shared.nodes.get_mut(&1).unwrap().nums.insert("v".into(), level);
+        shared.nodes.get_mut(&2).unwrap().nums.insert("fa.r.amount".into(), amount);
+        // The old representation compiles a separate graph with a swizzle for each parameter.
+        let mut separate = shared.clone();
+        for param in ["r", "g", "b", "a"] {
+            let n = separate.nodes.get_mut(&2).unwrap();
+            let mask = n.strs.remove(&format!("fl.{param}")).unwrap();
+            let mut f = shared.subgraphs["shared"].clone();
+            let swizzle = Graph::parse_unchecked(&format!("node 12 f_swizzle a=@10 mask=\"{mask}\"\n")).unwrap().nodes.remove(&12).unwrap();
+            f.nodes.insert(12, swizzle);
+            f.nodes.get_mut(&11).unwrap().ins.insert("in".into(), 12);
+            let name = format!("separate_{param}");
+            separate.subgraphs.insert(name.clone(), f);
+            n.strs.insert(format!("fn.{param}"), name);
+        }
+        let actual = shared.evaluate_all_cached(size, &[2], 0, &cache, None, true, &mut |_| {});
+        assert!(actual.errors.is_empty(), "{:?}", actual.errors);
+        let expected = separate.evaluate_node(2, size).unwrap();
+        assert_eq!(actual.kept[&2].px, expected.px, "size {size}, seed {seed}, level {level}, amount {amount}");
+        assert_ne!(expected.px[0][0], expected.px[0][1], "different function arguments must stay independent");
+        let reopened = Graph::parse(&shared.to_text()).unwrap();
+        assert_eq!(reopened.evaluate_node(2, size).unwrap().px, expected.px);
+        // A function edit must also invalidate previously compiled/evaluated results.
+        shared.subgraphs.get_mut("shared").unwrap().nodes.get_mut(&9).unwrap().nums.insert("seed".into(), seed as f32 + 11.0);
+    }
+    shared.nodes.get_mut(&2).unwrap().strs.insert("fl.r".into(), "z".into());
+    assert!(shared.evaluate_node(2, 16).is_err(), "invalid component selection must remain an error");
+}
+
+#[test]
 fn pixel_and_value_processors_run_functions() {
     // pixel processor: brightness = u (left to right ramp); value processor: average of the input
     let text = "size 16\nsubgraph ramp\nmeta kind \"function\"\nnode 1 f_pos\nnode 2 f_swizzle a=@1 mask=\"x\"\nnode 3 f_out in=@2\nend\nsubgraph avg\nmeta kind \"function\"\nnode 1 f_image_avg\nnode 2 f_swizzle a=@1 mask=\"x\"\nnode 3 f_out in=@2\nend\nnode 1 pixel_processor fn=\"ramp\"\nnode 2 value_processor fn=\"avg\" in=@1\noutput o 1\noutput v 2\n";

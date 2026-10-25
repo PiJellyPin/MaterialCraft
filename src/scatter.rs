@@ -84,9 +84,14 @@ impl Patterns<'_> {
         }
     }
     fn choose(&self, index: usize, r: f32) -> usize {
-        let n = self.count();
-        if self.distribution == 1 { index % n } else { ((r * n as f32) as usize).min(n - 1) }
+        choose_n(self.count(), self.distribution, index, r)
     }
+}
+
+/// Which of `n` patterns an instance uses: by number (distribution 1) or by the random value `r`.
+fn choose_n(n: usize, distribution: u32, index: usize, r: f32) -> usize {
+    let n = n.max(1);
+    if distribution == 1 { index % n } else { ((r * n as f32) as usize).min(n - 1) }
 }
 
 /// Blending of overlapping instances.
@@ -516,7 +521,7 @@ pub enum SplatData {
     Luminance,
 }
 
-fn splat_instances(pats: &Patterns, p: &SplatterP) -> Vec<SplatInst> {
+fn splat_instances(np: usize, distribution: u32, p: &SplatterP) -> Vec<SplatInst> {
     type S = SplatInst;
     let seed = p.seed;
     let n = if p.grid > 0 { p.grid * p.grid } else { p.count.min(2000) };
@@ -541,7 +546,7 @@ fn splat_instances(pats: &Patterns, p: &SplatterP) -> Vec<SplatInst> {
                 3 => (rnd(i, 6, seed) < 0.5, rnd(i, 7, seed) < 0.5),
                 _ => (false, false),
             };
-            S { cx, cy, sx: s, sy: (s * p.aspect.max(0.01)).max(1e-3), sn, cs, l: 1.0 - p.lum_var * rnd(i, 5, seed), fx, fy, pat: pats.choose(k as usize, rnd(i, 8, seed)) }
+            S { cx, cy, sx: s, sy: (s * p.aspect.max(0.01)).max(1e-3), sn, cs, l: 1.0 - p.lum_var * rnd(i, 5, seed), fx, fy, pat: choose_n(np, distribution, k as usize, rnd(i, 8, seed)) }
         })
         .collect();
     inst
@@ -549,7 +554,7 @@ fn splat_instances(pats: &Patterns, p: &SplatterP) -> Vec<SplatInst> {
 
 /// Data of the top-most instance under every pixel (the same coverage test the pattern itself uses).
 pub fn splatter_data(w: usize, h: usize, pats: &Patterns, p: &SplatterP, what: SplatData) -> Tex {
-    let inst = splat_instances(pats, p);
+    let inst = splat_instances(pats.count(), pats.distribution, p);
     Tex::from_fn(w, h, |u, v| {
         let mut hit: Option<usize> = None;
         for (k, it) in inst.iter().enumerate() {
@@ -584,7 +589,7 @@ pub fn splatter_data(w: usize, h: usize, pats: &Patterns, p: &SplatterP, what: S
 }
 
 pub fn splatter(w: usize, h: usize, pats: &Patterns, p: &SplatterP) -> Tex {
-    let inst = splat_instances(pats, p);
+    let inst = splat_instances(pats.count(), pats.distribution, p);
     Tex::from_fn(w, h, |u, v| {
         let mut acc = p.background;
         for it in &inst {
@@ -681,19 +686,21 @@ impl CircularP {
     }
 }
 
-/// Instances placed on one or more circles (Splatter Circular).
-pub fn splatter_circular(w: usize, h: usize, pats: &Patterns, p: &CircularP) -> Tex {
-    struct S {
-        cx: f32,
-        cy: f32,
-        sx: f32,
-        sn: f32,
-        cs: f32,
-        l: f32,
-        fx: bool,
-        fy: bool,
-        pat: usize,
-    }
+struct CircInst {
+    cx: f32,
+    cy: f32,
+    sx: f32,
+    sn: f32,
+    cs: f32,
+    l: f32,
+    fx: bool,
+    fy: bool,
+    pat: usize,
+}
+
+/// The instances of a Splatter Circular, in drawing order.
+fn circular_instances(np: usize, distribution: u32, p: &CircularP) -> Vec<CircInst> {
+    type S = CircInst;
     let seed = p.seed;
     let rings = p.rings.clamp(1, 10);
     let mut inst: Vec<S> = Vec::new();
@@ -736,11 +743,17 @@ pub fn splatter_circular(w: usize, h: usize, pats: &Patterns, p: &CircularP) -> 
             if p.mask_random > 0.0 && rnd(i, 15, seed) < p.mask_random {
                 continue;
             }
-            let pat = if pats.distribution == 2 { ring as usize % pats.count() } else { pats.choose(order as usize, rnd(i, 8, seed)) };
+            let pat = if distribution == 2 { ring as usize % np.max(1) } else { choose_n(np, distribution, order as usize, rnd(i, 8, seed)) };
             inst.push(S { cx, cy, sx: s, sn, cs, l, fx, fy, pat });
             order += 1;
         }
     }
+    inst
+}
+
+/// Instances placed on one or more circles (Splatter Circular).
+pub fn splatter_circular(w: usize, h: usize, pats: &Patterns, p: &CircularP) -> Tex {
+    let inst = circular_instances(pats.count(), pats.distribution, p);
     Tex::from_fn(w, h, |u, v| {
         let mut acc = p.background;
         for it in &inst {
@@ -755,4 +768,147 @@ pub fn splatter_circular(w: usize, h: usize, pats: &Patterns, p: &CircularP) -> 
         }
         finish(acc, 1.0, 0.0, 1.0)
     })
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Instance lists for the GPU rasteriser. The CPU only decides *where* and *how large* the instances are (a few
+// thousand records); the device draws them. Three `[f32; 4]` per instance:
+//   splatter / circular:  [cx cy sx sy] [sin cos lum 0] [pattern index, key, flags, id grey]
+//   tile (before the maps): [cx0 cy0 size turns] [colour specific key flags] [pattern index 0 0 0]
+// with flags = flip_x | flip_y << 1 | on << 2.
+// ---------------------------------------------------------------------------------------------------------------
+
+fn flags(fx: bool, fy: bool, on: bool) -> f32 {
+    (fx as u32 | (fy as u32) << 1 | (on as u32) << 2) as f32
+}
+
+/// Splatter instances for the device.
+pub fn splat_flat(np: usize, distribution: u32, p: &SplatterP) -> Vec<[f32; 4]> {
+    let mut v = Vec::new();
+    for (k, it) in splat_instances(np, distribution, p).iter().enumerate() {
+        v.push([it.cx, it.cy, it.sx, it.sy]);
+        v.push([it.sn, it.cs, it.l, 0.0]);
+        v.push([it.pat as f32, k as f32, flags(it.fx, it.fy, true), 0.1 + 0.9 * rnd(k as i32, 31, p.seed)]);
+    }
+    v
+}
+
+/// Splatter Circular instances for the device (the pattern is square: `sy == sx`).
+pub fn circular_flat(np: usize, distribution: u32, p: &CircularP) -> Vec<[f32; 4]> {
+    let mut v = Vec::new();
+    for (k, it) in circular_instances(np, distribution, p).iter().enumerate() {
+        v.push([it.cx, it.cy, it.sx, it.sx]);
+        v.push([it.sn, it.cs, it.l, 0.0]);
+        v.push([it.pat as f32, k as f32, flags(it.fx, it.fy, true), 0.0]);
+    }
+    v
+}
+
+/// What the device needs to draw a tile grid.
+pub struct TilePre {
+    pub inst: Vec<[f32; 4]>,
+    pub nx: i32,
+    pub ny: i32,
+    /// divisors that turn image distance into pattern-local distance
+    pub dvx: f32,
+    pub dvy: f32,
+    /// neighbourhood radius in cells
+    pub rad: i32,
+    /// a small grid wraps onto itself: every instance counts once
+    pub dedupe: bool,
+    /// the size every instance can reach at most (for `lum_by_scale`)
+    pub max_size: f32,
+}
+
+/// The per-instance part of [`tile_grid`] that does not read the map inputs (those are applied on the device).
+pub fn tile_pre(np: usize, distribution: u32, has_disp: bool, p: &TileP) -> TilePre {
+    let nx = p.nx.round().clamp(1.0, 64.0) as i32;
+    let ny = p.ny.round().clamp(1.0, 64.0) as i32;
+    let (fnx, fny) = (nx as f32, ny as f32);
+    let total = (nx * ny) as f32;
+    let (dvx, dvy) = match p.size_mode {
+        1 => (fnx.min(fny), fnx.min(fny)),
+        2 => (1.0, 1.0),
+        _ => (fnx, fny),
+    };
+    let mut max_half = 0.0f32;
+    let mut inst: Vec<[f32; 4]> = Vec::with_capacity((nx * ny * 3) as usize);
+    for j in 0..ny {
+        for i in 0..nx {
+            let sd = p.seed;
+            let (r1, r2, r3, r4) = (rnd(i, j, sd), rnd(i, j, sd.wrapping_add(1)), rnd(i, j, sd.wrapping_add(2)), rnd(i, j, sd.wrapping_add(3)));
+            let key = (j * nx + i) as u32;
+            let (line, along_row) = match p.offset_mode {
+                1 | 2 => (j, true),
+                _ => (i, false),
+            };
+            let active = match p.offset_mode {
+                1 | 3 => (line & 1) == 1,
+                2 | 4 => (line & 1) == 0,
+                _ => false,
+            };
+            let mut shift = if active { p.offset } else { 0.0 };
+            if p.offset_mode != 0 && p.offset_rand > 0.0 {
+                shift += (rnd(line, 77, p.offset_seed.wrapping_add(sd)) - 0.5) * 2.0 * p.offset_rand;
+            }
+            let (mut cx, mut cy) = ((i as f32 + 0.5) / fnx, (j as f32 + 0.5) / fny);
+            if along_row || p.offset_mode == 0 {
+                cx += shift / fnx;
+            } else {
+                cy += shift / fny;
+            }
+            cx += (r1 - 0.5) * p.pos_rand * p.pos_rand_x / fnx + p.global_offset[0];
+            cy += (r2 - 0.5) * p.pos_rand * p.pos_rand_y / fny + p.global_offset[1];
+            let mut proc_keep = true;
+            if p.mask_random > 0.0 && rnd(i, j, sd.wrapping_add(31)) < p.mask_random {
+                proc_keep = false;
+            }
+            match p.mask_checker {
+                1 => proc_keep &= ((i + j) & 1) == 0,
+                2 => proc_keep &= ((i + j) & 1) == 1,
+                _ => {}
+            }
+            if p.mask_h {
+                proc_keep &= (i & 1) == 0;
+            }
+            if p.mask_v {
+                proc_keep &= (j & 1) == 0;
+            }
+            if p.invert_mask {
+                proc_keep = !proc_keep;
+            }
+            let mut s = p.size * p.scale * (1.0 + (r3 - 0.5) * 2.0 * p.size_rand);
+            if p.scale_rand > 0.0 {
+                s *= 1.0 + (rnd(i, j, sd.wrapping_add(p.scale_seed).wrapping_add(41)) - 0.5) * 2.0 * p.scale_rand;
+            }
+            let s_cap = s.max(0.01);
+            let mut turns = p.rot + (r4 - 0.5) * 2.0 * p.rot_rand + 0.25 * p.pattern_rot90 as f32;
+            if p.pattern_rot_rand > 0.0 && rnd(i, j, sd.wrapping_add(71)) < p.pattern_rot_rand {
+                turns += 0.25 * (rnd(i, j, sd.wrapping_add(72)) * 4.0).floor();
+            }
+            let mut col = p.color * (1.0 - p.color_rand * rnd(i, j, sd.wrapping_add(9)));
+            if p.lum_by_number > 0.0 {
+                col *= 1.0 - p.lum_by_number * (key as f32 / (total - 1.0).max(1.0));
+            }
+            let pick = choose_n(np, distribution, key as usize, rnd(i, j, sd.wrapping_add(21)));
+            let (fx, fy) = match p.symmetry_random {
+                1 => (rnd(i, j, sd.wrapping_add(51)) < 0.5, false),
+                2 => (false, rnd(i, j, sd.wrapping_add(52)) < 0.5),
+                3 => (rnd(i, j, sd.wrapping_add(51)) < 0.5, rnd(i, j, sd.wrapping_add(52)) < 0.5),
+                _ => (false, false),
+            };
+            let spec = (p.pattern_specific + (rnd(i, j, sd.wrapping_add(61)) - 0.5) * 2.0 * p.pattern_specific_rand).clamp(0.0, 1.0);
+            // a scale map can only shrink the instance (its multiplier is applied to a value in 0..1)
+            let (sx, sy) = (s_cap, s_cap * p.aspect.max(0.01));
+            max_half = max_half.max(sx.max(sy) * 0.5 / dvx.min(dvy) * fnx.min(fny));
+            inst.push([cx, cy, s, turns]);
+            inst.push([col, spec, key as f32, flags(fx, fy, proc_keep)]);
+            inst.push([pick as f32, 0.0, 0.0, 0.0]);
+        }
+    }
+    let disp = if has_disp { p.displacement_intensity } else { 0.0 };
+    let reach = (max_half + p.pos_rand * p.pos_rand_x.max(p.pos_rand_y) * 0.5 + disp + p.offset_rand + 0.5).ceil();
+    let rad = (reach as i32).clamp(1, 3);
+    let dedupe = nx < 2 * rad + 1 || ny < 2 * rad + 1;
+    TilePre { inst, nx, ny, dvx, dvy, rad, dedupe, max_size: (p.size * p.scale * (1.0 + p.size_rand)).max(1e-3) }
 }

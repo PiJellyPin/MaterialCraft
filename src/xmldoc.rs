@@ -756,8 +756,11 @@ mod tests {
         for bad in ["", "<a>", "<a></b>", "<a x=1/>", "<a x=\"1/>", "<a>&bogus;</a>", "<a/><b/>", "<a><!-- </a>", "<", "<a &>", "<a>&#xFFFFFFFF;</a>", "<a x=\"<\"/>", "<a x=\"1\"y=\"2\"/>", "é<a/>"] {
             assert!(XDoc::parse(bad).is_err(), "{bad:?} should fail");
         }
-        let deep = "<a>".repeat(MAX_DEPTH + 2) + &"</a>".repeat(MAX_DEPTH + 2);
-        assert!(XDoc::parse(&deep).is_err());
+        // the recursive parser needs more stack than a debug test thread has
+        std::thread::Builder::new().stack_size(32 << 20).spawn(|| {
+            let deep = "<a>".repeat(MAX_DEPTH + 2) + &"</a>".repeat(MAX_DEPTH + 2);
+            assert!(XDoc::parse(&deep).is_err());
+        }).unwrap().join().unwrap();
         // multi-byte text survives
         let t = "<a v=\"ä€😀\">ß</a>";
         assert_eq!(XDoc::parse(t).unwrap().to_text(), t);

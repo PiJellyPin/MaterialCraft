@@ -279,6 +279,23 @@ impl Cx {
         Some(name)
     }
 
+    /// Make the built-in library functions (native versions of Substance Designer's `functions.sbs`) available for
+    /// `f_call` resolution, once.
+    fn ensure_libfuncs(&mut self) {
+        if self.lib.contains_key("libfn_clamp") {
+            return;
+        }
+        for (k, g) in crate::libfuncs::graphs() {
+            self.lib.entry(k.clone()).or_insert_with(|| g.clone());
+        }
+    }
+
+    /// Output arity (lane count) of an already-converted function in `self.lib`, or `None` if it does not compile.
+    fn fn_out_lanes(&self, name: &str) -> Option<usize> {
+        let l = crate::func::compile_named(&self.lib, name).ok()?.result_type().ok()?.lanes();
+        (l >= 1).then_some(l)
+    }
+
     fn function_name(&mut self, src: usize, path: &str) -> Option<String> {
         let path = path.trim_matches('/').to_string();
         let f = self.srcs[src].pkg.functions.iter().find(|f| (if f.folder.is_empty() { f.identifier.clone() } else { format!("{}/{}", f.folder, f.identifier) }) == path || f.identifier == path)?.clone();
@@ -576,7 +593,7 @@ const LIBRARY: &[(&str, &str)] = &[
 /// Our node kind for a library graph identifier.
 /// MaterialCraft renders library graph `id` of `package` with one of its own nodes.
 pub fn library_renders(package: &str, id: &str) -> bool {
-    crate::sbs_adapt::adapter(package, id).is_some() || library_kind(id).is_some()
+    crate::sbs_adapt::adapter(package, id).is_some() || crate::nodes10::kind_for(package, id).is_some() || library_kind(id).is_some()
 }
 
 pub fn library_kind(id: &str) -> Option<&'static str> {
@@ -647,7 +664,12 @@ fn type_code_of_val(v: &Val) -> f32 {
 }
 
 /// Number of lanes a function node returns (1 when unknown).
-fn lanes(fg: &FuncGraph, uid: &str, depth: usize) -> usize {
+/// Lane count of function node `uid`'s output. `inst` gives the return arity of `instance` nodes (which call
+/// another function, so their lanes are that function's output, not their first input's); keyed by node uid.
+fn lanes(fg: &FuncGraph, uid: &str, depth: usize, inst: &HashMap<String, usize>) -> usize {
+    if let Some(&l) = inst.get(uid) {
+        return l;
+    }
     let Some(n) = fg.nodes.iter().find(|n| n.uid == uid) else { return 1 };
     if depth > 64 {
         return 1;
@@ -660,7 +682,7 @@ fn lanes(fg: &FuncGraph, uid: &str, depth: usize) -> usize {
         "vector3" | "ivector3" | "swizzle3" | "iswizzle3" | "toint3" | "tofloat3" => 3,
         "vector4" | "ivector4" | "swizzle4" | "iswizzle4" | "toint4" | "tofloat4" | "samplecol" => 4,
         "dot" | "samplelum" | "atan2" | "rand" | "swizzle1" | "iswizzle1" | "toint1" | "tofloat" | "eq" | "noteq" | "gt" | "gteq" | "lr" | "lreq" | "and" | "or" | "not" => 1,
-        _ => n.conns.first().map(|c| lanes(fg, &c.from, depth + 1)).unwrap_or(1),
+        _ => n.conns.first().map(|c| lanes(fg, &c.from, depth + 1, inst)).unwrap_or(1),
     }
 }
 
@@ -672,6 +694,9 @@ fn fn_slot(func: &str, slot: &str) -> Option<&'static str> {
         ("ifelse", "elsepath") => "b",
         ("sequence", "seqin") => "a",
         ("sequence", "seqlast") => "b",
+        ("while", "init" | "initialization" | "seqin" | "in") => "a",
+        ("while", "condition" | "cond" | "exitcond" | "exit" | "exitcondition") => "b",
+        ("while", "loop" | "loopbody" | "body" | "seqlast" | "last") => "c",
         ("lerp", "a") => "a",
         ("lerp", "b") => "b",
         ("lerp", "x") => "c",
@@ -713,6 +738,9 @@ impl Cx {
             fin.insert(p.identifier.clone(), id);
         }
         let mut pending: Vec<(u32, &crate::sbs::FNode)> = Vec::new();
+        // the output arity of each `instance` node (its called function's output), so vector assembly below knows
+        // how many lanes a call result contributes
+        let mut inst_lanes: HashMap<String, usize> = HashMap::new();
         for fnode in &fg.nodes {
             let pos = [fnode.pos[0] * POS_SCALE, fnode.pos[1] * POS_SCALE];
             let data = |name: &str| fnode.datas.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.clone()).or_else(|| fnode.datas.first().map(|(_, v)| v.clone()));
@@ -804,13 +832,23 @@ impl Cx {
                     n.strs.insert("name".into(), data("set").map(|v| v.text()).unwrap_or_default());
                 }
                 "sequence" => n.kind = "f_sequence".into(),
+                "pow" => n.kind = "f_pow".into(),
+                "while" => {
+                    n.kind = "f_while".into();
+                    n.nums.insert("max".into(), data("while").map(|v| v.num()).unwrap_or(32.0));
+                }
                 "ifelse" => n.kind = "f_if".into(),
                 "vector2" | "vector3" | "vector4" | "ivector2" | "ivector3" | "ivector4" => n.kind = format!("f_{}", f.replace("vector", "vec")),
                 _ if f.starts_with("swizzle") || f.starts_with("iswizzle") => {
                     n.kind = "f_swizzle".into();
                     let idx = data(f).map(|v| (0..v.len()).map(|i| v.at(i) as i32).collect::<Vec<_>>()).unwrap_or_default();
                     let mask: String = idx.iter().map(|i| ['x', 'y', 'z', 'w'][(*i).clamp(0, 3) as usize]).collect();
-                    n.strs.insert("mask".into(), if mask.is_empty() { "x".into() } else { mask });
+                    // without explicit components, swizzleN keeps the first N (swizzle2 -> "xy", not a single lane)
+                    let fallback = || {
+                        let n = f.trim_start_matches("iswizzle").trim_start_matches("swizzle").chars().last().and_then(|c| c.to_digit(10)).unwrap_or(1) as usize;
+                        "xyzw".chars().take(n.clamp(1, 4)).collect::<String>()
+                    };
+                    n.strs.insert("mask".into(), if mask.is_empty() { fallback() } else { mask });
                 }
                 _ if f.starts_with("toint") => n.kind = "f_to_int".into(),
                 _ if f.starts_with("tofloat") => n.kind = "f_to_float".into(),
@@ -839,24 +877,46 @@ impl Cx {
                 "instance" => {
                     let path = data("instance").map(|v| v.text()).unwrap_or_default();
                     let (fpath, dep) = sbs::split_path(&path);
-                    let target = match dep {
-                        None => Ok(None),
-                        Some(uid) => self.dependency(fc.src, &uid),
-                    };
-                    let called = match target {
-                        Ok(None) => self.function_name(fc.src, &fpath),
-                        Ok(Some(s)) => self.function_name(s, &fpath),
-                        Err(_) => None,
+                    // a Substance Designer library function (Functions/Math/clamp, ...) implemented natively, so the
+                    // material renders without Designer installed; the file is only consulted for ones not built in
+                    if let Some(name) = crate::libfuncs::resolve_path(&fpath) {
+                        self.ensure_libfuncs();
+                        if let Some(l) = self.fn_out_lanes(name) {
+                            inst_lanes.insert(fnode.uid.clone(), l);
+                        }
+                        n.kind = "f_call".into();
+                        n.strs.insert("fn".into(), name.into());
+                        let id = add(&mut g, n);
+                        ids.insert(fnode.uid.clone(), id);
+                        pending.push((id, fnode));
+                        continue;
+                    }
+                    let called = match dep {
+                        None => self.function_name(fc.src, &fpath),
+                        // a function in another package of the project; a Substance Designer library package
+                        // (sbs://...) is not consulted — its functions are built in (see crate::libfuncs)
+                        Some(uid) => match self.dependency(fc.src, &uid) {
+                            Ok(Some(s)) => self.function_name(s, &fpath),
+                            _ => None,
+                        },
                     };
                     match called {
                         Some(name) => {
+                            if let Some(l) = self.fn_out_lanes(&name) {
+                                inst_lanes.insert(fnode.uid.clone(), l);
+                            }
                             n.kind = "f_call".into();
                             n.strs.insert("fn".into(), name);
                         }
                         None => {
                             n.kind = "f_float".into();
                             n.nums.insert("v".into(), 0.0);
-                            self.note(Level::Missing, &fc.graph, None, format!("function '{fpath}' is not available (library functions are not included); 0 is used"));
+                            self.note(
+                                Level::Missing,
+                                &fc.graph,
+                                None,
+                                format!("function '{fpath}' is not available; 0 is used (Substance Designer library functions are built in; this one is not among them)"),
+                            );
                         }
                     }
                 }
@@ -878,7 +938,7 @@ impl Cx {
             match f {
                 "vector2" | "vector3" | "vector4" | "ivector2" | "ivector3" | "ivector4" => {
                     // components arrive as a first part and a last part, each one or more lanes wide
-                    let parts: Vec<(u32, usize)> = ["componentsin", "componentslast"].iter().filter_map(|s| fnode.conns.iter().find(|c| c.slot.eq_ignore_ascii_case(s))).filter_map(|c| link(c).map(|i| (i, lanes(fg, &c.from, 0)))).collect();
+                    let parts: Vec<(u32, usize)> = ["componentsin", "componentslast"].iter().filter_map(|s| fnode.conns.iter().find(|c| c.slot.eq_ignore_ascii_case(s))).filter_map(|c| link(c).map(|i| (i, lanes(fg, &c.from, 0, &inst_lanes)))).collect();
                     let mut lane_srcs: Vec<(u32, Option<usize>)> = Vec::new();
                     for (src, n) in parts {
                         if n <= 1 {
@@ -970,10 +1030,12 @@ impl Cx {
                         .unwrap_or_default();
                     for c in &fnode.conns {
                         if let (Some(pos), Some(from)) = (order.iter().position(|o| *o == c.slot), link(c)) {
-                            if pos < 4 {
+                            if let Some(slot) = crate::func::CALL_SLOTS.get(pos) {
                                 if let Some(n) = g.nodes.get_mut(id) {
-                                    n.ins.insert(["a", "b", "c", "d"][pos].into(), from);
+                                    n.ins.insert((*slot).into(), from);
                                 }
+                            } else {
+                                self.note(Level::Approx, &fc.graph, None, format!("input '{}' of a function call is beyond the {} a call passes on; its default is used", c.slot, crate::func::CALL_SLOTS.len()));
                             }
                         }
                     }
@@ -1219,14 +1281,31 @@ impl Cx {
                 let prog = self.convert_fx(&fx, &fc, name, *id);
                 c.node.strs.insert("program".into(), prog);
             }
-            for b in std::mem::take(&mut c.binds) {
-                let fname = self.unique(&format!("{name}_n{id}_{}", san(&b.param)));
-                let mut fg = self.convert_func(&b.func, &fc);
-                wrap_result(&mut fg, b.lane, b.scale, b.offset);
-                fg.meta.insert("embedded".into(), "1".into());
-                fg.meta.insert("identifier".into(), fname.clone());
-                self.lib.insert(fname.clone(), fg);
+            let binds = std::mem::take(&mut c.binds);
+            let mut shared: Vec<(&FuncGraph, String)> = Vec::new();
+            for b in &binds {
+                // Vector components (including output width/height) can share the original
+                // function. Keep unit conversions in their existing wrapper graphs.
+                let share = b.lane.is_some() && b.scale == 1.0 && b.offset == 0.0;
+                let existing = share.then(|| shared.iter().find(|(f, _)| *f == &b.func)).flatten();
+                let fname = if let Some((_, fname)) = existing {
+                    fname.clone()
+                } else {
+                    let fname = self.unique(&format!("{name}_n{id}_{}", san(&b.param)));
+                    let mut fg = self.convert_func(&b.func, &fc);
+                    wrap_result(&mut fg, if share { None } else { b.lane }, b.scale, b.offset);
+                    fg.meta.insert("embedded".into(), "1".into());
+                    fg.meta.insert("identifier".into(), fname.clone());
+                    self.lib.insert(fname.clone(), fg);
+                    if share {
+                        shared.push((&b.func, fname.clone()));
+                    }
+                    fname
+                };
                 c.node.strs.insert(format!("fn.{}", b.param), fname);
+                if share {
+                    c.node.strs.insert(format!("fl.{}", b.param), ["x", "y", "z", "w"][b.lane.unwrap().min(3)].into());
+                }
             }
             if let Some(body) = c.body.take() {
                 let fname = self.unique(&format!("{name}_n{id}_fn"));
@@ -1399,7 +1478,7 @@ impl Cx {
                     }
                 },
                 PValue::Dynamic(f) => {
-                    let lanes_n = lanes(f, &f.root, 0);
+                    let lanes_n = lanes(f, &f.root, 0, &std::collections::HashMap::new());
                     if lanes_n <= 1 {
                         c.binds.push(Bind { param: format!("{iid}.v"), func: f.clone(), lane: None, scale: 1.0, offset: 0.0 });
                     } else {
@@ -1419,7 +1498,11 @@ impl Cx {
         let lib = crate::sbs_lib::find(Some(package), id);
         let (kind, f): (&'static str, fn(&mut crate::sbs_adapt::Ad)) = match crate::sbs_adapt::adapter(package, id) {
             Some(a) => (a.kind, a.f),
-            None => (library_kind(id)?, crate::sbs_adapt::generic),
+            None => match crate::nodes10::kind_for(package, id) {
+                // library graphs MaterialCraft implements under their own names (see nodes10)
+                Some(k) => (k, crate::nodes10::adapt),
+                None => (library_kind(id)?, crate::sbs_adapt::generic),
+            },
         };
         let mut ad = crate::sbs_adapt::Ad::new(kind, id, lib, params);
         f(&mut ad);
@@ -1668,11 +1751,10 @@ impl Cx {
                 c
             }
             "blur" => {
-                let mut c = Conv::new("blur", Level::Approx).slot("input1", "in");
-                // the format's intensity counts the reach of the blur in pixels of a 256-pixel image; ours is the standard
-                // deviation of a Gaussian (the reach is about three of them) in pixels of a 512-pixel image
-                c.lin(p, "intensity", 10.0, "radius", 2.0 / 3.0, 0.0);
-                c.notes.push((Level::Approx, "blur strength is converted (intensity / 1.5 as a Gaussian deviation); compare with a reference render".into()));
+                let mut c = Conv::new("blur", Level::Info).slot("input1", "in");
+                // measured on the original: a box filter whose full width is 2 x intensity pixels (the same at 256 and 512);
+                // a Gaussian of equal variance has a deviation of width / sqrt(12)
+                c.lin(p, "intensity", 10.0, "radius", 2.0 / 12f32.sqrt(), 0.0);
                 c
             }
             "sharpen" => {
@@ -1701,12 +1783,14 @@ impl Cx {
                 c
             }
             "emboss" => {
-                let mut c = Conv::new("emboss", Level::Approx).slot("input1", "in");
+                // the input lit by the height map's slopes, in the highlight and shadow colours
+                let mut c = Conv::new("emboss", Level::Approx).slot("input1", "in").slot("inputgradient", "height");
+                c.num("mode", 1.0);
                 c.lin(p, "lightangle", 0.0, "angle", 1.0, 0.0);
                 c.lin(p, "intensity", 5.0, "intensity", 1.0, 0.0);
-                if find(p, "highlightcolor").is_some() || find(p, "shadowcolor").is_some() {
-                    c.approx("highlight and shadow colours are not carried over");
-                }
+                c.color(p, "highlightcolor", [1.0, 1.0, 1.0, 1.0], ["hl_r", "hl_g", "hl_b", ""]);
+                c.color(p, "shadowcolor", [0.0, 0.0, 0.0, 1.0], ["sh_r", "sh_g", "sh_b", ""]);
+                c.notes.push((Level::Approx, "the emboss lighting follows Substance Designer's model (highlight and shadow colours on the height map's slopes); its strength is not yet matched against a reference render".into()));
                 c
             }
             "distance" => {
@@ -1749,8 +1833,11 @@ impl Cx {
                 c
             }
             "normal" => {
-                let mut c = Conv::new("normal", Level::Approx).slot("input1", "in");
-                c.lin(p, "intensity", 1.0, "strength", 2.0, 0.0);
+                let mut c = Conv::new("normal", Level::Info).slot("input1", "in");
+                // measured against the original: a height ramp of slope 1 per picture width tilts the normal by
+                // intensity / 256 at every resolution, and our strength tilts it by strength * 0.05 (see
+                // `ops::normal_from_height`), so strength = intensity / 12.8
+                c.lin(p, "intensity", 1.0, "strength", 1.0 / 12.8, 0.0);
                 // the flag inverts the Y slope relative to the program's own (DirectX) convention: set = OpenGL
                 c.num("directx", if int("inversedy", 0) != 0 { 0.0 } else { 1.0 });
                 c.num("alpha_from_input", if int("input2alpha", 0) != 0 { 1.0 } else { 0.0 });
@@ -1813,8 +1900,7 @@ impl Cx {
                 c
             }
             "curve" => {
-                let mut c = Conv::new("curve", Level::Approx).slot("input1", "in");
-                c.notes.push((Level::Approx, "curve tangents are not carried over; the curve passes through the same points".into()));
+                let mut c = Conv::new("curve", Level::Info).slot("input1", "in");
                 for a in arrays {
                     let an = a.name.to_ascii_lowercase();
                     let key = if an.contains("red") {
@@ -1828,10 +1914,31 @@ impl Cx {
                     } else {
                         "points"
                     };
-                    let mut pts: Vec<(f32, f32)> = a.cells.iter().filter_map(|cell| cval(cell, "position").filter(|v| v.len() >= 2).map(|v| (v.at(0).clamp(0.0, 1.0), v.at(1).clamp(0.0, 1.0)))).collect();
+                    // each point keeps its Bezier handles (absolute positions) so the segments bend as in the file
+                    let mut pts: Vec<(f32, f32, Option<[f32; 4]>)> = a
+                        .cells
+                        .iter()
+                        .filter_map(|cell| {
+                            let v = cval(cell, "position").filter(|v| v.len() >= 2)?;
+                            let (l, r) = (cval(cell, "left").filter(|v| v.len() >= 2), cval(cell, "right").filter(|v| v.len() >= 2));
+                            let hd = match (l, r) {
+                                (Some(l), Some(r)) => Some([l.at(0), l.at(1), r.at(0), r.at(1)]),
+                                _ => None,
+                            };
+                            Some((v.at(0).clamp(0.0, 1.0), v.at(1).clamp(0.0, 1.0), hd))
+                        })
+                        .collect();
                     pts.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
                     if pts.len() >= 2 {
-                        c.node.strs.insert(key.into(), pts.iter().map(|(x, y)| format!("{x}:{y}")).collect::<Vec<_>>().join(","));
+                        let text = pts
+                            .iter()
+                            .map(|(x, y, hd)| match hd {
+                                Some(h) => format!("{x}:{y}:{}:{}:{}:{}", h[0], h[1], h[2], h[3]),
+                                None => format!("{x}:{y}"),
+                            })
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        c.node.strs.insert(key.into(), text);
                     }
                 }
                 c
@@ -1887,7 +1994,7 @@ impl Cx {
                 c
             }
             "text" => {
-                let mut c = Conv::new("text", Level::Approx);
+                let mut c = Conv::new("text", Level::Info);
                 if let Some(t) = cval(p, "text") {
                     c.node.strs.insert("text".into(), t.text().replace(['"', '#', '\n'], " "));
                 }
@@ -1899,8 +2006,19 @@ impl Cx {
                     c.num("use_color", 1.0);
                     c.color(p, "frontcolor", [1.0, 1.0, 1.0, 1.0], ["color_r", "color_g", "color_b", ""]);
                 }
-                if cval(p, "fontdata").map(|v| !v.text().is_empty()).unwrap_or(false) {
-                    c.approx("the font is not carried over; the built-in face is used");
+                // the font: a font resource of the package, or the family name of an installed font
+                if let Some(fd) = cval(p, "fontdata").map(|v| v.text()).filter(|t| !t.trim().is_empty()) {
+                    if fd.contains("pkg:") || fd.contains("://") {
+                        if let Some(f) = self.resource_file(src, &fd, gname) {
+                            c.node.strs.insert("font".into(), f);
+                        }
+                    } else {
+                        let fam = fd.trim().to_string();
+                        if crate::font::system_font(&fam).is_none() {
+                            c.approx(format!("the font '{fam}' is not installed on this computer; the built-in face is used until it is"));
+                        }
+                        c.node.strs.insert("font_family".into(), fam);
+                    }
                 }
                 c
             }
@@ -1930,7 +2048,7 @@ impl Cx {
                 }
                 match dynv(p, "function") {
                     Some(f) => c.body = Some(f.clone()),
-                    None => c.approx("the value processor has no function"),
+                    None => c.approx("the value processor has no function; it gives 0, like an empty one in the file's own editor"),
                 }
                 c
             }
@@ -1969,20 +2087,37 @@ pub(crate) fn size_and_format(c: &mut Conv, p: &[Param]) {
                     "0" => {
                         c.num("osize_mode", 2.0);
                         c.num("osize_abs", w.clamp(4.0, 13.0));
-                        if h != w {
-                            c.num("osize_abs_h", h.clamp(4.0, 13.0));
-                        }
+                        c.num("osize_abs_h", h.clamp(4.0, 13.0));
                     }
                     rel => {
                         c.num("osize_mode", if rel == "2" { 0.0 } else { 1.0 });
                         c.num("osize_rel", w.clamp(-12.0, 12.0));
                         if h != w {
-                            c.notes.push((Level::Approx, "a different height offset of the output size is not used (the width's is)".into()));
+                            c.num("osize_rel_h", h.clamp(-12.0, 12.0));
                         }
                     }
                 }
             }
-            PValue::Dynamic(_) => c.notes.push((Level::Approx, "a function-driven output size is not used".into())),
+            PValue::Dynamic(f) => {
+                let rel = par.relative_to.as_deref().unwrap_or("1");
+                let has_result = !f.root.is_empty() && f.nodes.iter().any(|n| n.uid == f.root);
+                if rel == "0" {
+                    c.num("osize_mode", 2.0);
+                    c.num("osize_abs", 9.0);
+                } else {
+                    c.num("osize_mode", if rel == "2" { 0.0 } else { 1.0 });
+                    c.num("osize_rel", 0.0);
+                }
+                if has_result {
+                    // Both components are exponents (absolute) or offsets (relative), evaluated before sizing the node.
+                    let params = if rel == "0" { ["osize_abs", "osize_abs_h"] } else { ["osize_rel", "osize_rel_h"] };
+                    for (lane, param) in params.into_iter().enumerate() {
+                        c.binds.push(Bind { param: param.into(), func: f.clone(), lane: Some(lane), scale: 1.0, offset: 0.0 });
+                    }
+                } else {
+                    c.notes.push((Level::Info, "the output size function has no result node; the default size is used, as in the file's own editor".into()));
+                }
+            }
         }
     }
     if let Some(par) = find(p, "format") {

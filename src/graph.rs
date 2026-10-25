@@ -12,6 +12,9 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::sync::Arc as Rc;
 
+#[path = "graph_gpu.rs"]
+mod graph_gpu;
+
 #[derive(Debug)]
 pub enum Error {
     Parse(usize, String),
@@ -75,9 +78,9 @@ pub const SPECS: &[Spec] = &[
     s!("checker", [], [], "tiles white_first rotate45 lum_var seed"),
     s!("bricks", [], [], "rows cols mortar bevel offset lum_var seed"),
     s!("fx_map", [], ["in", "in2", "in3", "in4", "in5", "in6", "in7", "in8", "background"], "run a pattern program: program=\"name\" depth seed blend (0 max 1 add 2 over 3 min 4 multiply) color bg bg_r bg_g bg_b roughness (strength per quad-tree level) opacity; in..in8 are the image patterns, background the starting image"),
-    s!("curve", ["in"], [], "tone curves: points (master), points_r points_g points_b points_a as \"x:y,x:y\" lists"),
+    s!("curve", ["in"], [], "tone curves: points (master), points_r points_g points_b points_a as \"x:y,x:y\" lists; a point may add a slope (x:y:s), two slopes (x:y:sin:sout) or Bezier handles at absolute positions (x:y:lx:ly:rx:ry)"),
     s!("svg", [], [], "vector image: file=\"art.svg\" fit (0 contain 1 stretch 2 cover) scale x y"),
-    s!("text", [], [], "text: text=\"...\" font=\"face.ttf\" (optional) size x y align (0 left 1 centre 2 right) spacing line_spacing rotation value wrap(width as a fraction of the image, 0 off) use_color color_r color_g color_b"),
+    s!("text", [], [], "text: text=\"...\" font=\"face.ttf\" (optional) or font_family=\"Arial\" (an installed family) size x y align (0 left 1 centre 2 right) spacing line_spacing rotation value wrap(width as a fraction of the image, 0 off) use_color color_r color_g color_b"),
     s!("channel_shuffle", ["in"], ["in2"], "rebuild channels: src_r src_g src_b src_a (0-3 channels of in, 4-7 channels of in2, 8 zero, 9 one), inv_r inv_g inv_b inv_a"),
     s!("input_value", [], [], "graph parameter read by functions: name, type (0 float, 1 int, 2 bool, 3 float2, 4 float3, 5 float4, 6 int2, 7 int3, 8 int4, 9 string), v / x y z w, min max, label"),
     s!("pixel_processor", [], ["in", "in2", "in3", "in4", "in5", "in6", "in7", "in8", "in9", "in10", "in11", "in12", "in13", "in14", "in15", "in16"], "per-pixel expr / expr_g / expr_b / expr_a (string params), or fn=\"function\" to run a function graph per pixel"),
@@ -141,7 +144,7 @@ pub const SPECS: &[Spec] = &[
     s!("adjust", ["in"], [], "brightness contrast"),
     s!("invert", ["in"], [], "invert colours: invert"),
     s!("threshold", ["in"], [], "binary threshold: threshold softness mode(0 greater,1 greater or equal,2 lower,3 lower or equal)"),
-    s!("histogram_scan", ["in"], [], "position width"),
+    s!("histogram_scan", ["in"], ["position_map", "contrast_map"], "position contrast invert; position_map / contrast_map (grayscale) give the position and contrast per pixel while use_position_map / use_contrast_map are on"),
     s!("quantize", ["in"], [], "steps"),
     s!("to_gray", ["in"], [], "luminance"),
     s!("channel", ["in"], [], "ch(0 r,1 g,2 b,3 a)"),
@@ -160,7 +163,7 @@ pub const SPECS: &[Spec] = &[
     s!("quantize_color", ["in"], [], "reduce to few colours (k-means): color_amount contour_smoothing dithering dithering_pattern(0 noise,1 bayer) ignore_alpha distance_color_space(0 lab,1 rgb)"),
     s!("curvature", ["in"], [], "curvature of a normal map: mode(0 normal map,1 height map) intensity directx radius"),
     s!("edge_detect", ["in"], [], "edge lines: mode(0 lines,1 sobel) edge_width edge_roundness invert tolerance intensity"),
-    s!("emboss", ["in"], [], "angle intensity"),
+    s!("emboss", ["in"], ["height"], "mode (0 relief of the input, 1 light the input with the height map) angle intensity hl_r hl_g hl_b (highlight colour) sh_r sh_g sh_b (shadow colour) gloss"),
     s!("non_uniform_blur", ["in", "mask"], [], "blur by a mask: intensity"),
     s!("radial_blur", ["in"], [], "spin blur around a centre: mode(0 spin,1 zoom) samples angle x y amount radius"),
     s!("anisotropic_blur", ["in"], [], "blur stretched in one direction: intensity anisotropy angle"),
@@ -291,11 +294,12 @@ pub fn spec(kind: &str) -> Option<&'static Spec> {
     if kind.starts_with("sbs:") {
         return crate::sbs_defs::spec(kind);
     }
-    SPECS.iter().chain(crate::func::FUNC_SPECS.iter()).chain(crate::fxmap::FXM_SPECS.iter()).find(|s| s.kind == kind)
+    SPECS.iter().chain(crate::func::FUNC_SPECS.iter()).chain(crate::fxmap::FXM_SPECS.iter()).find(|s| s.kind == kind).or_else(|| crate::nodes10::spec(kind))
 }
 
 pub fn category(kind: &str) -> &'static str {
     match kind {
+        k if k.starts_with("x_") => crate::nodes10::category(k),
         "color" | "white_noise" | "gaussian_noise" | "perlin" | "fbm" | "clouds" | "voronoi" | "voronoi_fractal" | "bnw_spots" | "crystal" | "directional_noise" | "grunge" | "plasma"
         | "gradient" | "gradient_axial" | "gradient_circular" | "circle" | "rect" | "polygon" | "shape" | "star" | "checker" | "bricks" | "stripes" | "weave"
         | "tile_sampler" | "tile_generator" | "splatter" | "splatter_circular" | "pixel_processor" | "value_processor" | "fx_map" | "text" | "svg" | "cells" | "fractal_sum" | "waveform" | "gaussian_spots" | "triangle_grid" | "starburst" | "gradient_reflected" | "weave_generator" | "grunge_map" | "blue_noise" | "fibers" | "scratches" | "caustics" | "liquid_noise" | "perlin_3d" | "paving" | "wire_mesh" | "path_stroke" | "path_fill" | "path_distance" | "path_border" | "path_scatter" | "path_track" | "path_cable" | "path_seam" | "path_splatter" | "path_sample" | "herringbone" | "arc_pavement" | "anisotropic_noise" | "fur_noise" | "moisture_noise" | "microscope_noise" | "worley_3d" | "fbm_3d" | "volume_mask" | "gradient_3d" | "preset_noise" | "noise_pattern" | "gradient_2pt" | "weave_preset" | "tile_preset" | "tile_random2" | "noise_3d" => "Generators",
@@ -310,6 +314,9 @@ pub fn category(kind: &str) -> &'static str {
 
 /// Friendly display name for a node kind.
 pub fn label(kind: &str) -> String {
+    if let Some(l) = crate::nodes10::label(kind) {
+        return l;
+    }
     let named = match kind {
         "fbm" => "Fractal Noise",
         "clouds" => "Clouds",
@@ -653,6 +660,8 @@ pub struct EvalAll {
     pub thumbs: HashMap<u32, Vec<u8>>,
     pub errors: HashMap<u32, String>,
     pub kept: HashMap<u32, Arc<Tex>>,
+    /// results asked for with `defer` in `evaluate_all_cached_ex`: still wherever they were made, read on demand
+    pub pending: HashMap<u32, Pending>,
     /// output size of every evaluated node (differs from the graph size when a node has its own Output Size)
     pub sizes: HashMap<u32, usize>,
 }
@@ -1378,21 +1387,37 @@ impl Graph {
     /// `full`: evaluate every node and take thumbnails (the idle pass). When false, only the nodes that feed `first`
     /// and `keep` are evaluated and no thumbnails are taken — the cheap pass run while a value is being dragged, so a
     /// large graph's off-screen branches and disconnected nodes cost nothing until the input settles.
-    pub fn evaluate_all_cached(&self, size: usize, keep: &[u32], job: u64, cache: &Arc<NodeCache>, first: Option<u32>, full: bool, on_first: &mut dyn FnMut(&Tex)) -> EvalAll {
+    pub fn evaluate_all_cached(&self, size: usize, keep: &[u32], job: u64, cache: &Arc<NodeCache>, first: Option<u32>, full: bool, on_first: &mut dyn FnMut(&Pending)) -> EvalAll {
+        self.evaluate_all_cached_ex(size, keep, &[], job, cache, first, full, on_first)
+    }
+
+    /// `evaluate_all_cached` where the nodes in `defer` (a subset of `keep`) are not read back to the host: they come
+    /// back in `EvalAll::pending`, and whoever needs their pixels (or their device pictures) asks then. The editor
+    /// defers the material outputs so the 3D view can take them packed straight from the device.
+    #[allow(clippy::too_many_arguments)]
+    pub fn evaluate_all_cached_ex(&self, size: usize, keep: &[u32], defer: &[u32], job: u64, cache: &Arc<NodeCache>, first: Option<u32>, full: bool, on_first: &mut dyn FnMut(&Pending)) -> EvalAll {
         crate::tex::set_job(job);
-        let r = self.evaluate_all_impl(size, keep, Some(cache.clone()), first, full, on_first);
+        let r = self.evaluate_all_impl(size, keep, defer, Some(cache.clone()), first, full, on_first);
         crate::tex::set_job(0);
         r
     }
 
     pub fn evaluate_all(&self, size: usize, keep: &[u32]) -> EvalAll {
-        self.evaluate_all_impl(size, keep, None, None, true, &mut |_| {})
+        self.evaluate_all_impl(size, keep, &[], None, None, true, &mut |_| {})
     }
 
-    fn evaluate_all_impl(&self, size: usize, keep: &[u32], persist: Option<Arc<NodeCache>>, first: Option<u32>, full: bool, on_first: &mut dyn FnMut(&Tex)) -> EvalAll {
-        let mut r = EvalAll { thumbs: HashMap::new(), errors: HashMap::new(), kept: HashMap::new(), sizes: HashMap::new() };
-        match self.lowered() {
-            Ok(Some(low)) => return low.evaluate_all_impl(size, keep, persist, first, full, on_first),
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_all_impl(&self, size: usize, keep: &[u32], defer: &[u32], persist: Option<Arc<NodeCache>>, first: Option<u32>, full: bool, on_first: &mut dyn FnMut(&Pending)) -> EvalAll {
+        let mut r = EvalAll { thumbs: HashMap::new(), errors: HashMap::new(), kept: HashMap::new(), pending: HashMap::new(), sizes: HashMap::new() };
+        let lowered = match (&self.sd, &persist) {
+            (Some(sd), Some(cache)) if sd.role == crate::sbs_native::Role::Graph => match cache.lowered.lock() {
+                Ok(mut c) => c.get(self).map(Some).map_err(|e| Error::Parse(0, e)),
+                Err(_) => self.lowered().map(|g| g.map(Arc::new)),
+            },
+            _ => self.lowered().map(|g| g.map(Arc::new)),
+        };
+        match lowered {
+            Ok(Some(low)) => return low.evaluate_all_impl(size, keep, defer, persist, first, full, on_first),
             Ok(None) => {}
             Err(e) => {
                 r.errors.insert(0, e.to_string());
@@ -1426,6 +1451,7 @@ impl Graph {
         let mut seen = HashSet::new();
         order.retain(|i| seen.insert(*i));
         clear_siblings();
+        let mut kept: Vec<(u32, Rc<Lazy>)> = Vec::new();
         for id in order {
             if Some(id) != first && !keep.contains(&id) {
                 // already evaluated (or taken from the cache) as another node's input during this pass
@@ -1435,24 +1461,53 @@ impl Graph {
                 // unchanged since an earlier pass: only its card is shown, so take the thumbnail without the pixels
                 if let (Some(p), Some(h)) = (&cache.persist, cache.hashes.get(&id)) {
                     if let Some((th, sz)) = p.peek(*h) {
-                        cache.sizes.insert(id, sz);
-                        if let Some(tm) = cache.thumbs.as_mut() {
-                            tm.insert(id, th);
+                        // no thumbnail yet and a pass that shows the cards: evaluate (a cache hit) to take it
+                        if !th.is_empty() || cache.thumbs.is_none() {
+                            cache.sizes.insert(id, sz);
+                            if let Some(tm) = cache.thumbs.as_mut() {
+                                tm.insert(id, th);
+                            }
+                            continue;
                         }
-                        continue;
                     }
                 }
             }
-            match eval_node(self, id, &ctx, &[], &mut cache) {
-                Ok(t) => {
+            match eval_res(self, id, None, &ctx, &[], &mut cache) {
+                Ok(l) => {
                     if Some(id) == first {
-                        on_first(&t);
+                        // a picture that is on the device stays there: the viewer packs it there (`Pending::view`)
+                        if l.gpu.get().is_some() {
+                            on_first(&Pending(l.clone()));
+                        } else {
+                            match l.tex() {
+                                Ok(_) => on_first(&Pending(l.clone())),
+                                Err(e) => {
+                                    r.errors.insert(id, e.to_string());
+                                }
+                            }
+                        }
                     }
                     if keep.contains(&id) {
-                        r.kept.insert(id, t.clone());
+                        kept.push((id, l));
                     }
                 }
                 Err(Error::Cancelled) => break,
+                Err(e) => {
+                    r.errors.insert(id, e.to_string());
+                }
+            }
+        }
+        // the outputs the editor shows: every one still on the device comes back in one batch (the deferred ones stay)
+        let (later, kept): (Vec<_>, Vec<_>) = kept.into_iter().partition(|(id, _)| defer.contains(id));
+        for (id, l) in later {
+            r.pending.insert(id, Pending(l));
+        }
+        read_back(&kept);
+        for (id, l) in kept {
+            match l.tex() {
+                Ok(t) => {
+                    r.kept.insert(id, t);
+                }
                 Err(e) => {
                     r.errors.insert(id, e.to_string());
                 }
@@ -1472,37 +1527,46 @@ impl Graph {
 /// Least recently used entries are dropped when the memory budget is exceeded.
 pub struct NodeCache {
     inner: Mutex<NcInner>,
+    lowered: Mutex<crate::sbs_native::LowerCache>,
     budget: usize,
+    gbudget: usize,
     hits: std::sync::atomic::AtomicUsize,
     misses: std::sync::atomic::AtomicUsize,
 }
 
 struct NcInner {
     map: HashMap<u64, NcEntry>,
+    /// host memory held by the entries' pixels
     bytes: usize,
+    /// device memory held by the entries' pictures
+    gbytes: usize,
     tick: u64,
 }
 
 struct NcEntry {
-    data: NcData,
+    /// the pixels on the host (absent for a result that only exists on the device)
+    data: Option<NcData>,
+    /// the same picture in device memory, when a GPU node made it or a GPU node had to read it
+    gpu: Option<crate::gpu::GTex>,
     thumb: Vec<u8>,
     size: usize,
     stamp: u64,
     /// the full texture handed out last time: while anyone still holds it (the editor keeps the outputs and the 2D
-    /// view), a hit returns it without expanding the one-channel copy again
+    /// view), a hit returns it without expanding the one-channel copy again or reading the device picture back
     hot: std::sync::Weak<Tex>,
 }
 
 /// Grayscale textures (most of a typical graph) are stored with one channel: a quarter of the memory.
+#[derive(Clone)]
 enum NcData {
-    Gray(usize, usize, Vec<f32>),
+    Gray(usize, usize, Arc<Vec<f32>>),
     Rgba(Arc<Tex>),
 }
 
 impl NcData {
     fn pack(t: &Arc<Tex>) -> NcData {
         if t.px.iter().all(|p| p[0] == p[1] && p[1] == p[2] && p[3] == 1.0) {
-            NcData::Gray(t.w, t.h, t.px.iter().map(|p| p[0]).collect())
+            NcData::Gray(t.w, t.h, Arc::new(t.px.iter().map(|p| p[0]).collect()))
         } else {
             NcData::Rgba(t.clone())
         }
@@ -1528,20 +1592,44 @@ impl NcData {
             NcData::Rgba(t) => t.px.len() * 16,
         }
     }
+    fn dims(&self) -> (usize, usize) {
+        match self {
+            NcData::Gray(w, h, _) => (*w, *h),
+            NcData::Rgba(t) => (t.w, t.h),
+        }
+    }
+}
+
+/// What a cache hit hands out: whichever forms of the picture exist, nothing converted yet.
+struct NcHit {
+    hot: Option<Arc<Tex>>,
+    data: Option<NcData>,
+    gpu: Option<crate::gpu::GTex>,
+    thumb: Vec<u8>,
+    size: usize,
 }
 
 impl NodeCache {
     pub fn new(budget_mb: usize) -> NodeCache {
-        NodeCache { inner: Mutex::new(NcInner { map: HashMap::new(), bytes: 0, tick: 0 }), budget: budget_mb.max(16) << 20, hits: Default::default(), misses: Default::default() }
+        let gmb = std::env::var("MC_GPU_CACHE_MB").ok().and_then(|s| s.parse().ok()).unwrap_or(1536usize);
+        NodeCache {
+            inner: Mutex::new(NcInner { map: HashMap::new(), bytes: 0, gbytes: 0, tick: 0 }),
+            lowered: Mutex::new(Default::default()),
+            budget: budget_mb.max(16) << 20,
+            gbudget: gmb.max(16) << 20,
+            hits: Default::default(),
+            misses: Default::default(),
+        }
     }
 
-    /// Budget from the MC_CACHE_MB environment variable (default 3 GB).
+    /// Budget from the MC_CACHE_MB environment variable (default 3 GB); device pictures have their own budget
+    /// (MC_GPU_CACHE_MB, default 1.5 GB).
     pub fn with_default_budget() -> NodeCache {
         let mb = std::env::var("MC_CACHE_MB").ok().and_then(|s| s.parse().ok()).unwrap_or(3072);
         NodeCache::new(mb)
     }
 
-    fn get(&self, h: u64) -> Option<(Arc<Tex>, Vec<u8>, usize)> {
+    fn get(&self, h: u64) -> Option<NcHit> {
         let mut g = self.inner.lock().ok()?;
         g.tick += 1;
         let tick = g.tick;
@@ -1550,15 +1638,7 @@ impl NodeCache {
             Some(e) => {
                 e.stamp = tick;
                 self.hits.fetch_add(1, Relaxed);
-                let t = match e.hot.upgrade() {
-                    Some(t) => t,
-                    None => {
-                        let t = e.data.unpack();
-                        e.hot = Arc::downgrade(&t);
-                        t
-                    }
-                };
-                Some((t, e.thumb.clone(), e.size))
+                Some(NcHit { hot: e.hot.upgrade(), data: e.data.clone(), gpu: e.gpu.clone(), thumb: e.thumb.clone(), size: e.size })
             }
             None => {
                 self.misses.fetch_add(1, Relaxed);
@@ -1589,27 +1669,94 @@ impl NodeCache {
             let data = NcData::pack(&tex);
             let bytes = data.bytes();
             let hot = Arc::downgrade(&tex);
-            if let Some(old) = g.map.insert(h, NcEntry { data, thumb, size, stamp: tick, hot }) {
-                g.bytes -= old.data.bytes();
-            }
+            // the same hash is the same picture: a device copy made earlier stays valid
+            let gpu = match g.map.remove(&h) {
+                Some(old) => {
+                    g.bytes -= old.data.as_ref().map_or(0, |d| d.bytes());
+                    old.gpu
+                }
+                None => None,
+            };
+            g.map.insert(h, NcEntry { data: Some(data), gpu, thumb, size, stamp: tick, hot });
             g.bytes += bytes;
+        }
+    }
+
+    /// Stores a result that only exists in device memory.
+    fn put_gpu(&self, h: u64, pic: crate::gpu::GTex, thumb: Vec<u8>, size: usize) {
+        if let Ok(mut g) = self.inner.lock() {
+            g.tick += 1;
+            let tick = g.tick;
+            let (data, hot) = match g.map.remove(&h) {
+                Some(old) => {
+                    g.gbytes -= old.gpu.as_ref().map_or(0, |x| x.bytes());
+                    (old.data, old.hot)
+                }
+                None => (None, std::sync::Weak::new()),
+            };
+            g.gbytes += pic.bytes();
+            g.map.insert(h, NcEntry { data, gpu: Some(pic), thumb, size, stamp: tick, hot });
+        }
+    }
+
+    /// Remembers the device copy of an entry that so far only had pixels on the host.
+    fn attach_gpu(&self, h: u64, pic: crate::gpu::GTex) {
+        if let Ok(mut g) = self.inner.lock() {
+            let add = match g.map.get_mut(&h) {
+                Some(e) if e.gpu.is_none() => {
+                    let b = pic.bytes();
+                    e.gpu = Some(pic);
+                    b
+                }
+                _ => 0,
+            };
+            g.gbytes += add;
+        }
+    }
+
+    fn set_thumb(&self, h: u64, thumb: Vec<u8>) {
+        if let Ok(mut g) = self.inner.lock() {
+            if let Some(e) = g.map.get_mut(&h) {
+                e.thumb = thumb;
+            }
+        }
+    }
+
+    /// Remembers the texture just read back or expanded, so the next hit finds it while anyone still holds it.
+    fn note_hot(&self, h: u64, t: &Arc<Tex>) {
+        if let Ok(mut g) = self.inner.lock() {
+            if let Some(e) = g.map.get_mut(&h) {
+                e.hot = Arc::downgrade(t);
+            }
         }
     }
 
     fn trim(&self) {
         if let Ok(mut g) = self.inner.lock() {
-            if g.bytes <= self.budget {
+            if g.bytes <= self.budget && g.gbytes <= self.gbudget {
                 return;
             }
             // least recently used first, sorted once (not one full scan per evicted entry)
             let mut order: Vec<(u64, u64)> = g.map.iter().map(|(k, e)| (e.stamp, *k)).collect();
             order.sort_unstable();
             for (_, k) in order {
-                if g.bytes <= self.budget || g.map.len() <= 1 {
+                let (over_host, over_dev) = (g.bytes > self.budget, g.gbytes > self.gbudget);
+                if (!over_host && !over_dev) || g.map.len() <= 1 {
                     break;
                 }
-                if let Some(e) = g.map.remove(&k) {
-                    g.bytes -= e.data.bytes();
+                // only the kind of memory that is over budget is given back
+                let (db, dg, empty) = match g.map.get_mut(&k) {
+                    Some(e) => {
+                        let db = if over_host { e.data.take().map_or(0, |d| d.bytes()) } else { 0 };
+                        let dg = if over_dev { e.gpu.take().map_or(0, |x| x.bytes()) } else { 0 };
+                        (db, dg, e.data.is_none() && e.gpu.is_none())
+                    }
+                    None => continue,
+                };
+                g.bytes -= db;
+                g.gbytes -= dg;
+                if empty {
+                    g.map.remove(&k);
                 }
             }
         }
@@ -1622,9 +1769,13 @@ impl NodeCache {
     }
 
     pub fn clear(&self) {
+        if let Ok(mut c) = self.lowered.lock() {
+            *c = Default::default();
+        }
         if let Ok(mut g) = self.inner.lock() {
             g.map.clear();
             g.bytes = 0;
+            g.gbytes = 0;
         }
     }
 
@@ -1638,6 +1789,11 @@ impl NodeCache {
 
     pub fn bytes(&self) -> usize {
         self.inner.lock().map(|g| g.bytes).unwrap_or(0)
+    }
+
+    /// Device memory held by cached pictures.
+    pub fn gpu_bytes(&self) -> usize {
+        self.inner.lock().map(|g| g.gbytes).unwrap_or(0)
     }
 }
 
@@ -1761,7 +1917,7 @@ fn hash_graph(g: &Graph, ctx: &Ctx) -> HashMap<u32, u64> {
     memo
 }
 
-fn eval_node(g: &Graph, id: u32, ctx: &Ctx, ext: &[Option<Rc<Tex>>], cache: &mut Cache) -> Result<Rc<Tex>, Error> {
+fn eval_node(g: &Graph, id: u32, ctx: &Ctx, ext: &[Option<Rc<Lazy>>], cache: &mut Cache) -> Result<Rc<Tex>, Error> {
     eval_node_out(g, id, None, ctx, ext, cache)
 }
 
@@ -1888,10 +2044,12 @@ fn node_format(g: &Graph, n: &Node) -> u32 {
 /// Output size of a node, the Output Size setting: "Relative to input" (default; falls back to the parent size when
 /// nothing is connected), "Relative to parent", or "Absolute" (a power of two). The relative modifier moves the size
 /// up or down in powers of two (-12 .. +12), so a heavy node can run at half or quarter resolution.
-fn node_size(n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> (usize, usize) {
+/// Output size of a node from the sizes of its inputs (a device-only input has no pixels to measure).
+fn node_size_d(n: &Node, ins: &BTreeMap<String, (usize, usize)>, ctx: &Ctx) -> (usize, usize) {
     let get = |k: &str, d: f32| n.nums.get(k).copied().unwrap_or(d);
     let mode = get("osize_mode", 0.0).round() as i32;
     let rel = get("osize_rel", 0.0).round().clamp(-12.0, 12.0) as i32;
+    let rel_h = get("osize_rel_h", rel as f32).round().clamp(-12.0, 12.0) as i32;
     let (bw, bh) = match mode {
         2 => {
             let e = get("osize_abs", 9.0).round().clamp(4.0, 13.0) as u32;
@@ -1904,9 +2062,9 @@ fn node_size(n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> (usize, us
             (w, h)
         }
         1 => (ctx.size, ctx.height),
-        _ => ins.get("in").or_else(|| ins.get("bg")).or_else(|| ins.values().next()).map(|t| (t.w, t.h)).unwrap_or((ctx.size, ctx.height)),
+        _ => ins.get("in").or_else(|| ins.get("bg")).or_else(|| ins.values().next()).copied().unwrap_or((ctx.size, ctx.height)),
     };
-    let shift = |b: usize| -> usize {
+    let shift = |b: usize, rel: i32| -> usize {
         if mode != 2 && rel != 0 {
             let v = if rel > 0 { b << rel } else { (b >> (-rel)).max(1) };
             v.clamp(16.min(b), 8192)
@@ -1914,10 +2072,171 @@ fn node_size(n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> (usize, us
             b
         }
     };
-    (shift(bw).clamp(1, 8192), shift(bh).clamp(1, 8192))
+    (shift(bw, rel).clamp(1, 8192), shift(bh, rel_h).clamp(1, 8192))
 }
 
-fn eval_node_out(g: &Graph, id: u32, out: Option<&str>, ctx: &Ctx, ext: &[Option<Rc<Tex>>], cache: &mut Cache) -> Result<Rc<Tex>, Error> {
+fn eval_node_out(g: &Graph, id: u32, out: Option<&str>, ctx: &Ctx, ext: &[Option<Rc<Lazy>>], cache: &mut Cache) -> Result<Rc<Tex>, Error> {
+    eval_res(g, id, out, ctx, ext, cache)?.tex()
+}
+
+/// One node result. It exists on the host (`cpu`), in device memory (`gpu`), or both; the other form is made the first
+/// time something asks for it. A chain of GPU nodes therefore never touches host memory, and a CPU node only pays for
+/// the read-back of the inputs it really reads.
+pub(crate) struct Lazy {
+    w: usize,
+    h: usize,
+    cpu: std::sync::OnceLock<Rc<Tex>>,
+    gpu: std::sync::OnceLock<crate::gpu::GTex>,
+    /// the cache's compact copy, expanded on demand
+    packed: Option<NcData>,
+    /// cache key and cache, so a form made later is remembered for the next evaluation
+    hash: Option<u64>,
+    persist: Option<Arc<NodeCache>>,
+}
+
+impl Lazy {
+    fn from_cpu(t: Rc<Tex>, hash: Option<u64>, persist: Option<Arc<NodeCache>>) -> Rc<Lazy> {
+        let (w, h) = (t.w, t.h);
+        let cpu = std::sync::OnceLock::new();
+        let _ = cpu.set(t);
+        Rc::new(Lazy { w, h, cpu, gpu: std::sync::OnceLock::new(), packed: None, hash, persist })
+    }
+
+    fn from_gpu(g: crate::gpu::GTex, hash: Option<u64>, persist: Option<Arc<NodeCache>>) -> Rc<Lazy> {
+        let (w, h) = (g.w(), g.h());
+        let gpu = std::sync::OnceLock::new();
+        let _ = gpu.set(g);
+        Rc::new(Lazy { w, h, cpu: std::sync::OnceLock::new(), gpu, packed: None, hash, persist })
+    }
+
+    fn from_hit(hit: NcHit, hash: u64, persist: &Arc<NodeCache>) -> Option<Rc<Lazy>> {
+        let (w, h) = match (&hit.hot, &hit.data, &hit.gpu) {
+            (Some(t), _, _) => (t.w, t.h),
+            (_, Some(d), _) => d.dims(),
+            (_, _, Some(g)) => (g.w(), g.h()),
+            _ => return None,
+        };
+        let cpu = std::sync::OnceLock::new();
+        if let Some(t) = hit.hot {
+            let _ = cpu.set(t);
+        }
+        let gpu = std::sync::OnceLock::new();
+        if let Some(g) = hit.gpu {
+            let _ = gpu.set(g);
+        }
+        Some(Rc::new(Lazy { w, h, cpu, gpu, packed: hit.data, hash: Some(hash), persist: Some(persist.clone()) }))
+    }
+
+    /// True when the picture is already in device memory (reading it there costs nothing).
+    fn on_device(&self) -> bool {
+        self.gpu.get().is_some()
+    }
+
+    /// The pixels on the host; reads the device picture back (or expands the cached copy) the first time.
+    fn tex(&self) -> Result<Rc<Tex>, Error> {
+        if let Some(t) = self.cpu.get() {
+            return Ok(t.clone());
+        }
+        let t = if let Some(d) = &self.packed {
+            d.unpack()
+        } else if let Some(g) = self.gpu.get() {
+            match crate::gpu::download(&[g]).and_then(|mut v| v.pop()) {
+                Some(t) => Rc::new(t),
+                None => {
+                    // the device failed: later passes recompute on the CPU (the cache key includes this switch)
+                    crate::gpu::set_enabled(false);
+                    return Err(Error::Io("GPU read-back failed; GPU evaluation was switched off".into()));
+                }
+            }
+        } else {
+            return Err(Error::Io("node result is empty".into()));
+        };
+        if let (Some(h), Some(p)) = (self.hash, &self.persist) {
+            p.note_hot(h, &t);
+        }
+        let _ = self.cpu.set(t);
+        self.cpu.get().cloned().ok_or_else(|| Error::Io("node result is empty".into()))
+    }
+
+    /// The picture in device memory; uploads the host copy the first time (and remembers it in the cache).
+    fn dev(&self) -> Option<crate::gpu::GTex> {
+        if let Some(g) = self.gpu.get() {
+            return Some(g.clone());
+        }
+        let t = self.tex().ok()?;
+        let g = crate::gpu::upload(&t)?;
+        if let (Some(h), Some(p)) = (self.hash, &self.persist) {
+            p.attach_gpu(h, g.clone());
+        }
+        let _ = self.gpu.set(g);
+        self.gpu.get().cloned()
+    }
+
+    fn thumb(&self) -> Vec<u8> {
+        if let Some(t) = self.cpu.get() {
+            return thumbnail(t);
+        }
+        if let Some(g) = self.gpu.get() {
+            if let Some(b) = crate::gpu::thumb_g(g, THUMB) {
+                return b;
+            }
+        }
+        match self.tex() {
+            Ok(t) => thumbnail(&t),
+            Err(_) => Vec::new(),
+        }
+    }
+}
+
+/// A node result handed out unread (see `Graph::evaluate_all_cached_ex`).
+#[derive(Clone)]
+pub struct Pending(Rc<Lazy>);
+
+impl Pending {
+    /// Width and height.
+    pub fn dims(&self) -> (usize, usize) {
+        (self.0.w, self.0.h)
+    }
+
+    /// The picture in device memory, only if it is there already (nothing is uploaded).
+    pub fn device(&self) -> Option<crate::gpu::GTex> {
+        self.0.gpu.get().cloned()
+    }
+
+    /// The picture for the 2D view made on the device: RGBA8 bytes and the (smallest, largest) colour value. `None`
+    /// when the picture is not on the device (or the device fails): use [`Pending::tex`] then.
+    pub fn view(&self) -> Option<(Vec<u8>, (f32, f32))> {
+        let g = self.device()?;
+        let v = crate::gpu::pack_view_g(&g)?;
+        crate::gpu::download_view(&v)
+    }
+
+    /// The pixels on the host; reads the device picture back the first time.
+    pub fn tex(&self) -> Result<Arc<Tex>, String> {
+        self.0.tex().map_err(|e| e.to_string())
+    }
+}
+
+/// Reads every device-only picture in `items` back with one submission and one wait (a failure leaves the single
+/// `tex()` calls to report it).
+fn read_back(items: &[(u32, Rc<Lazy>)]) {
+    let need: Vec<&Rc<Lazy>> = items.iter().map(|(_, l)| l).filter(|l| l.cpu.get().is_none() && l.packed.is_none() && l.gpu.get().is_some()).collect();
+    if need.len() < 2 {
+        return;
+    }
+    let gs: Vec<&crate::gpu::GTex> = need.iter().filter_map(|l| l.gpu.get()).collect();
+    if let Some(ts) = crate::gpu::download(&gs) {
+        for (l, t) in need.iter().zip(ts) {
+            let t = Rc::new(t);
+            if let (Some(h), Some(p)) = (l.hash, &l.persist) {
+                p.note_hot(h, &t);
+            }
+            let _ = l.cpu.set(t);
+        }
+    }
+}
+
+fn eval_res(g: &Graph, id: u32, out: Option<&str>, ctx: &Ctx, ext: &[Option<Rc<Lazy>>], cache: &mut Cache) -> Result<Rc<Lazy>, Error> {
     let key = cache_key(g, id, out);
     let out = if key != id { out } else { None };
     if let Some(t) = cache.map.get(&key) {
@@ -1928,15 +2247,23 @@ fn eval_node_out(g: &Graph, id: u32, out: Option<&str>, ctx: &Ctx, ext: &[Option
     }
     let phash = cache.hashes.get(&key).copied();
     if let (Some(p), Some(h)) = (&cache.persist, phash) {
-        if let Some((t, th, sz)) = p.get(h) {
-            cache.map.insert(key, t.clone());
-            if key == id {
-                cache.sizes.insert(id, sz);
-                if let Some(tm) = cache.thumbs.as_mut() {
-                    tm.insert(id, th);
+        if let Some(hit) = p.get(h) {
+            let (mut th, sz) = (hit.thumb.clone(), hit.size);
+            if let Some(t) = Lazy::from_hit(hit, h, p) {
+                // a device picture made during a drag has no card thumbnail yet: take it when a pass shows the cards
+                if key == id && th.is_empty() && cache.thumbs.is_some() {
+                    th = t.thumb();
+                    p.set_thumb(h, th.clone());
                 }
+                cache.map.insert(key, t.clone());
+                if key == id {
+                    cache.sizes.insert(id, sz);
+                    if let Some(tm) = cache.thumbs.as_mut() {
+                        tm.insert(id, th);
+                    }
+                }
+                return Ok(t);
             }
-            return Ok(t);
         }
     }
     let n = g.nodes.get(&id).ok_or(Error::MissingNode(0, id))?;
@@ -1947,20 +2274,14 @@ fn eval_node_out(g: &Graph, id: u32, out: Option<&str>, ctx: &Ctx, ext: &[Option
     } else {
         n
     };
-    let mut ins: BTreeMap<String, Rc<Tex>> = BTreeMap::new();
+    let mut ins_l: BTreeMap<String, Rc<Lazy>> = BTreeMap::new();
     for (slot, rid) in &n.ins {
         let want = n.in_out.get(slot).map(|s| s.as_str());
-        ins.insert(slot.clone(), eval_node_out(g, *rid, want, ctx, ext, cache)?);
+        ins_l.insert(slot.clone(), eval_res(g, *rid, want, ctx, ext, cache)?);
     }
     // the node's own output size; inputs of another size are resampled to it
-    let sz = node_size(n, &ins, ctx);
-    if ins.values().any(|t| t.w != sz.0 || t.h != sz.1) {
-        for t in ins.values_mut() {
-            if t.w != sz.0 || t.h != sz.1 {
-                *t = Rc::new(ops::resize_to(t, sz.0, sz.1));
-            }
-        }
-    }
+    let dims: BTreeMap<String, (usize, usize)> = ins_l.iter().map(|(k, t)| (k.clone(), (t.w, t.h))).collect();
+    let sz = node_size_d(n, &dims, ctx);
     let node_ctx;
     let ctx = if sz.0 != ctx.size || sz.1 != ctx.height {
         node_ctx = Ctx { size: sz.0, height: sz.1, nominal: ctx.nominal, lib: ctx.lib, res: ctx.res, so: ctx.so, depth: ctx.depth, gin: ctx.gin };
@@ -1974,72 +2295,114 @@ fn eval_node_out(g: &Graph, id: u32, out: Option<&str>, ctx: &Ctx, ext: &[Option
     // Output and Dot nodes pass their input on: the same texture is shared instead of copied whenever the result would
     // be identical (same size, and no quantisation the input has not already had)
     let through = if matches!(n.kind.as_str(), "output" | "dot") && out.is_none() {
-        ins.get("in").filter(|t| t.w == sz.0 && t.h == sz.1).filter(|_| {
+        ins_l.get("in").filter(|t| (t.w, t.h) == sz).filter(|_| {
             fmt == 0 || (!n.in_out.contains_key("in") && n.ins.get("in").and_then(|r| g.nodes.get(r)).map(|m| m.kind != "subgraph" && node_format(g, m) == fmt).unwrap_or(false))
         })
         .cloned()
     } else {
         None
     };
+    let outs = node_outputs(&n.kind);
     let rc = match through {
         Some(t) => t,
         None => {
-            let t = match n.kind.as_str() {
-                "input" => {
-                    let idx = n.nums.get("idx").copied().unwrap_or(0.0).max(0.0) as usize;
-                    match ext.get(idx).cloned().flatten() {
-                        Some(t) if n.nums.get("gray").copied().unwrap_or(0.0) > 0.5 => ops::to_gray(&t),
-                        Some(t) => (*t).clone(),
-                        None => Tex::solid(ctx.size, ctx.height, [0.0, 0.0, 0.0, 1.0]),
-                    }
+            // GPU nodes work on device pictures and leave the result there
+            let t0 = std::time::Instant::now();
+            // instancing nodes pass the pictures on as they are (on the device when they live there)
+            let special = match n.kind.as_str() {
+                "input" => Some(input_lazy(n, ext, sz)?),
+                "subgraph" => {
+                    let fitted: BTreeMap<String, Rc<Lazy>> = ins_l.iter().map(|(k, l)| lazy_at(l, sz).map(|r| (k.clone(), r))).collect::<Result<_, _>>()?;
+                    Some(run_sub(id, n, &fitted, ctx, out)?)
                 }
-                "subgraph" => run_sub(id, n, &ins, ctx, out)?,
-                _ => {
-                    let t0 = std::time::Instant::now();
-                    // a secondary output of a multi-output node runs the same code with the output index set; outputs
-                    // that this pass also reads (and has not got yet) may be produced by the same run
-                    let outs = node_outputs(&n.kind);
-                    let idx = out.and_then(|o| outs.iter().position(|x| *x == o)).unwrap_or(0);
-                    let r = if outs.len() > 1 {
-                        let mut want = cache.wants.get(&id).copied().unwrap_or(1);
-                        for (b, name) in outs.iter().enumerate() {
-                            if b == idx || want & (1 << b) == 0 {
-                                continue;
-                            }
-                            let k = cache_key(g, id, Some(name));
-                            let known = cache.map.contains_key(&k) || matches!((&cache.persist, cache.hashes.get(&k)), (Some(p), Some(h)) if p.contains(*h));
-                            if known {
-                                want &= !(1 << b);
-                            }
-                        }
-                        compute_output(id, n, idx, &ins, ctx, want)?
-                    } else {
-                        compute(id, n, &ins, ctx)?
-                    };
-                    if profiling() {
-                        eprintln!("  {:>5.0} ms  node {} {}", t0.elapsed().as_secs_f64() * 1000.0, id, n.kind);
-                    }
-                    r
-                }
+                _ => None,
             };
-            // a superseded evaluation can leave a half-finished texture behind: never keep or show it
-            if cancelled() {
-                return Err(Error::Cancelled);
+            let on_dev = if special.is_none() {
+                let idx = out.and_then(|o| outs.iter().position(|x| *x == o)).unwrap_or(0);
+                graph_gpu::run(n, &ins_l, sz, ctx, idx)
+            } else {
+                None
+            };
+            if let Some(l) = special {
+                if profiling() {
+                    eprintln!("  {:>5.0} ms  node {} {} ({})", t0.elapsed().as_secs_f64() * 1000.0, id, n.kind, if l.on_device() { "gpu" } else { "cpu" });
+                }
+                if cancelled() {
+                    return Err(Error::Cancelled);
+                }
+                lazy_format(l, fmt, phash, cache.persist.clone())?
+            } else if let Some(gt) = on_dev {
+                if profiling() {
+                    eprintln!("  {:>5.0} ms  node {} {} (gpu)", t0.elapsed().as_secs_f64() * 1000.0, id, n.kind);
+                }
+                if cancelled() {
+                    return Err(Error::Cancelled);
+                }
+                lazy_format(Lazy::from_gpu(gt, None, None), fmt, phash, cache.persist.clone())?
+            } else {
+                let mut ins: BTreeMap<String, Rc<Tex>> = BTreeMap::new();
+                for (slot, l) in &ins_l {
+                    ins.insert(slot.clone(), l.tex()?);
+                }
+                // Crop applies its own filtering at the transformed source coordinates. Resizing first would
+                // interpolate the texels before its nearest-neighbour sampler can read them.
+                if !matches!(n.kind.as_str(), "x_crop" | "x_crop_grayscale") {
+                    for t in ins.values_mut() {
+                        if t.w != sz.0 || t.h != sz.1 {
+                            *t = Rc::new(ops::resize_to(t, sz.0, sz.1));
+                        }
+                    }
+                }
+                // a secondary output of a multi-output node runs the same code with the output index set; outputs
+                // that this pass also reads (and has not got yet) may be produced by the same run
+                let idx = out.and_then(|o| outs.iter().position(|x| *x == o)).unwrap_or(0);
+                let t = if outs.len() > 1 {
+                    let mut want = cache.wants.get(&id).copied().unwrap_or(1);
+                    for (b, name) in outs.iter().enumerate() {
+                        if b == idx || want & (1 << b) == 0 {
+                            continue;
+                        }
+                        let k = cache_key(g, id, Some(name));
+                        let known = cache.map.contains_key(&k) || matches!((&cache.persist, cache.hashes.get(&k)), (Some(p), Some(h)) if p.contains(*h));
+                        if known {
+                            want &= !(1 << b);
+                        }
+                    }
+                    compute_output(id, n, idx, &ins, ctx, want)?
+                } else {
+                    compute(id, n, &ins, ctx)?
+                };
+                if profiling() {
+                    eprintln!("  {:>5.0} ms  node {} {}", t0.elapsed().as_secs_f64() * 1000.0, id, n.kind);
+                }
+                // a superseded evaluation can leave a half-finished texture behind: never keep or show it
+                if cancelled() {
+                    return Err(Error::Cancelled);
+                }
+                let mut t = if t.w != sz.0 || t.h != sz.1 { ops::resize_to(&t, sz.0, sz.1) } else { t };
+                if fmt != 0 {
+                    ops::apply_format(&mut t, fmt);
+                }
+                Lazy::from_cpu(Rc::new(t), phash, cache.persist.clone())
             }
-            let mut t = if t.w != sz.0 || t.h != sz.1 { ops::resize_to(&t, sz.0, sz.1) } else { t };
-            if fmt != 0 {
-                ops::apply_format(&mut t, fmt);
-            }
-            Rc::new(t)
         }
     };
     cache.map.insert(key, rc.clone());
     if key == id {
         cache.sizes.insert(id, sz.0);
     }
-    let thumb = if key == id && (cache.thumbs.is_some() || cache.persist.is_some()) { thumbnail(&rc) } else { Vec::new() };
+    // a result that only exists on the device gets its thumbnail when a pass shows the cards (it would cost a read-back
+    // per node during a drag); one that is on the host gets it now, as before
+    let thumb = if key == id && (cache.thumbs.is_some() || (cache.persist.is_some() && rc.cpu.get().is_some())) { rc.thumb() } else { Vec::new() };
     if let (Some(p), Some(h)) = (&cache.persist, phash) {
-        p.put(h, rc.clone(), thumb.clone(), sz.0);
+        match rc.cpu.get() {
+            Some(t) => p.put(h, t.clone(), thumb.clone(), sz.0),
+            None => {
+                if let Some(gt) = rc.gpu.get() {
+                    p.put_gpu(h, gt.clone(), thumb.clone(), sz.0);
+                }
+            }
+        }
     }
     if key == id {
         if let Some(th) = cache.thumbs.as_mut() {
@@ -2061,7 +2424,7 @@ fn eval_node_out(g: &Graph, id: u32, out: Option<&str>, ctx: &Ctx, ext: &[Option
 
 /// Textures of finished nodes, plus what is needed to free them early.
 struct Cache {
-    map: HashMap<u32, Rc<Tex>>,
+    map: HashMap<u32, Rc<Lazy>>,
     /// how many not-yet-evaluated links still read each cached entry; an entry is freed when it reaches zero
     left: HashMap<u32, u32>,
     keep: HashSet<u32>,
@@ -2143,7 +2506,7 @@ pub fn node_outputs(kind: &str) -> &'static [&'static str] {
         "uber_emboss" => &["emboss", "highlight", "shadow"],
         "snow_filter" => &["height", "mask"],
         "water_filter" => &["color", "mask", "height", "roughness"],
-        _ => &[],
+        _ => crate::nodes10::outputs(kind),
     }
 }
 
@@ -2255,6 +2618,9 @@ pub fn connection_issues(g: &Graph) -> Vec<(u32, String, String)> {
 /// Output type of a built-in node. `any_color_in` says whether any connected input is a colour pin, `n` supplies
 /// mode switches such as the Uniform Color node's grayscale flag.
 pub fn output_pin(kind: &str, out: Option<&str>, any_color_in: bool, n: &Node) -> Pin {
+    if let Some(p) = crate::nodes10::pin(kind, out) {
+        return p;
+    }
     let flag = |k: &str| n.nums.get(k).copied().unwrap_or(0.0) > 0.5;
     match kind {
         // always colour
@@ -2441,27 +2807,41 @@ fn thumbnail(t: &Tex) -> Vec<u8> {
 }
 
 /// Function-driven parameters: `fn.<param>="name"` runs that function and stores the result in `<param>`;
-/// `fa.<param>.<input>` numbers feed the function's inputs.
+/// `fa.<param>.<input>` numbers feed the function's inputs; `fl.<param>` selects result lanes.
 fn bind_functions(id: u32, n: &Node, ctx: &Ctx) -> Result<Node, Error> {
     use crate::func::{compile_named, FnEnv};
     let mut out = n.clone();
+    // Reuse only within this node evaluation: size, seed and graph inputs are identical,
+    // and a later edit/evaluation gets fresh programs and values without invalidation rules.
+    let mut programs = BTreeMap::new();
+    let mut results = BTreeMap::<_, crate::func::Value>::new();
     for (k, fname) in &n.strs {
         let Some(param) = k.strip_prefix("fn.") else { continue };
         if fname.is_empty() {
             continue;
         }
-        let prog = compile_named(ctx.lib, fname).map_err(|e| Error::BadParam(id, format!("{k}: {e}")))?;
-        let mut env = FnEnv::new([ctx.size as f64, ctx.height as f64]);
-        env.seed = ctx.so;
-        env.graph_inputs = ctx.gin;
-        let prefix = format!("fa.{param}.");
-        for (ak, av) in &n.nums {
-            if let Some(input) = ak.strip_prefix(&prefix) {
-                let pin = prog.inputs.iter().find(|i| i.0 == input).map(|i| i.1).unwrap_or(crate::graph::Pin::Float);
-                env.args.insert(input.to_string(), crate::func::coerce(&crate::func::Value::float(*av as f64), pin));
-            }
+        let bad_param = |e| Error::BadParam(id, format!("{k}: {e}"));
+        if !programs.contains_key(fname) {
+            programs.insert(fname, compile_named(ctx.lib, fname).map_err(bad_param)?);
         }
-        let v = prog.run(&env, [0.5, 0.5]).map_err(|e| Error::BadParam(id, format!("{k}: {e}")))?;
+        let prog = &programs[fname];
+        let prefix = format!("fa.{param}.");
+        // Bitwise argument keys preserve signed zero and every other float bit pattern.
+        let args: Vec<_> = n.nums.iter().filter_map(|(k, v)| k.strip_prefix(&prefix).map(|input| (input, v.to_bits()))).collect();
+        let v = match results.entry((fname, args)) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.get().clone(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let mut env = FnEnv::new([ctx.size as f64, ctx.height as f64]);
+                env.seed = ctx.so;
+                env.graph_inputs = ctx.gin;
+                for (input, bits) in &entry.key().1 {
+                    let pin = prog.inputs.iter().find(|i| i.0 == *input).map(|i| i.1).unwrap_or(crate::graph::Pin::Float);
+                    env.args.insert(input.to_string(), crate::func::coerce(&crate::func::Value::float(f32::from_bits(*bits) as f64), pin));
+                }
+                entry.insert(prog.run(&env, [0.5, 0.5]).map_err(bad_param)?).clone()
+            }
+        };
+        let v = if let Some(mask) = n.strs.get(&format!("fl.{param}")) { crate::func::swizzle(&v, mask).map_err(bad_param)? } else { v };
         match v {
             crate::func::Value::Str(s) => {
                 out.strs.insert(param.to_string(), s.to_string());
@@ -2532,7 +2912,7 @@ fn run_function_image(id: u32, n: &Node, fname: &str, ins: &BTreeMap<String, Rc<
     }))
 }
 
-fn run_sub(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx, out: Option<&str>) -> Result<Tex, Error> {
+fn run_sub(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Lazy>>, ctx: &Ctx, out: Option<&str>) -> Result<Rc<Lazy>, Error> {
     if ctx.depth >= 8 {
         return Err(Error::BadParam(id, "subgraph nesting too deep (recursive?)".into()));
     }
@@ -2548,7 +2928,7 @@ fn run_sub(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx, out: O
             }
         }
     }
-    let ext: Vec<Option<Rc<Tex>>> = SUB_INPUTS.iter().map(|k| ins.get(*k).cloned()).collect();
+    let ext: Vec<Option<Rc<Lazy>>> = SUB_INPUTS.iter().map(|k| ins.get(*k).cloned()).collect();
     let mut outs = sub.output_nodes();
     outs.sort_by_key(|o| OUTPUT_USAGES.iter().position(|x| *x == o.0).unwrap_or(99));
     let want = out.map(String::from).or_else(|| n.strs.get("output").cloned()).unwrap_or_default();
@@ -2564,9 +2944,64 @@ fn run_sub(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx, out: O
     let gin = crate::func::graph_inputs(&sub);
     let c2 = Ctx { size: ctx.size, height: ctx.height, nominal: ctx.nominal, lib: ctx.lib, res: ctx.res, so: ctx.so, depth: ctx.depth + 1, gin: &gin };
     let mut cache = Cache::for_graph(&sub, &[out_id], false);
-    let t = eval_node(&sub, out_id, &c2, &ext, &mut cache)?;
+    // the pictures stay where they are (on the device when the nodes inside ran there)
+    let t = eval_res(&sub, out_id, None, &c2, &ext, &mut cache)?;
     cache.map.clear();
-    Ok(Rc::try_unwrap(t).unwrap_or_else(|rc| (*rc).clone()))
+    Ok(t)
+}
+
+/// The picture at size `sz`: resampled on the device when it lives there, on the host otherwise.
+fn lazy_at(l: &Rc<Lazy>, sz: (usize, usize)) -> Result<Rc<Lazy>, Error> {
+    if (l.w, l.h) == sz {
+        return Ok(l.clone());
+    }
+    if l.on_device() {
+        if let Some(g) = l.dev().and_then(|g| crate::gpu::resize_g(&g, sz.0, sz.1)) {
+            return Ok(Lazy::from_gpu(g, None, None));
+        }
+    }
+    let t = l.tex()?;
+    Ok(Lazy::from_cpu(Rc::new(ops::resize_to(&t, sz.0, sz.1)), None, None))
+}
+
+/// The result of an `input` node: the picture handed in by the instancing node (shared, not copied), as a grey level if asked.
+fn input_lazy(n: &Node, ext: &[Option<Rc<Lazy>>], sz: (usize, usize)) -> Result<Rc<Lazy>, Error> {
+    let idx = n.nums.get("idx").copied().unwrap_or(0.0).max(0.0) as usize;
+    let gray = n.nums.get("gray").copied().unwrap_or(0.0) > 0.5;
+    let l = match ext.get(idx).cloned().flatten() {
+        Some(l) if !gray => l,
+        Some(l) => {
+            let dev = if l.on_device() { l.dev().and_then(|g| crate::gpu::point_g(&g, crate::gpu::Point::ToGray)) } else { None };
+            match dev {
+                Some(g) => Lazy::from_gpu(g, None, None),
+                None => {
+                    let t = l.tex()?;
+                    Lazy::from_cpu(Rc::new(ops::to_gray(&t)), None, None)
+                }
+            }
+        }
+        None => match crate::gpu::solid_g(sz.0, sz.1, [0.0, 0.0, 0.0, 1.0]) {
+            Some(g) if crate::gpu::worth_it(sz.0, sz.1) => Lazy::from_gpu(g, None, None),
+            _ => Lazy::from_cpu(Rc::new(Tex::solid(sz.0, sz.1, [0.0, 0.0, 0.0, 1.0])), None, None),
+        },
+    };
+    lazy_at(&l, sz)
+}
+
+/// Applies an explicit output format (8 / 16 bit integer, 16 bit float) to a result: on the device when it is there.
+fn lazy_format(l: Rc<Lazy>, fmt: u32, hash: Option<u64>, persist: Option<Arc<NodeCache>>) -> Result<Rc<Lazy>, Error> {
+    if fmt != 0 {
+        if let Some(g) = l.gpu.get().and_then(|g| crate::gpu::format_g(g, fmt)) {
+            return Ok(Lazy::from_gpu(g, hash, persist));
+        }
+        let mut t = (*l.tex()?).clone();
+        ops::apply_format(&mut t, fmt);
+        return Ok(Lazy::from_cpu(Rc::new(t), hash, persist));
+    }
+    match l.gpu.get() {
+        Some(g) => Ok(Lazy::from_gpu(g.clone(), hash, persist)),
+        None => Ok(Lazy::from_cpu(l.tex()?, hash, persist)),
+    }
 }
 
 fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Result<Tex, Error> {
@@ -3008,82 +3443,14 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
         }
         "tile_sampler" | "tile_generator" => {
             let gen = n.kind == "tile_generator";
-            let mut p = scatter::TileP::legacy(gen);
-            p.nx = f("x_amount", p.nx);
-            p.ny = f("y_amount", p.ny);
-            if ar != 1.0 {
-                p.ny = (p.nx * ar).round().max(1.0);
-            }
-            p.size = f("size", p.size);
-            p.aspect = f("aspect", 1.0);
-            p.size_mode = f("size_mode", 0.0) as u32;
-            p.scale = f("scale", 1.0);
-            p.scale_rand = f("scale_random", 0.0);
-            p.scale_seed = f("scale_seed", 0.0) as u32;
-            p.size_rand = f("size_random", 0.0);
-            p.rot = f("rotation", 0.0);
-            p.rot_rand = f("rotation_random", 0.0);
-            p.pattern_rot90 = f("pattern_rotation", 0.0) as u32;
-            p.pattern_rot_rand = f("pattern_rotation_random", 0.0).clamp(0.0, 1.0);
-            p.symmetry_random = f("symmetry_random", 0.0) as u32;
-            p.pos_rand = f("position_random", 0.0);
-            p.pos_rand_x = f("position_random_x", 1.0);
-            p.pos_rand_y = f("position_random_y", 1.0);
-            p.color = f("color", 1.0);
-            p.color_rand = f("color_random", 0.0);
-            p.lum_by_number = f("lum_by_number", 0.0);
-            p.lum_by_scale = f("lum_by_scale", 0.0);
-            p.offset = f("offset", 0.5);
-            p.offset_mode = f("offset_mode", p.offset_mode as f32) as u32;
-            p.offset_rand = f("offset_random", 0.0);
-            p.offset_seed = f("offset_seed", 0.0) as u32;
-            p.global_offset = [f("global_offset_x", 0.0), f("global_offset_y", 0.0)];
-            p.seed = seed;
-            p.thresh = f("mask_threshold", 0.5);
-            p.mask_invert = f("mask_invert", 0.0) > 0.5;
-            p.mask_random = f("mask_random", 0.0);
-            p.mask_checker = f("mask_checker", 0.0) as u32;
-            p.mask_h = f("mask_horizontal", 0.0) > 0.5;
-            p.mask_v = f("mask_vertical", 0.0) > 0.5;
-            p.invert_mask = f("invert_mask", 0.0) > 0.5;
-            p.scale_map_mult = f("scale_map_multiplier", 1.0);
-            p.rotation_map_mult = f("rotation_map_multiplier", 1.0);
-            p.displacement_intensity = f("displacement_intensity", 0.5);
-            p.displacement_angle = f("displacement_angle", 0.0);
-            p.color_map_mult = f("color_map_multiplier", 1.0);
-            p.pattern_specific = f("pattern_specific", 0.5);
-            p.pattern_specific_rand = f("pattern_specific_random", 0.0);
-            p.blend = scatter::Blend::from_index(f("blending", 0.0) as u32);
-            p.opacity = f("opacity", 1.0);
-            p.background = f("background", 0.0);
-            p.reverse = f("reverse_order", 0.0) > 0.5;
+            let p = tile_params(n, gen, ar, seed);
             let pats = scatter_patterns(ins, f("pattern_type", 0.0) as u32, if gen { 1 } else { 2 }, f("pattern_distribution", 0.0) as u32);
             let g = |k: &str| ins.get(k).map(|t| t.as_ref());
             let maps = scatter::TileMaps { mask: g("mask"), scale: g("scale_map"), rotation: g("rotation_map"), displacement: g("displacement_map"), color: g("color_map"), distribution: g("distribution_map"), background: g("background") };
             scatter::tile_grid(s, s, &pats, &maps, &p)
         }
         "splatter" => {
-            let mut p = scatter::SplatterP::legacy();
-            p.count = f("count", 40.0).max(0.0) as u32;
-            p.grid = f("grid_number", 0.0).max(0.0) as u32;
-            p.scale = f("scale", 0.1);
-            p.scale_var = f("scale_var", 0.3);
-            p.aspect = f("aspect", 1.0);
-            p.rot = f("rotation", 0.0);
-            p.rot_var = f("rot_var", 1.0);
-            p.pattern_rot90 = f("pattern_rotation", 0.0) as u32;
-            p.lum_var = f("lum_var", 0.0);
-            p.disorder = f("disorder", 1.0);
-            p.pan = [f("pan_x", 0.0), f("pan_y", 0.0)];
-            p.symmetry_random = f("symmetry_random", 0.0) as u32;
-            p.pattern_specific = f("pattern_specific", 0.5);
-            p.gain = f("gain", 1.0);
-            p.out_min = f("output_min", 0.0);
-            p.out_max = f("output_max", 1.0);
-            p.background = f("background", 0.0);
-            p.blend = scatter::Blend::from_index(f("blending", 0.0) as u32);
-            p.opacity = f("opacity", 1.0);
-            p.seed = seed;
+            let p = splatter_params(n, seed);
             let pats = scatter_patterns(ins, f("pattern_type", 0.0) as u32, 99, f("pattern_distribution", 0.0) as u32);
             match f("_out", 0.0).round() as i32 {
                 1 => scatter::splatter_data(s, hs, &pats, &p, scatter::SplatData::Id),
@@ -3094,41 +3461,7 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
             }
         }
         "splatter_circular" => {
-            let mut p = scatter::CircularP::legacy();
-            p.amount = f("number", 12.0).max(1.0) as u32;
-            p.amount_rand = f("amount_random", 0.0);
-            p.amount_rand_min = f("amount_random_min", 1.0).max(1.0) as u32;
-            p.rings = f("rings", 1.0).max(1.0) as u32;
-            p.radius = f("radius", 0.3);
-            p.radius_rand = f("radius_random", 0.0);
-            p.ring_mult = f("ring_radius_multiplier", 0.5);
-            p.angle_rand = f("angle_random", 0.0);
-            p.spiral = f("spiral_factor", 0.0);
-            p.spread = f("spread", 1.0);
-            p.size = f("size", 0.1);
-            p.size_rand = f("size_random", 0.0);
-            p.scale_by_number = f("scale_by_number", 0.0);
-            p.invert_number = f("invert_number", 0.0) > 0.5;
-            p.scale_by_ring = f("scale_by_ring", 0.0);
-            p.invert_ring = f("invert_ring", 0.0) > 0.5;
-            p.rot = f("rotation", 0.0);
-            p.rot_rand = f("rotation_random", 0.0);
-            p.center_orientation = f("center_orientation", 0.0);
-            p.ring_rot = f("ring_rotation", 0.0);
-            p.ring_rot_rand = f("ring_rotation_random", 0.0);
-            p.ring_rot_offset = f("ring_rotation_offset", 0.0);
-            p.pos_rand = f("position_random", 0.0);
-            p.symmetry_random = f("symmetry_random", 0.0) as u32;
-            p.pattern_specific = f("pattern_specific", 0.5);
-            p.color = f("color", 1.0);
-            p.lum_rand = f("luminance_random", 0.0);
-            p.lum_by_number = f("lum_by_number", 0.0);
-            p.lum_by_ring = f("lum_by_ring", 0.0);
-            p.mask_random = f("mask_random", 0.0);
-            p.background = f("background", 0.0);
-            p.blend = scatter::Blend::from_index(f("blending", 0.0) as u32);
-            p.opacity = f("opacity", 1.0);
-            p.seed = seed;
+            let p = circular_params(n, seed);
             let pats = scatter_patterns(ins, f("pattern_type", 0.0) as u32, 2, f("pattern_distribution", 0.0) as u32);
             scatter::splatter_circular(s, s, &pats, &p)
         }
@@ -3331,7 +3664,15 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
         "text" => {
             let font = match n.strs.get("font").filter(|f| !f.is_empty()) {
                 Some(file) => crate::font::Font::load(&read_resource(id, file, ctx)?).map_err(|m| Error::BadParam(id, format!("'{file}': {m}")))?,
-                None => crate::font::Font::Builtin,
+                // an installed family (as Substance Designer's Text node names it); the built-in face when it is not installed
+                None => n
+                    .strs
+                    .get("font_family")
+                    .filter(|f| !f.trim().is_empty())
+                    .and_then(|fam| crate::font::system_font(fam))
+                    .and_then(|p| std::fs::read(p).ok())
+                    .and_then(|b| crate::font::Font::load(&b).ok())
+                    .unwrap_or(crate::font::Font::Builtin),
             };
             let mut text = n.strs.get("text").cloned().unwrap_or_default();
             let size_px = f("size", 0.2).max(0.001) * hs as f32;
@@ -3351,10 +3692,11 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
             }
             t
         }
-        "value_processor" => {
-            let fname = n.strs.get("fn").ok_or_else(|| Error::BadParam(id, "value_processor needs fn=\"function\"".into()))?;
-            return run_function_image(id, n, fname, ins, ctx, true);
-        }
+        "value_processor" => match n.strs.get("fn") {
+            Some(fname) => return run_function_image(id, n, fname, ins, ctx, true),
+            // no function: the value is the type's default (0), as an empty processor gives in the file's own editor
+            None => Tex::solid(ctx.size, ctx.height, [0.0, 0.0, 0.0, 1.0]),
+        },
         "input_value" => {
             let v = f("v", 0.0);
             Tex::solid(ctx.size, ctx.height, [v, v, v, 1.0])
@@ -3499,7 +3841,21 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
         "invert" => if f("invert", 1.0) > 0.5 { ops::invert(tex("in")?) } else { tex("in")?.clone() },
         "threshold" => ops::threshold_mode(tex("in")?, f("threshold", 0.5), f("softness", 0.0), f("mode", 0.0).max(0.0) as u32),
         "histogram_scan" => {
-            let t = ops::histogram_scan(tex("in")?, f("position", 0.5), (1.0 - f("contrast", 0.5).clamp(0.0, 1.0)).max(1e-4));
+            let src = tex("in")?;
+            let (pos, con) = (f("position", 0.5), f("contrast", 0.5));
+            let pm = ins.get("position_map").filter(|_| f("use_position_map", 1.0) > 0.5);
+            let cm = ins.get("contrast_map").filter(|_| f("use_contrast_map", 1.0) > 0.5);
+            let t = if pm.is_none() && cm.is_none() {
+                ops::histogram_scan(src, pos, (1.0 - con.clamp(0.0, 1.0)).max(1e-4))
+            } else {
+                // non-uniform: the position and contrast change across the image
+                Tex::from_fn(src.w, src.h, |u, v| {
+                    let p = pm.map(|m| m.sample(u, v)[0]).unwrap_or(pos);
+                    let w = (1.0 - cm.map(|m| m.sample(u, v)[0]).unwrap_or(con).clamp(0.0, 1.0)).max(1e-4);
+                    let g = ((lum(src.sample(u, v)) - (p - w * 0.5)) / w).clamp(0.0, 1.0);
+                    [g, g, g, 1.0]
+                })
+            };
             if f("invert", 0.0) > 0.5 { ops::invert(&t) } else { t }
         }
         "quantize" => ops::quantize(tex("in")?, f("steps", 4.0)),
@@ -3630,7 +3986,14 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
                 ops::edge_detect_ex(tex("in")?, (f("edge_width", 2.0) * rs).max(1.0), f("edge_roundness", 4.0) * rs, f("invert", 0.0) > 0.5, f("tolerance", 0.0))
             }
         }
-        "emboss" => ops::emboss(tex("in")?, f("angle", 0.125), f("intensity", 4.0)),
+        "emboss" => {
+            if f("mode", 0.0) > 0.5 {
+                let (hl, sh) = ([f("hl_r", 1.0), f("hl_g", 1.0), f("hl_b", 1.0)], [f("sh_r", 0.0), f("sh_g", 0.0), f("sh_b", 0.0)]);
+                ops::emboss_lit(tex("in")?, ins.get("height").map(|t| &**t), f("angle", 0.125), f("intensity", 4.0), hl, sh, f("gloss", 0.0).clamp(0.0, 1.0))
+            } else {
+                ops::emboss(tex("in")?, f("angle", 0.125), f("intensity", 4.0))
+            }
+        }
         other => match crate::nodes2::compute(other, id, n, ins, s, hs, seed)? {
             Some(t) => t,
             None => match crate::nodes3::compute(other, id, n, ins, s, hs, seed)? {
@@ -3688,6 +4051,129 @@ expose "Brick count" 1 cols 1 12
 expose "Mortar width" 1 mortar 0 0.15
 expose "Normal strength" 6 strength 0 10
 "#;
+
+/// Parameters of a Tile Sampler / Tile Generator node (shared by the CPU and the device paths).
+pub(crate) fn tile_params(n: &Node, gen: bool, ar: f32, seed: u32) -> scatter::TileP {
+    let f = |k: &str, d: f32| n.nums.get(k).copied().unwrap_or(d);
+    let mut p = scatter::TileP::legacy(gen);
+    p.nx = f("x_amount", p.nx);
+    p.ny = f("y_amount", p.ny);
+    if ar != 1.0 {
+        p.ny = (p.nx * ar).round().max(1.0);
+    }
+    p.size = f("size", p.size);
+    p.aspect = f("aspect", 1.0);
+    p.size_mode = f("size_mode", 0.0) as u32;
+    p.scale = f("scale", 1.0);
+    p.scale_rand = f("scale_random", 0.0);
+    p.scale_seed = f("scale_seed", 0.0) as u32;
+    p.size_rand = f("size_random", 0.0);
+    p.rot = f("rotation", 0.0);
+    p.rot_rand = f("rotation_random", 0.0);
+    p.pattern_rot90 = f("pattern_rotation", 0.0) as u32;
+    p.pattern_rot_rand = f("pattern_rotation_random", 0.0).clamp(0.0, 1.0);
+    p.symmetry_random = f("symmetry_random", 0.0) as u32;
+    p.pos_rand = f("position_random", 0.0);
+    p.pos_rand_x = f("position_random_x", 1.0);
+    p.pos_rand_y = f("position_random_y", 1.0);
+    p.color = f("color", 1.0);
+    p.color_rand = f("color_random", 0.0);
+    p.lum_by_number = f("lum_by_number", 0.0);
+    p.lum_by_scale = f("lum_by_scale", 0.0);
+    p.offset = f("offset", 0.5);
+    p.offset_mode = f("offset_mode", p.offset_mode as f32) as u32;
+    p.offset_rand = f("offset_random", 0.0);
+    p.offset_seed = f("offset_seed", 0.0) as u32;
+    p.global_offset = [f("global_offset_x", 0.0), f("global_offset_y", 0.0)];
+    p.seed = seed;
+    p.thresh = f("mask_threshold", 0.5);
+    p.mask_invert = f("mask_invert", 0.0) > 0.5;
+    p.mask_random = f("mask_random", 0.0);
+    p.mask_checker = f("mask_checker", 0.0) as u32;
+    p.mask_h = f("mask_horizontal", 0.0) > 0.5;
+    p.mask_v = f("mask_vertical", 0.0) > 0.5;
+    p.invert_mask = f("invert_mask", 0.0) > 0.5;
+    p.scale_map_mult = f("scale_map_multiplier", 1.0);
+    p.rotation_map_mult = f("rotation_map_multiplier", 1.0);
+    p.displacement_intensity = f("displacement_intensity", 0.5);
+    p.displacement_angle = f("displacement_angle", 0.0);
+    p.color_map_mult = f("color_map_multiplier", 1.0);
+    p.pattern_specific = f("pattern_specific", 0.5);
+    p.pattern_specific_rand = f("pattern_specific_random", 0.0);
+    p.blend = scatter::Blend::from_index(f("blending", 0.0) as u32);
+    p.opacity = f("opacity", 1.0);
+    p.background = f("background", 0.0);
+    p.reverse = f("reverse_order", 0.0) > 0.5;
+    p
+}
+
+/// Parameters of a Splatter node.
+pub(crate) fn splatter_params(n: &Node, seed: u32) -> scatter::SplatterP {
+    let f = |k: &str, d: f32| n.nums.get(k).copied().unwrap_or(d);
+    let mut p = scatter::SplatterP::legacy();
+    p.count = f("count", 40.0).max(0.0) as u32;
+    p.grid = f("grid_number", 0.0).max(0.0) as u32;
+    p.scale = f("scale", 0.1);
+    p.scale_var = f("scale_var", 0.3);
+    p.aspect = f("aspect", 1.0);
+    p.rot = f("rotation", 0.0);
+    p.rot_var = f("rot_var", 1.0);
+    p.pattern_rot90 = f("pattern_rotation", 0.0) as u32;
+    p.lum_var = f("lum_var", 0.0);
+    p.disorder = f("disorder", 1.0);
+    p.pan = [f("pan_x", 0.0), f("pan_y", 0.0)];
+    p.symmetry_random = f("symmetry_random", 0.0) as u32;
+    p.pattern_specific = f("pattern_specific", 0.5);
+    p.gain = f("gain", 1.0);
+    p.out_min = f("output_min", 0.0);
+    p.out_max = f("output_max", 1.0);
+    p.background = f("background", 0.0);
+    p.blend = scatter::Blend::from_index(f("blending", 0.0) as u32);
+    p.opacity = f("opacity", 1.0);
+    p.seed = seed;
+    p
+}
+
+/// Parameters of a Splatter Circular node.
+pub(crate) fn circular_params(n: &Node, seed: u32) -> scatter::CircularP {
+    let f = |k: &str, d: f32| n.nums.get(k).copied().unwrap_or(d);
+    let mut p = scatter::CircularP::legacy();
+    p.amount = f("number", 12.0).max(1.0) as u32;
+    p.amount_rand = f("amount_random", 0.0);
+    p.amount_rand_min = f("amount_random_min", 1.0).max(1.0) as u32;
+    p.rings = f("rings", 1.0).max(1.0) as u32;
+    p.radius = f("radius", 0.3);
+    p.radius_rand = f("radius_random", 0.0);
+    p.ring_mult = f("ring_radius_multiplier", 0.5);
+    p.angle_rand = f("angle_random", 0.0);
+    p.spiral = f("spiral_factor", 0.0);
+    p.spread = f("spread", 1.0);
+    p.size = f("size", 0.1);
+    p.size_rand = f("size_random", 0.0);
+    p.scale_by_number = f("scale_by_number", 0.0);
+    p.invert_number = f("invert_number", 0.0) > 0.5;
+    p.scale_by_ring = f("scale_by_ring", 0.0);
+    p.invert_ring = f("invert_ring", 0.0) > 0.5;
+    p.rot = f("rotation", 0.0);
+    p.rot_rand = f("rotation_random", 0.0);
+    p.center_orientation = f("center_orientation", 0.0);
+    p.ring_rot = f("ring_rotation", 0.0);
+    p.ring_rot_rand = f("ring_rotation_random", 0.0);
+    p.ring_rot_offset = f("ring_rotation_offset", 0.0);
+    p.pos_rand = f("position_random", 0.0);
+    p.symmetry_random = f("symmetry_random", 0.0) as u32;
+    p.pattern_specific = f("pattern_specific", 0.5);
+    p.color = f("color", 1.0);
+    p.lum_rand = f("luminance_random", 0.0);
+    p.lum_by_number = f("lum_by_number", 0.0);
+    p.lum_by_ring = f("lum_by_ring", 0.0);
+    p.mask_random = f("mask_random", 0.0);
+    p.background = f("background", 0.0);
+    p.blend = scatter::Blend::from_index(f("blending", 0.0) as u32);
+    p.opacity = f("opacity", 1.0);
+    p.seed = seed;
+    p
+}
 
 /// Collect the connected pattern inputs of a scatter node (`pattern`, `pattern2` .. `pattern6`).
 fn scatter_patterns<'a>(ins: &'a BTreeMap<String, Rc<Tex>>, builtin: u32, fallback: u32, distribution: u32) -> scatter::Patterns<'a> {

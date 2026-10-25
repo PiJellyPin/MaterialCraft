@@ -46,6 +46,7 @@ gradient_radial shape = Round|Square
 triangle_grid* color_output = Smooth heights|Flat triangles|Edge distance
 
 # filters
+crop* filtering = Bilinear|Nearest
 bevel bevel_mode = Round|Angular
 mirror* mirror_type = Mirror X axis|Mirror Y axis|Mirror corner
 mirror* corner_type = Top left|Top right|Bottom left|Bottom right

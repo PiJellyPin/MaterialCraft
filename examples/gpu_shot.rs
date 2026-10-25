@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! GPU viewer diagnostic: renders a material and writes a screenshot. Requires a display and OpenGL.
-//! usage: cargo run --release --features gui --example gpu_shot -- out.png [shape 0|1|2] [relief 0..3] [width height] [nomsaa] [wire] [rough=0.3 metal=0 color=r,g,b]
+//! GPU viewer diagnostic: renders a material with the wgpu viewer and writes a screenshot. No window is needed, only a
+//! graphics adapter (MC_GPU=force also accepts a software one).
+//! usage: cargo run --release --features gui --example gpu_shot -- out.png [shape 0|1|2] [relief 0..3] [width height] [wire] [rough=0.3 metal=0 color=r,g,b]
 //!        [set=key=value]... (any View setting, e.g. set=env.preset=sunset set=post.bloom=0.4 set=rig=sun set=scene=floor)
 //!        [cpu=cpu.png] also render the same view with the software renderer and print how far the two pictures are apart
 //!        [graph=package.sbs] [size=1024] load an SBS material instead of the procedural brick material
-use eframe::egui;
-use eframe::egui_glow;
-use materialcraft::gpu3d::{self, MapInputs, Shared};
+use materialcraft::gpu3d::{self, MapInputs};
 use materialcraft::render3d::View;
 use materialcraft::tex::Tex;
 use std::sync::Arc;
@@ -54,14 +53,6 @@ struct TexSet {
     height: Option<Tex>,
 }
 
-struct App {
-    gpu: Shared,
-    view: View,
-    out: String,
-    frame: u32,
-    cpu: Option<(String, TexSet)>,
-}
-
 fn compare(path: &str, set: &TexSet, view: &View, gl: &[[f32; 4]], w: usize, h: usize) {
     use materialcraft::render3d::{self, Maps};
     let maps = Maps { base: &set.base, normal: &set.normal, rough: &set.rough, metal: &set.metal, ao: &set.ao, emissive: set.emissive.as_ref(), height: set.height.as_ref(), env: None };
@@ -84,43 +75,7 @@ fn compare(path: &str, set: &TexSet, view: &View, gl: &[[f32; 4]], w: usize, h: 
     println!("cpu render {w}x{h} in {dt:.2}s -> {path} | mean abs difference {:.4} (gl mean {:.4}, cpu mean {:.4}), worst {:.3}", sum / n as f64, mean_gl / n as f64, mean_cpu / n as f64, worst);
 }
 
-impl eframe::App for App {
-    fn ui(&mut self, root: &mut egui::Ui, _f: &mut eframe::Frame) {
-        let ctx = root.ctx().clone();
-        egui::CentralPanel::default().frame(egui::Frame::NONE).show(root, |ui| {
-            let rect = ui.max_rect();
-            let (g, v) = (self.gpu.clone(), self.view.clone());
-            ui.painter().add(egui::PaintCallback { rect, callback: Arc::new(egui_glow::CallbackFn::new(move |info, painter| gpu3d::paint(&g, &info, painter, &v))) });
-        });
-        self.frame += 1;
-        if self.frame == 4 {
-            self.gpu.lock().unwrap().want_shot = true;
-        }
-        if self.frame >= 6 {
-            let mut g = self.gpu.lock().unwrap();
-            if let Some(e) = &g.error {
-                eprintln!("GPU ERROR: {e}");
-                std::process::exit(2);
-            }
-            if let Some((w, h, rgba)) = g.shot.take() {
-                let px: Vec<[f32; 4]> = rgba.chunks(4).map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 1.0]).collect();
-                std::fs::write(&self.out, materialcraft::png::encode(w, h, &px, 8)).unwrap();
-                println!("renderer: {} | {w}x{h} written to {}", g.renderer, self.out);
-                if let Some((p, set)) = &self.cpu {
-                    compare(p, set, &self.view, &px, w, h);
-                }
-                std::process::exit(0);
-            }
-            if self.frame > 60 {
-                eprintln!("no screenshot produced");
-                std::process::exit(3);
-            }
-        }
-        ctx.request_repaint();
-    }
-}
-
-fn main() -> eframe::Result<()> {
+fn main() {
     let a: Vec<String> = std::env::args().collect();
     let out = a.get(1).cloned().unwrap_or_else(|| "gpu_shot.png".into());
     let shape = a.get(2).and_then(|s| s.parse().ok()).unwrap_or(2u32);
@@ -184,11 +139,15 @@ fn main() -> eframe::Result<()> {
         view.shape = materialcraft::render3d::SHAPE_CUSTOM;
     }
     let cpu = arg("cpu=").map(|p| (p, set));
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([w, h]),
-        multisampling: if a.iter().any(|s| s == "nomsaa") { 0 } else { 4 },
-        depth_buffer: 24,
-        ..Default::default()
+    let (w, h) = (w as usize, h as usize);
+    let Some(f) = gpu3d::frame(&gpu, w, h, &view) else {
+        eprintln!("GPU ERROR: {}", gpu.lock().unwrap().error.clone().unwrap_or_default());
+        std::process::exit(2);
     };
-    eframe::run_native("gpu_shot", options, Box::new(move |_cc| Ok(Box::new(App { gpu, view, out, frame: 0, cpu }))))
+    let px: Vec<[f32; 4]> = f.rgba.chunks(4).map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 1.0]).collect();
+    std::fs::write(&out, materialcraft::png::encode(f.w, f.h, &px, 8)).unwrap();
+    println!("renderer: {} | {}x{} written to {}", gpu.lock().unwrap().renderer, f.w, f.h, out);
+    if let Some((p, set)) = &cpu {
+        compare(p, set, &view, &px, f.w, f.h);
+    }
 }

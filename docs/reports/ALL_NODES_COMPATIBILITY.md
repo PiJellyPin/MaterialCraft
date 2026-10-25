@@ -1,236 +1,140 @@
 # all_nodes.sbs compatibility report
 
-**Import/export preservation passes. Full node compatibility fails.** The package opens and survives saving, but it does not yet render every node as intended.
+The current fixture contains **536 compositing nodes, 237 function nodes, one FX node, and six resources**. All compositing nodes import and render finite textures, and every node has an editor definition. Direct import and native editor conversion produce identical pixels for the seven graph outputs.
 
-This report comes from a fresh run of the two tests in [sbs_all_nodes.rs](../../tests/sbs_all_nodes.rs). The fixture and test expectations were not changed for this audit.
+The resources are the logo, an embedded SVG, and four bundled EXRs. No stand-in environment maps are needed. Linked images resolve through the package folders and application `assets/` and `assets/panorama/` folders.
 
-**Subsequent fixture update:** The 34 unavailable HDRI references and bitmap nodes have been replaced with four EXRs from `assets/panorama/`. The missing `Untitled_Bitmap` PNG now uses the logo from `assets/logo.png`. All five references store only their filenames, allowing lookup in the package folders and fallback to application `assets/` and `assets/panorama/` folders. The current fixture has 536 compositing nodes and six resources. All four panoramas and the logo resolve and render through direct import and native conversion. The audit counts and missing-file list below describe the earlier fixture.
+## Current checks (2026-10-24)
+
+- Fixture: [`tests/assets/all_nodes.sbs`](../../tests/assets/all_nodes.sbs), SHA-256 `b6d62617e11b8ad48f70236337f9cfe42507859824ab8716913ef358c7cb73c3`.
+- Importer classification: 34 exact, 502 approximate, zero missing. These classifications do not establish pixel parity with Substance 3D Designer.
+- Unchanged exports preserve the original XML bytes. Edited exports remain stable after reopening and saving again.
+- The edit suite exercises 201 existing constants, 7,205 previously unset numeric properties, all 774 node positions, and 1,139 named output connections.
+- Focused rendering regressions cover exposure, blackbody, Crop filtering, function-driven color edits, and independent width/height for constant and function-driven output sizes, including relative sizing.
+- Export/reopen checks keep the temporary package alive through rendering and use its actual file location for resource resolution.
+- The initial cleanup preserved all 935 baseline pixel hashes: 536 fixture nodes at 32×32 and 399 library demo renders at 16×16. Shared function bindings are also compared against separate wrapper functions across argument, size, seed, graph-input, and function edits.
+- Follow-up Crop regressions check area-average downsampling for Bilinear and the crop-area output, original texels for Nearest, clamped boundary pixels, and background outside the image. Photometric albedo/normal optimizations match reference pixels across sample counts, missing inputs, tied luminance, light directions, and normal formats.
+- Cached native previews reuse one package conversion. Graph/function edits, package changes, and linked-resource resolution changes invalidate it; external editable package dependencies continue to be imported on each call. A release probe on this machine measured 20 warm 64px previews at 10.18 ms versus 294.14 ms with repeated conversion (median of five batches), with identical pixels.
+- All GPU graph parity cases pass. Diagnostics accumulate across cases; strict operations retain their `1e-6` tolerance on identical input pixels, while whole-chain comparisons account for measured upstream FBM error. GPU kernel, residency, read-back, and dynamic output-size cache checks also pass.
+
+Reproduce from the repository root:
+
+```sh
+cargo test --test sbs_all_nodes --test sbs_edit_roundtrip --test sbs_resources -- --nocapture --test-threads=1
+cargo test --lib sbs_native::preview_cache
+cargo test --test renderer_regressions --test perf
+cargo test --features gpu --test gpu_graph --test gpu --test gpu_nodes_all
+```
+
+The fixture's 237-node output-size function is an unconnected palette with no result node. Its preservation is tested, but it cannot demonstrate execution of those function nodes. Most compositing nodes are also disconnected; rendering every node/output and preserving property edits does not establish that every property matches Designer's behavior. Visual fidelity has not been verified against Designer reference renders.
+
+## Historical results
+
+The report below and the [historical node mapping](ALL_NODES_NODE_MAPPING.md) describe the earlier **566-node** fixture. Its 34 unavailable HDRI references were subsequently replaced with four bundled panoramas, and the missing temporary bitmap now uses the logo. Historical counts, hashes, missing-file notes, and environment setup are retained for context and do not describe the current fixture.
+
+<details>
+<summary>Earlier fixture report (2026-10-21)</summary>
 
 ## Run and reproduction
 
-- Completed: `2026-10-21T19:37:32.083410+00:00`.
-- Fixture: [`tests/assets/all_nodes.sbs`](../../tests/assets/all_nodes.sbs).
-- Fixture SHA-256: `880039bdf74e8e0842b319acabcdc1db2429af7f7bcbdde43da28f1ac2c6c730`.
-- Base commit: `e8498c465264fdf85f20082b4a64a881c141cabb`, with the current uncommitted working-tree changes.
-- Toolchain: `rustc 1.99.0 (b940084d7 2026-09-28)`.
-- Result: **1 passed, 1 failed, 0 ignored**; Cargo exited with **101**.
-- Scope: CPU renderer, default Cargo features, release build; all compositing nodes at 32×32 and graph outputs at 64×64.
+- Completed: `2026-10-21`.
+- Earlier fixture SHA-256 `3d259e31fb25e46a4a3fbfbe8bd575e56dbec4da0b13690f7a76af8c92dfeafb`.
+- Base commit: `1d319317b45203e0c6e6c2e9f12338cbfb9428ab` (branch `13-address-missing-and-broken-nodes`) plus the changes described here.
+- Toolchain: `rustc 1.97.0`; CPU renderer, default Cargo features, release build; all compositing nodes at 32×32, graph outputs at 64×64.
+- Environment maps: the run used stand-in EXR/HDR files with the fixture's 34 file names in `assets/panorama/` (the real maps are not in the repository). They exercise lookup and decoding; the real files resolve the same way.
 
 ```sh
-cargo test --release --offline --locked --test sbs_all_nodes -- --nocapture --test-threads=1
+cargo test --release --test sbs_all_nodes -- --nocapture --test-threads=1
 ```
 
 | Test | Result |
 | --- | --- |
 | `all_nodes_import_export_and_reimport_preserve_the_package` | PASS |
-| `all_nodes_import_maps_and_renders_every_node` | FAIL: unsupported conversions, unavailable files, missing definitions, render errors, and an incomplete embedded graph |
+| `all_nodes_import_maps_and_renders_every_node` | PASS (with the environment maps in `assets/panorama/`; without them it fails and names each missing map) |
 
 ## Support summary
 
-Both direct import and conversion from the editor's native graph report the same mapping counts:
+Direct import and conversion from the editor's native graph report the same counts and the same nodes:
 
 | Mapping classification | Nodes | Returned textures | Render errors |
 | --- | ---: | ---: | ---: |
-| Exact mapping | 59 | 24 | 35 |
-| Approximate mapping | 300 | 298 | 2 |
-| Unconverted | 207 | 207 gray placeholders | 0 |
-| **Total** | **566** | **529** | **37** |
+| Exact mapping | 61 | 60 | 1 (the fixture's temporary bitmap) |
+| Approximate mapping | 505 | 505 | 0 |
+| Unconverted | 0 | 0 | 0 |
+| **Total** | **566** | **565** | **1** |
 
-**Returned textures do not imply supported nodes:** all 207 unconverted nodes render gray placeholders. They represent 206 distinct library node kinds; `sbs:lib:paths_tools/path_to_spline` occurs twice.
+“Approximate” means the node runs MaterialCraft's own implementation rather than the library's graph, or converts a value between units; the specific behavior notes are in section 6. “Exact” is still the importer's classification, not a pixel comparison against Substance 3D Designer.
 
-“Exact mapping” is the importer's classification, not a visual comparison against the originating application. It includes 35 bitmap nodes whose external images are unavailable. It also includes Blend node `1584843868`, which ignores a function-driven output size: that warning is recorded without changing the node's mapping classification.
+All seven outputs render finite 64×64 textures, and direct import and conversion from the native editor graph give identical output pixels. Preservation is unchanged: unchanged saves are byte-for-byte identical, and an edit survives export and reimport.
 
-There are **323 approximation diagnostics across 301 nodes**: the 300 approximate mappings plus that Blend node. Of those diagnostics, 284 describe routine substitutions with MaterialCraft implementations; the remaining 39 specific behavior warnings appear below.
+## What changed since the previous report
 
-The categories below overlap. For example, the 35 missing resources also account for 35 of the rendering errors, and 26 missing editor definitions belong to unconverted nodes. Do not add those counts as independent failures.
+### 1. External images: resolve from `assets/panorama/`
 
-[The complete node mapping](ALL_NODES_NODE_MAPPING.md) lists all 566 compositing node UIDs, native kinds, renderer mappings, editor-definition coverage, render outcomes, and limitations.
+The 34 environment maps (`sd-3dview-maps://<name>.exr`, one `.hdr`) resolve by file name from `assets/panorama/` beside the executable or in the working directory, like any linked file. Put the real maps there and the bitmap nodes read them; the test deliberately does **not** excuse them, so a missing map still fails the check with its name.
 
-## What passed and what this fixture cannot prove
+`XXXXXX-Untitled_Bitmap.png` lives in the authoring machine's temp folder (`../AppData/Local/Temp/Adobe/...`) and never travelled with the fixture. It is listed as a **fixture limitation**: reported, not a failure.
 
-- All 566 compositing nodes, six connections, seven output names, 36 resource records, and embedded graphs retain their expected inventory.
-- Unchanged native saves are byte-for-byte identical, including a separately formatted copy of the package. Export/reimport preserves node identities, settings, links, positions, graph metadata, and embedded resources.
-- Editing Uniform Color node `1359211355` changes the exported value and survives reimport; other nodes remain intact. The original fixture stays unchanged.
-- Direct import and conversion from the native editor graph agree on node data and output pixels.
-- All seven outputs render finite 64×64 textures: `ambientocclusion`, `basecolor`, `height`, `metallic`, `normal`, `output`, and `roughness`.
+### 2. The 207 unconverted library nodes: implemented
 
-Only 13 nodes, including the seven Output nodes, are reachable from those outputs. **553 nodes do not feed any output**, so successful output rendering says little about most of the catalog. The test evaluates every compositing node separately at 32×32 to reveal those failures.
+Every library graph the fixture uses now has a native implementation (kinds starting with `x_`, in `src/nodes10*.rs`), with the library's parameters, inputs and outputs (multi-output nodes keep every output). They are in the editor's node menu under their categories. By family:
 
-The native loader preserves a one-node FX-Map graph and a 237-node parameter function. The conversion summary's “0 functions” is not a count of preserved native function nodes; this fixture does not establish working conversion of that incomplete function. The test checks structure and finite pixels, not visual equivalence to reference renders or every parameter configuration.
+- **Image filters and adjustments**: ACEScg / linear sRGB / sRGB conversions, colour temperature, exposure and HDR range viewers, blackbody, HDR merge, get size, Hald CLUT, histogram compute / render, ID to mask, lighting cancel (high and low frequency), median, mean of least variance, anisotropic Kuwahara, directional distance, extend shape, flood-fill mapper, RT shadows and shadows, RT irradiance, normal intensity and uncombine, clone, non-square transform, non-uniform rotation, crop, multi crop, multi clone patch, colour equalizer, multi-angle albedo / normal, UV mappers, triplanar, 3D planar projection, 3D linear gradient, 3D volume mask, AO cancel, apply / create / modify colour palette, height extrude, height-map frequencies mapper.
+- **Materials**: material height blend, switch, transform, adjustment and colour blends, multi-material blend (16 materials and an ID map), material selector, mesh-data blender and combiner, snow cover, water level, material crop and clone patch, albedo-safe, PBR validation, PBR converters, dielectric F0, metal reflectance, PBR base material, bitmap to material, PBR render, atlas splitter and atlas scatter, smart auto tile, all 24 mask generators, the seven weathering materials, and the 26 material presets.
+- **Splines and paths**: spline circle / cubic / quadratic / poly-quadratic, point list, 2D transform, append, merge list, bridge (two splines and list), select, warp, sample height / thickness, scatter on spline and splines on splines, spline render / fill / flow mapper / mappers / bridge mappers, path polygon, mask to paths, path 2D and quad transforms, path warp, select path, vertex processors, path trace, path to spline.
+- **Shape splatter**: splatter, splatter blend (grayscale and colour), data extract, to mask; scratches generator (normal).
+- **Panoramas and 3D textures**: panorama shapes, line / plane / sphere lights, physical sun and sky, position, gradients, rotation, nadir extract / patch, straighten horizon; 3D texture position, SDF, transforms, surface and volume render; cube 3D and its G-buffers.
 
-## 1. Missing external bitmap assets: 35 files
+Spline, path and splatter data travel between these nodes in MaterialCraft's own encoding (an image whose pixels hold the points), so these nodes work with each other, not with data images made by other programs. 3D textures are slice atlases in MaterialCraft's own layout.
 
-These errors concern referenced image assets, not missing bitmap-node implementations. The fixture has one temporary PNG reference and 34 environment/lighting references: 33 EXR files and one HDR file. None of these 35 files resolved in this run. The separate SVG resource is embedded and has a decoding issue described below.
+### 3. Editor definitions: complete
 
-The resolver checks the original path, then the stored relative path and matching filename in:
+The 26 material presets now have catalogue entries, so the editor shows their parameters and outputs. The function nodes `pow` and `while` have definitions and run in the function engine (`while` evaluates its initial value once, then its body while the condition is true, up to the node's iteration limit). The test's “Unknown editor node definitions” check finds none.
 
-- `tests/assets/`, next to this SBS file;
-- `tests/assets/all_nodes.resources/`;
-- `tests/assets/resources/`;
-- `assets/` and `assets/panorama/` beside the executable and in the working directory.
+### 4. Embedded SVG: decoded
 
-For this run, the working directory was the repository root. `assets/panorama/` exists but is empty. The test executable's assets roots would be under `target/release/deps/`. Other subfolders are not scanned recursively, though an existing stored relative path can name a subfolder.
+Embedded resources without a declared format that carry a 4-byte length prefix followed by a zlib stream are inflated before decoding. `Untitled_Vector_Graphics.svg` now renders.
 
-Supplying a matching file in a searched folder can address its lookup error; decoding still has to succeed. It will not address the 207 unsupported conversions or the embedded SVG/function issues. No image files were downloaded, copied into the repository, or embedded in this report.
+### 5. Value processor and dynamic output size
 
-| Node UID | Matching filename required | Asset role |
+- **Value Processor `1584633100`** has no function in the file. It now gives 0 (the value an empty processor gives in Designer) instead of failing to render.
+- **Function-driven output sizes are now used**: when an output-size parameter is driven by a function with a result node, the function's result sets the node's size when it runs.
+- **Blend `1584843868`**'s output-size function in the fixture is a palette of 237 function nodes with no result node, so it cannot produce a size. The native loader no longer invents a result node for it (which had made the two import paths disagree); the default size is used, as in Designer. This graph is listed as a **fixture limitation**.
+
+### 6. Approximate behavior: the flagged items
+
+The previous report asked for curve tangents, font choice, non-uniform histogram inputs, emboss gloss and light colours, and dynamic output sizing to be prioritised. Each is now carried over:
+
+| Node | Before | Now |
 | --- | --- | --- |
-| `1584633001` | `XXXXXX-Untitled_Bitmap.png` | Temporary bitmap |
-| `1584832322` | `abandoned_sanatorium_staircase.exr` | Environment / lighting |
-| `1584832324` | `airport.exr` | Environment / lighting |
-| `1584832326` | `bonifacio_aragon_stairs.exr` | Environment / lighting |
-| `1584832328` | `bonifacio_street.exr` | Environment / lighting |
-| `1584832330` | `bus_garage.exr` | Environment / lighting |
-| `1584832332` | `cave_entry_in_the_forest.exr` | Environment / lighting |
-| `1584832334` | `corsica_beach.exr` | Environment / lighting |
-| `1584832336` | `elevator_corridor.exr` | Environment / lighting |
-| `1584832338` | `Gdansk_shipyard_buildings.exr` | Environment / lighting |
-| `1584832340` | `glazed_patio.exr` | Environment / lighting |
-| `1584832342` | `industrial_room.exr` | Environment / lighting |
-| `1584832344` | `interior_atelier_soft_daylight.exr` | Environment / lighting |
-| `1584832346` | `panorama_map.hdr` | Environment / lighting |
-| `1584832348` | `road_in_tenerife_mountain.exr` | Environment / lighting |
-| `1584832350` | `small_apartment.exr` | Environment / lighting |
-| `1584832352` | `Soft_1Front.exr` | Environment / lighting |
-| `1584832354` | `Soft_1Front_2Backs.exr` | Environment / lighting |
-| `1584832356` | `Soft_1LowContrastFront_2Backs.exr` | Environment / lighting |
-| `1584832358` | `Soft_2RingHighContrast.exr` | Environment / lighting |
-| `1584832360` | `Soft_4TubeBank_2BlackFlags.exr` | Environment / lighting |
-| `1584832362` | `Soft_5DaylightStudio.exr` | Environment / lighting |
-| `1584832364` | `studio.exr` | Environment / lighting |
-| `1584832366` | `studio 02.exr` | Environment / lighting |
-| `1584832368` | `studio_03.exr` | Environment / lighting |
-| `1584832370` | `studio_04.exr` | Environment / lighting |
-| `1584832372` | `studio_05.exr` | Environment / lighting |
-| `1584832374` | `studio_06.exr` | Environment / lighting |
-| `1584832376` | `studio_black_soft_light.exr` | Environment / lighting |
-| `1584832378` | `studio_white_hard_sunlight.exr` | Environment / lighting |
-| `1584832380` | `studio_white_soft_light.exr` | Environment / lighting |
-| `1584832382` | `studio_white_umbrella_soft_light.exr` | Environment / lighting |
-| `1584832384` | `terrace_near_the_granaries.exr` | Environment / lighting |
-| `1584832386` | `tomoco_studio.exr` | Environment / lighting |
-| `1584832388` | `urban_exploring_interior.exr` | Environment / lighting |
+| Curve (`sbs:curve`) | tangents dropped; the curve passed through the same points | each point keeps its left / right Bezier handles; segments are cubic Beziers solved for x, as in Designer. Classified exact. |
+| Text (`sbs:text`) | font ignored; built-in face | a package font resource is read as a file; a family name (the fixture's “Arial”) is looked up among the installed fonts (Windows, macOS and Linux font folders), with metric-compatible stand-ins such as Liberation Sans when the family is not installed. Classified exact; a note appears only if no matching face is installed. |
+| Histogram Scan Non-Uniform | position and contrast maps unused | the maps drive position and contrast per pixel when the node's “custom” switches are off (the sliders are used when they are on, the default). |
+| Emboss (`sbs:emboss`) and Emboss With Gloss | ran on the input's own relief; height input, colours and gloss ignored | the input is lit by the height map's slopes with the highlight and shadow colours; Emboss With Gloss adds a specular highlight whose sharpness follows Gloss. Still marked approximate: the strength is not yet matched against a reference render. |
+| Dynamic output size | ignored | used when the function has a result (see section 5). |
 
-The environment paths are `sd-3dview-maps://<filename>`. The PNG's stored path is `../AppData/Local/Temp/Adobe/Adobe Substance 3D Designer/resources/XXXXXX-Untitled_Bitmap.png`. Its resource also names an external copy under `SubstanceNodes.resources/`, but the current resolver uses the stored filepath and the folders listed above; the renamed fixture's automatic companion folder is `all_nodes.resources/`.
+Other improvements made while checking renders: panorama world positions follow the library's Z-up default (the default lights sit above the horizon), RT Shadows uses its attenuation and light intensity and steps about one pixel at a time, atlas splitting and scattering are anti-aliased and fast, and closed splines close their bridges and mappers without a seam.
 
-## 2. Unsupported renderer conversions: 207 nodes
+The remaining behavior notes the test prints (informational, not failures) are:
 
-Every unconverted entry is a library node for which the importer reports **“has no MaterialCraft equivalent yet.”** All 207 are represented by gray `color` placeholders in this fixture. The SBS data survives import/export, but the node's operation has no renderer implementation/mapping here. Providing bitmap artwork will not implement these nodes.
+- unit conversions to MaterialCraft's own nodes (normal, blur, directional blur and warp, distance, sharpen, SVG, warp, HSL), and the FX-map drawn by MaterialCraft's quad-tree engine;
+- the fixture's Pixel Processor, whose function is a constant;
+- 3D noises read on the texture plane when no position map is connected;
+- MaterialCraft's own fur, caustics, scratches, random tiles and tile-sampler blending;
+- MaterialCraft's own versions of the weathering materials, the 26 material presets, PBR render and RT irradiance;
+- the spline, path, splatter and 3D-texture encodings described in section 2;
+- emboss strength (above) and glow size / strength, which are converted approximately.
 
-The [unconverted-node table](ALL_NODES_NODE_MAPPING.md#unconverted-library-nodes-207) lists every affected UID and exact library identifier. Of those nodes, 181 have a native editor definition but no renderer conversion; the other 26 also lack an editor definition.
+## Remaining limitations
 
-## 3. Missing native editor definitions: 28 nodes
-
-These are 26 library/material nodes in the main graph plus `pow` and `while` in the embedded output-size function. Preserving their serialized data does not establish editor support for their interface or behavior.
-
-| Graph | Node UID | Native kind without a definition |
-| --- | --- | --- |
-| Main graph | `1584833851` | `sbs:lib:bricks_001/bricks_001` |
-| Main graph | `1584833861` | `sbs:lib:bricks_005/bricks_005` |
-| Main graph | `1584834378` | `sbs:lib:cardboard_001/cardboard_001` |
-| Main graph | `1584835031` | `sbs:lib:concrete_002/concrete_002` |
-| Main graph | `1584835321` | `sbs:lib:concrete_006/concrete_006` |
-| Main graph | `1584835647` | `sbs:lib:concrete_010/concrete_010` |
-| Main graph | `1584835948` | `sbs:lib:concrete_011/concrete_011` |
-| Main graph | `1584836158` | `sbs:lib:concrete_044/concrete_044` |
-| Main graph | `1584836287` | `sbs:lib:concrete_070/concrete_070` |
-| Main graph | `1584836996` | `sbs:lib:fabric_002/fabric_002` |
-| Main graph | `1584837273` | `sbs:lib:fabric_009/fabric_009` |
-| Main graph | `1584838663` | `sbs:lib:fabric_025/fabric_025` |
-| Main graph | `1584839008` | `sbs:lib:gravel/gravel` |
-| Main graph | `1584839491` | `sbs:lib:metal_002/metal_002` |
-| Main graph | `1584840061` | `sbs:lib:metal_003/metal_003` |
-| Main graph | `1584840263` | `sbs:lib:metal_006/metal_006` |
-| Main graph | `1584840449` | `sbs:lib:metal_plate_001/metal_plate_001` |
-| Main graph | `1584840983` | `sbs:lib:metal_plate_004/metal_plate_004` |
-| Main graph | `1584841298` | `sbs:lib:old_painted_planks/old_painted_planks` |
-| Main graph | `1584841700` | `sbs:lib:paper_005/paper_005` |
-| Main graph | `1584841869` | `sbs:lib:rough_concrete_with_lines/rough_concrete_with_lines` |
-| Main graph | `1584842120` | `sbs:lib:tiles_002/tiles_002` |
-| Main graph | `1584842397` | `sbs:lib:tiles_008/tiles_008` |
-| Main graph | `1584842671` | `sbs:lib:tiles_011/tiles_011` |
-| Main graph | `1584842975` | `sbs:lib:tiles_025/tiles_025` |
-| Main graph | `1584843264` | `sbs:lib:wood_american_cherry/wood_american_cherry` |
-| `Substance_graph/1584843868/outputsize` | `1584844962` | `sbs:fn:pow` |
-| `Substance_graph/1584843868/outputsize` | `1584844985` | `sbs:fn:while` |
-
-## 4. Embedded SVG decoding failure
-
-- Node: `1584633070` (`sbs:svg`).
-- Resource: `Untitled_Vector_Graphics.svg`.
-- Error: `not an SVG document (no <svg> element)`.
-
-The artwork is present in the SBS. Base64 decoding produces 123 bytes: a four-byte big-endian uncompressed-length prefix followed by zlib data. Independently decompressing the stream after that prefix produces a valid 157-byte XML document with an SVG root, matching the declared length.
-
-The resource's `<binembedded>` element does not declare its encoding with a `<format>` child. [The resource reader](../../src/sbs.rs) currently defaults that case to raw base64, so the compressed payload reaches the SVG decoder unchanged. This is an embedded-resource decoding gap, not an absent image file. The decompressed art was inspected in memory only.
-
-## 5. Incomplete fixture graphs and ignored dynamic behavior
-
-| Location | Finding | Implication |
-| --- | --- | --- |
-| Value Processor `1584633100` | Its `<compFilter>` has an empty `<parameters/>` and no function body. Rendering fails with `value_processor needs fn="function"`. | This node cannot demonstrate working value processing as authored. It needs a usable function to test that behavior. |
-| `Substance_graph/1584843868/outputsize` | 237 nodes, no valid result node; `pow` and `while` also lack editor definitions. | Serialization preserves the graph, but this fixture cannot demonstrate complete function evaluation. |
-| Blend `1584843868` | Its function-driven output size is ignored during conversion. | This is an implementation limitation independent of repairing the missing function result. The “exact” count does not include it as an approximate node. |
-| Pixel Processor `1584633054` | Imported per-pixel function is a constant. | A successful texture here does not exercise a nontrivial pixel-processor program. |
-
-## 6. Specific approximate behavior: 39 diagnostics
-
-These warnings are informational in the existing test; they are not assertions requiring pixel-perfect parity. They identify altered behavior, omitted inputs or settings, approximate units, and cases awaiting reference comparison. The full mapping appendix also lists the 284 routine implementation-substitution diagnostics.
-
-| Node UID | Native kind | Behavior warning |
-| --- | --- | --- |
-| `1359211383` | `sbs:normal` | values are converted to the units of MaterialCraft's Normal From Height node; check the result |
-| `1584632887` | `sbs:blur` | blur strength is converted (intensity / 1.5 as a Gaussian deviation); compare with a reference render |
-| `1584632919` | `sbs:curve` | curve tangents are not carried over; the curve passes through the same points |
-| `1584632925` | `sbs:dirmotionblur` | blur length is converted from pixels at 256 |
-| `1584632931` | `sbs:directionalwarp` | values are converted to the units of MaterialCraft's Directional Warp node; check the result |
-| `1584632937` | `sbs:distance` | values are converted to the units of MaterialCraft's Distance node; check the result |
-| `1584632943` | `sbs:emboss` | values are converted to the units of MaterialCraft's Emboss node; check the result |
-| `1584632949` | `sbs:fxmaps` | drawn by MaterialCraft's quad-tree engine: the layout follows the file, random numbers differ |
-| `1584632980` | `sbs:hsl` | saturation and lightness are converted to multipliers |
-| `1584633042` | `sbs:normal` | values are converted to the units of MaterialCraft's Normal From Height node; check the result |
-| `1584633054` | `sbs:pixelprocessor` | the per-pixel function is a constant |
-| `1584633061` | `sbs:sharpen` | values are converted to the units of MaterialCraft's Sharpen node; check the result |
-| `1584633070` | `sbs:svg` | values are converted to the units of MaterialCraft's SVG node; check the result |
-| `1584633077` | `sbs:text` | the font is not carried over; the built-in face is used |
-| `1584633100` | `sbs:valueprocessor` | the value processor has no function |
-| `1584633107` | `sbs:warp` | values are converted to the units of MaterialCraft's Warp node; check the result |
-| `1584687025` | `sbs:lib:3d_perlin_noise/3D_perlin_noise` | without a position map the noise is read on the texture plane |
-| `1584687027` | `sbs:lib:3d_perlin_noise/3D_perlin_noise_fractal` | without a position map the noise is read on the texture plane |
-| `1584687029` | `sbs:lib:3d_perlin_noise/3D_ridged_noise_fractal` | without a position map the noise is read on the texture plane |
-| `1584687031` | `sbs:lib:3d_simplex_noise/3d_simplex_noise` | without a position map the noise is read on the texture plane |
-| `1584687033` | `sbs:lib:noise_voronoi/3d_voronoi` | without a position map the noise is read on the texture plane |
-| `1584687035` | `sbs:lib:noise_voronoi/3d_voronoi_fractal` | without a position map the noise is read on the texture plane |
-| `1584687037` | `sbs:lib:3d_worley_noise/3D_worley_noise` | without a position map the noise is read on the texture plane |
-| `1584687103` | `sbs:lib:noise_fur_1/fur_1` | fur is drawn with MaterialCraft's own hairs; the look is similar, not identical |
-| `1584687105` | `sbs:lib:noise_fur_2/fur_2` | fur is drawn with MaterialCraft's own hairs; the look is similar, not identical |
-| `1584687107` | `sbs:lib:noise_fur_3/fur_3` | fur is drawn with MaterialCraft's own hairs; the look is similar, not identical |
-| `1584687191` | `sbs:lib:rt_caustics/rt_caustics_color` | the caustics are MaterialCraft's own pattern, not traced through the input surface |
-| `1584687193` | `sbs:lib:rt_caustics/rt_caustics_grayscale` | the caustics are MaterialCraft's own pattern, not traced through the input surface |
-| `1584687261` | `sbs:lib:gradient_axial/gradient_axial_reflected` | the reflected axial gradient is not yet checked against a reference render |
-| `1584687287` | `sbs:lib:pattern_scratches_generator/scratches_generator` | the scratches are drawn with MaterialCraft's own strokes |
-| `1584687324` | `sbs:lib:pattern_star/star` | the star is not yet checked against a reference render |
-| `1584687334` | `sbs:lib:pattern_tile_random/tile_random` | random tiles follow the same rules with their own random choices |
-| `1584687339` | `sbs:lib:pattern_tile_random/tile_random_color` | random tiles follow the same rules with their own random choices |
-| `1584687343` | `sbs:lib:pattern_tile_sampler/tile_sampler_color` | blending mode 2 is assumed to be our 'Add' mode |
-| `1584689879` | `sbs:lib:histogram_scan_non_uniform/histogram_scan_non_uniform` | the position and contrast maps are not used |
-| `1584756604` | `sbs:lib:emboss_with_gloss/emboss_with_gloss` | the gloss and the light colours are not reproduced |
-| `1584760342` | `sbs:lib:glow/glow` | the glow's size and strength are converted approximately |
-| `1584760349` | `sbs:lib:glow/glow_grayscale` | the glow's size and strength are converted approximately |
-| `1584843868` | `sbs:blend` | a function-driven output size is not used |
-
-## Suggested follow-up
-
-1. Implement or map the 207 unconverted library nodes; the appendix separates missing editor definitions from missing renderer support.
-2. Decode the length-prefixed compressed embedded SVG before passing it to the SVG parser.
-3. Define the missing editor nodes, including `pow` and `while`, and address ignored function-driven output sizes.
-4. Supply usable fixture function bodies/results and resolve the 35 external image dependencies to enable broader rendering checks.
-5. Compare approximate mappings against reference renders, prioritizing ignored curve tangents, font choice, non-uniform histogram inputs, emboss gloss/light colors, and dynamic output sizing.
-
-The strict compatibility test remains failing. No failures were ignored, no expected-missing counts were accepted as success, and no application code or fixture data was changed during this report run.
+- **Library functions** (`sbs://functions.sbs`, such as `Functions/Math/clamp`, `HSVtoRGB`, the easings) are now **implemented natively** (`src/libfuncs.rs`): all 161 of Substance Designer's function presets, written as MaterialCraft's own `f_*` function graphs, so a material that drives a parameter with one of them renders **without Designer installed and with no `functions.sbs` present**. 151 of them are checked to match Designer's own output exactly (`tests/libfuncs.rs` keeps a file-free subset; the full check compares every function against Designer's library when it is available); the other 10 are the random generators (`Uniform_*`, `Discrete`, `GlobalRandom`, `Random_Color/Luminosity`, `disorder`), which are functionally equivalent but not bit-identical because their randomness is seeded differently. Designer's own `functions.sbs` is never consulted: every library function is built in, and a call to a `sbs://` library function that is **not** among the 161 gives 0 with a note. The fixture's palette function holds 154 such calls but is never run (it has no result node).
+- **`while` inputs** are matched by name (`init`, `condition`, `loop` and common variants), because the fixture's `while` has no connections to confirm Designer's identifiers.
+- **Visual fidelity** of the natively implemented library graphs has been checked on contact sheets of every node and output, not against reference renders from Designer.
 
 ## Evidence and interpretation
 
-The fresh Rust test supplied the failure categories, UID-specific errors, and preservation/render results. A temporary read-only diagnostic program, linked against the release library produced by that run, collected all import notes and node mappings because the test intentionally omits routine substitution messages from its console output. Mapping totals agree between those two sources. The SVG payload and output reachability were independently checked from the fixture XML.
+The Rust test supplied the pass / fail result and the behavior notes. A read-only diagnostic program linked against the same release library collected the per-node classifications, notes and 32×32 render results for the [mapping appendix](ALL_NODES_NODE_MAPPING.md). Contact sheets rendering every new node's outputs from shared test inputs were reviewed by eye; several issues found that way were fixed (listed in section 6).
 
-The complete mapping appendix is a snapshot of this fixture and run, not a claim about every possible SBS package or configuration.
+The mapping appendix is a snapshot of this fixture and run, not a claim about every possible SBS package or configuration.
+
+</details>

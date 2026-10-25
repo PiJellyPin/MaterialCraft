@@ -172,8 +172,9 @@ fn every_library_node_draws_its_picture() {
             None => none.push(d.kind),
         }
     }
-    // a bitmap or SVG needs its file and a value processor its function before they make anything
-    assert_eq!(none, vec!["sbs:bitmap", "sbs:svg", "sbs:valueprocessor"], "no picture");
+    // a bitmap or SVG needs its file before it makes anything (a value processor without a function gives 0,
+    // as an empty one does in Substance Designer)
+    assert_eq!(none, vec!["sbs:bitmap", "sbs:svg"], "no picture");
 }
 
 #[test]

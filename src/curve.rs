@@ -2,7 +2,9 @@
 //! Tone curves: a list of control points joined by smooth cubic segments, baked into a lookup table.
 //!
 //! Text form (used by the `curve` node): `x:y` points separated by commas, e.g. `0:0,0.5:0.7,1:1`.
-//! A point may carry a slope (`x:y:s`, the same slope on both sides) or two (`x:y:sin:sout`).
+//! A point may carry a slope (`x:y:s`, the same slope on both sides) or two (`x:y:sin:sout`),
+//! or Bezier handles at absolute positions (`x:y:lx:ly:rx:ry`, the left then the right handle), as
+//! Substance Designer's Curve node stores them; a segment with a handle at either end is a cubic Bezier.
 //! Points without a slope get a smooth, overshoot-free slope from their neighbours.
 
 use crate::tex::Tex;
@@ -11,6 +13,8 @@ use crate::tex::Tex;
 pub struct Curve {
     /// (x, y, slope in, slope out), sorted by x
     pub pts: Vec<(f32, f32, f32, f32)>,
+    /// optional Bezier handles per point: (left, right) at absolute curve positions
+    pub handles: Vec<Option<([f32; 2], [f32; 2])>>,
 }
 
 pub const LUT: usize = 1024;
@@ -21,15 +25,23 @@ impl Curve {
     }
 
     /// Points with optional explicit slopes; computes the automatic ones.
-    pub fn new(mut raw: Vec<(f32, f32, Option<f32>, Option<f32>)>) -> Curve {
-        raw.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-        raw.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-6);
+    pub fn new(raw: Vec<(f32, f32, Option<f32>, Option<f32>)>) -> Curve {
+        Curve::with_handles(raw.into_iter().map(|p| (p, None)).collect())
+    }
+
+    /// Points with optional slopes and optional Bezier handles (left, right).
+    pub fn with_handles(mut list: Vec<((f32, f32, Option<f32>, Option<f32>), Option<([f32; 2], [f32; 2])>)>) -> Curve {
+        list.sort_by(|a, b| a.0 .0.partial_cmp(&b.0 .0).unwrap_or(std::cmp::Ordering::Equal));
+        list.dedup_by(|a, b| (a.0 .0 - b.0 .0).abs() < 1e-6);
+        let mut handles: Vec<Option<([f32; 2], [f32; 2])>> = list.iter().map(|p| p.1).collect();
+        let mut raw: Vec<(f32, f32, Option<f32>, Option<f32>)> = list.into_iter().map(|p| p.0).collect();
         if raw.is_empty() {
             return Curve::identity();
         }
         if raw.len() == 1 {
             let p = raw[0];
             raw = vec![(0.0, p.1, None, None), (1.0, p.1, None, None)];
+            handles = vec![None, None];
         }
         let n = raw.len();
         // secant slopes and Fritsch-Carlson monotone tangents
@@ -63,7 +75,7 @@ impl Curve {
                 (p.0.clamp(0.0, 1.0), p.1.clamp(0.0, 1.0), s_in, s_out)
             })
             .collect();
-        Curve { pts }
+        Curve { pts, handles }
     }
 
     pub fn parse(text: &str) -> Result<Curve, String> {
@@ -72,20 +84,32 @@ impl Curve {
             let parts: Vec<&str> = item.split(':').collect();
             let num = |s: &str| s.trim().parse::<f32>().ok().filter(|v| v.is_finite()).ok_or_else(|| format!("bad number '{s}' in curve point '{item}'"));
             match parts.len() {
-                2 => raw.push((num(parts[0])?, num(parts[1])?, None, None)),
-                3 => raw.push((num(parts[0])?, num(parts[1])?, Some(num(parts[2])?), None)),
-                4 => raw.push((num(parts[0])?, num(parts[1])?, Some(num(parts[2])?), Some(num(parts[3])?))),
+                2 => raw.push(((num(parts[0])?, num(parts[1])?, None, None), None)),
+                3 => raw.push(((num(parts[0])?, num(parts[1])?, Some(num(parts[2])?), None), None)),
+                4 => raw.push(((num(parts[0])?, num(parts[1])?, Some(num(parts[2])?), Some(num(parts[3])?)), None)),
+                6 => {
+                    let v: Vec<f32> = parts.iter().map(|s| num(s)).collect::<Result<_, _>>()?;
+                    raw.push(((v[0], v[1], None, None), Some(([v[2], v[3]], [v[4], v[5]]))));
+                }
                 _ => return Err(format!("curve point '{item}' must look like x:y")),
             }
         }
         if raw.is_empty() {
             return Err("a curve needs at least one point".into());
         }
-        Ok(Curve::new(raw))
+        Ok(Curve::with_handles(raw))
     }
 
     pub fn to_text(&self) -> String {
-        self.pts.iter().map(|p| format!("{}:{}:{}:{}", p.0, p.1, p.2, p.3)).collect::<Vec<_>>().join(",")
+        self.pts
+            .iter()
+            .zip(self.handles.iter())
+            .map(|(p, h)| match h {
+                Some((l, r)) => format!("{}:{}:{}:{}:{}:{}", p.0, p.1, l[0], l[1], r[0], r[1]),
+                None => format!("{}:{}:{}:{}", p.0, p.1, p.2, p.3),
+            })
+            .collect::<Vec<_>>()
+            .join(",")
     }
 
     pub fn eval(&self, x: f32) -> f32 {
@@ -100,6 +124,29 @@ impl Curve {
         let i = p.partition_point(|q| q.0 <= x) - 1;
         let (a, b) = (p[i], p[i + 1]);
         let h = b.0 - a.0;
+        let (ha, hb) = (self.handles.get(i).copied().flatten(), self.handles.get(i + 1).copied().flatten());
+        if ha.is_some() || hb.is_some() {
+            // cubic Bezier through the handles (a slope stands in for a missing handle);
+            // the handles' x stays inside the segment so the curve is a function of x
+            let c1 = ha.map(|h| h.1).unwrap_or([a.0 + h / 3.0, a.1 + a.3 * h / 3.0]);
+            let c2 = hb.map(|h| h.0).unwrap_or([b.0 - h / 3.0, b.1 - b.2 * h / 3.0]);
+            let (x1, x2) = (c1[0].clamp(a.0, b.0), c2[0].clamp(a.0, b.0));
+            let bz = |p0: f32, p1: f32, p2: f32, p3: f32, t: f32| {
+                let u = 1.0 - t;
+                u * u * u * p0 + 3.0 * u * u * t * p1 + 3.0 * u * t * t * p2 + t * t * t * p3
+            };
+            // x(t) never decreases with the handles inside the segment: bisection finds t
+            let (mut lo, mut hi) = (0.0f32, 1.0f32);
+            for _ in 0..40 {
+                let m = 0.5 * (lo + hi);
+                if bz(a.0, x1, x2, b.0, m) < x {
+                    lo = m;
+                } else {
+                    hi = m;
+                }
+            }
+            return bz(a.1, c1[1], c2[1], b.1, 0.5 * (lo + hi)).clamp(0.0, 1.0);
+        }
         let t = (x - a.0) / h;
         let (t2, t3) = (t * t, t * t * t);
         let y = (2.0 * t3 - 3.0 * t2 + 1.0) * a.1 + (t3 - 2.0 * t2 + t) * h * a.3 + (-2.0 * t3 + 3.0 * t2) * b.1 + (t3 - t2) * h * b.2;

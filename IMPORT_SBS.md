@@ -133,8 +133,8 @@ through, or mid grey), marked with an orange corner and a note in the Properties
   name and meaning, and nodes with no MaterialCraft counterpart yet (some material filters, arc pavement and pavement,
   shape extrude, height extrude, cube 3D, panorama and ray-traced nodes) are placeholders or
   approximations.
-- A node's own output size and format carry over to its Output Size and Output Format settings; a function-driven size
-  and a height offset that differs from the width's are not used.
+- A node's own output size and format carry over to its Output Size and Output Format settings. Width and height are
+  independent, including function-driven sizes and offsets relative to the parent or input.
 - Compiled `.sbsar` files cannot be imported (they are not editable packages).
 - Number codes of drop-down settings (blend modes and the like) follow the order the writing program lists them in; they are being
   checked against sample files.

@@ -8,6 +8,26 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[test]
+fn library_nodes_do_not_mutate_shared_input_pixels() {
+    use materialcraft::{graph::Node, nodes10};
+    let input = Arc::new(Tex::from_fn(32, 24, |u, v| [u, v, u * v, 0.75]));
+    let original = input.px.clone();
+    let inputs = std::collections::BTreeMap::from([("input".into(), input.clone())]);
+    for kind in ["x_exposure", "x_median_filter_color", "x_mlv_color"] {
+        let mut node = Node::default();
+        node.nums.insert("exposure".into(), 1.0);
+        let mut output = nodes10::compute(kind, 1, &node, &inputs, 32, 24, 0).unwrap().unwrap();
+        assert_eq!((output.w, output.h), (32, 24));
+        assert_eq!(input.px, original, "{kind} mutated the shared input");
+        output.px[0] = [9.0; 4];
+        assert_eq!(input.px, original, "{kind} output aliases its input");
+    }
+    let black = nodes10::compute("x_exposure", 1, &Default::default(), &Default::default(), 32, 24, 0).unwrap().unwrap();
+    assert_eq!((black.w, black.h), (32, 24));
+    assert!(black.px.iter().all(|p| *p == [0.0, 0.0, 0.0, 1.0]));
+}
+
+#[test]
 fn pool_runs_every_piece_once_also_nested_and_from_several_threads() {
     for n in [0usize, 1, 2, 7, 64, 1000] {
         let hits: Vec<AtomicUsize> = (0..n).map(|_| AtomicUsize::new(0)).collect();
@@ -176,10 +196,20 @@ fn hbao_reference(h: &Tex, radius_uv: f32, height_scale: f32, dirs: u32, intensi
 
 #[test]
 fn horizon_occlusion_equals_the_plain_version() {
-    let t = Tex::gray_fn(48, 40, |u, v| noise::fbm(u, v, 3, 3, 5, 0.55, 4, 0));
-    for (r, s, d) in [(0.05f32, 0.1f32, 8u32), (0.2, 0.4, 4), (0.12, 0.05, 16)] {
-        let (a, b) = (ops::hbao(&t, r, s, d, 1.0), hbao_reference(&t, r, s, d, 1.0));
-        assert_eq!(a.px, b.px, "radius {r} scale {s} dirs {d}");
+    // The fast version shares the bilinear weights of all pixels (every pixel looks at the same offsets), so it rounds
+    // differently from the plain one in the last bits; the results must agree to well below one 8-bit level. The
+    // sizes include odd and non-square ones so the wrap-around runs at the borders are covered.
+    for (w, h) in [(48usize, 40usize), (37, 53), (16, 16), (5, 7)] {
+        let t = Tex::gray_fn(w, h, |u, v| noise::fbm(u, v, 3, 3, 5, 0.55, 4, 0));
+        for (r, s, d) in [(0.05f32, 0.1f32, 8u32), (0.2, 0.4, 4), (0.12, 0.05, 16), (0.25, 0.3, 8)] {
+            let (a, b) = (ops::hbao(&t, r, s, d, 1.0), hbao_reference(&t, r, s, d, 1.0));
+            assert_eq!((a.w, a.h), (b.w, b.h));
+            let worst = a.px.iter().zip(&b.px).map(|(x, y)| (x[0] - y[0]).abs().max((x[3] - y[3]).abs())).fold(0.0f32, f32::max);
+            assert!(worst < 2e-4, "{w}x{h} radius {r} scale {s} dirs {d}: largest difference {worst}");
+        }
+        // no search distance, nothing to occlude (the plain version only has rounding noise to show here)
+        let none = ops::hbao(&t, 0.0, 0.2, 4, 1.0);
+        assert!(none.px.iter().all(|p| p[0] == 1.0), "{w}x{h}: a zero radius occludes nothing");
     }
 }
 

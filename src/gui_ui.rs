@@ -52,21 +52,43 @@ impl App {
         }
 
         if ui.rect_contains_pointer(rect) {
-            // Trackpads and the Magic Mouse report scrolling in points (two fingers pan the graph, a pinch or
-            // Ctrl/Cmd + scroll zooms); a wheel mouse reports lines (the wheel zooms, Shift + wheel pans sideways).
-            let (smooth, pinch, line_wheel) = ui.input(|i| {
-                let wheel = i.events.iter().any(|e| matches!(e, egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page, .. }));
-                (i.smooth_scroll_delta, i.zoom_delta(), wheel)
+            // Navigation follows the input DEVICE, not the operating system, so it behaves the same on
+            // Windows, Linux and macOS:
+            //   - a mouse wheel reports in lines or pages, so the wheel zooms (Shift + wheel pans sideways);
+            //   - a trackpad or Magic Mouse reports in points, so two fingers pan and a pinch zooms.
+            // The raw wheel events are read here rather than egui's smoothed scroll delta: egui eases one
+            // wheel notch out over several frames, and zooming (re-centred on the pointer) once per frame made
+            // that single notch drift and bounce. Each notch is now applied exactly once.
+            let (wheel_zoom, pad_pan, pinch) = ui.input(|i| {
+                let mut wheel_zoom = 0.0_f32;
+                let mut pad_pan = Vec2::ZERO;
+                for e in &i.events {
+                    if let egui::Event::MouseWheel { unit, delta, modifiers, .. } = e {
+                        match unit {
+                            // classic wheel: zoom, or pan sideways with Shift held
+                            egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => {
+                                if modifiers.shift {
+                                    pad_pan.x += (delta.x + delta.y) * 40.0;
+                                } else {
+                                    wheel_zoom += delta.y;
+                                }
+                            }
+                            // trackpad / Magic Mouse: two-finger scroll pans
+                            egui::MouseWheelUnit::Point => pad_pan += *delta,
+                        }
+                    }
+                }
+                (wheel_zoom, pad_pan, i.zoom_delta())
             });
+            if pad_pan != Vec2::ZERO {
+                self.pan += pad_pan;
+            }
+            // a trackpad pinch, or the mouse wheel (clamped so no single event jumps the view)
             let mut zoom_by = 1.0;
             if pinch != 1.0 {
                 zoom_by = pinch;
-            } else if line_wheel && !mods.shift {
-                zoom_by = 1.0 + smooth.y * 0.0012;
-            } else if mods.shift && line_wheel {
-                self.pan.x += smooth.y + smooth.x;
-            } else if smooth != Vec2::ZERO {
-                self.pan += smooth;
+            } else if wheel_zoom != 0.0 {
+                zoom_by = (1.0 + wheel_zoom * 0.1).clamp(0.5, 2.0);
             }
             if zoom_by != 1.0 {
                 let old = self.zoom;
@@ -334,7 +356,7 @@ impl App {
                 self.sel_comment = None;
                 if self.active != Some(id) {
                     self.active = Some(id);
-                    self.dirty = true;
+                    self.view_pending = true;
                 }
             }
             if nr.dragged() && (self.connecting.is_none() && self.connecting_in.is_none()) {
@@ -376,7 +398,7 @@ impl App {
                 self.sel_comment = None;
                 if self.active != Some(id) {
                     self.active = Some(id);
-                    self.dirty = true;
+                    self.view_pending = true;
                 }
             }
             if nr.double_clicked() {
@@ -387,7 +409,7 @@ impl App {
             if nr.secondary_clicked() && !self.sel.contains(&id) {
                 self.sel = [id].into_iter().collect();
                 self.active = Some(id);
-                self.dirty = true;
+                self.view_pending = true;
             }
             if let Some(e) = &err {
                 nr.clone().on_hover_text(e);
@@ -608,7 +630,7 @@ impl App {
                     }
                     if self.active.is_none() {
                         self.active = self.sel.iter().next().copied();
-                        self.dirty = true;
+                        self.view_pending = true;
                     }
                     self.rubber = None;
                 }
@@ -683,7 +705,7 @@ impl App {
             Act::SelectAll => {
                 self.sel = self.g.nodes.keys().copied().collect();
                 self.active = self.sel.iter().next().copied();
-                self.dirty = true;
+                self.view_pending = true;
             }
             Act::Comment => self.add_comment(),
             Act::EnterSub(n) => {
@@ -1051,7 +1073,8 @@ impl App {
                     ("Shift/Ctrl + click", "toggle selection"),
                     ("Drag background", "rubber-band select"),
                     ("Middle-drag, Alt+drag, Space+drag", "pan"),
-                    ("Wheel", "zoom"),
+                    ("Wheel / pinch", "zoom (Shift+wheel pans)"),
+                    ("Two-finger drag (trackpad / Magic Mouse)", "pan"),
                     ("F", "frame all"),
                     ("C", "comment frame around selection"),
                     ("Delete", "delete selection"),

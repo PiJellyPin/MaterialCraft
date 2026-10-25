@@ -1195,6 +1195,7 @@ impl App {
                 self.scene_extras(ui, &mut ch);
             });
             ui.menu_button("Materials", |ui| {
+                self.ensure_maps();
                 if self.maps.contains_key("height") {
                     ui.label("Height display");
                     for (i, n) in ["Normal map only", "Bump", "Parallax (outward)", "Displacement (real geometry)"].iter().enumerate() {
@@ -1225,7 +1226,7 @@ impl App {
             });
             self.view3d_menus(ui, &mut ch);
             ui.menu_button("Renderer", |ui| {
-                if ui.checkbox(&mut self.gpu_on, "GPU rendering (OpenGL)").changed() {
+                if ui.checkbox(&mut self.gpu_on, "GPU rendering (wgpu)").changed() {
                     self.gpu_maps_dirty = true;
                     ch = true;
                 }
@@ -1338,11 +1339,26 @@ impl App {
         }
         self.view3d_tick(ui.ctx());
         if self.gpu_ready() && !self.v3.pt_on {
-            let (g, v) = (self.gpu.clone(), self.view3d.clone());
-            ui.painter().add(egui::PaintCallback {
-                rect,
-                callback: std::sync::Arc::new(eframe::egui_glow::CallbackFn::new(move |info, painter| gpu3d::paint(&g, &info, painter, &v))),
-            });
+            // drawn on the device that holds the maps; only the finished picture comes back (and only when it changed)
+            let ppp = ui.ctx().pixels_per_point();
+            let (pw, ph) = (((rect.width() * ppp).round() as usize).max(1), ((rect.height() * ppp).round() as usize).max(1));
+            match gpu3d::frame(&self.gpu, pw, ph, &self.view3d) {
+                Some(f) => {
+                    if f.seq != self.gpu_seq || self.tex_gpu.is_none() {
+                        let img = ColorImage::from_rgba_unmultiplied([f.w, f.h], &f.rgba);
+                        match &mut self.tex_gpu {
+                            Some(t) => t.set(img, egui::TextureOptions::LINEAR),
+                            None => self.tex_gpu = Some(ui.ctx().load_texture("view3d_gpu", img, egui::TextureOptions::LINEAR)),
+                        }
+                        self.gpu_seq = f.seq;
+                    }
+                    if let Some(t) = &self.tex_gpu {
+                        ui.painter().image(t.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                    }
+                }
+                // the device refused: the next frame shows the software renderer
+                None => self.dirty3d = true,
+            }
         } else if let Some(t) = &self.tex3d {
             ui.painter().image(t.id(), img_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
         }
@@ -1986,12 +2002,22 @@ impl eframe::App for App {
             // a value changed this frame: show it at once with a cheap pass over just the on-screen nodes, and
             // (re)arm the settle timer so the passes over the whole graph run only once the input stops moving
             self.dirty = false;
+            if let Ok(mut t) = EDIT_AT.lock() {
+                *t = Some(now);
+            }
             self.refine = false;
             self.thumbs_due = true;
             self.final_due = true;
             self.settle_at = Some(now + SETTLE);
-            let first = self.first_tier();
+            let first = self.interactive_size();
+            self.maps_size = 0;
             self.spawn_eval(first, Pass::Interactive);
+        } else if self.view_pending && self.job.is_none() {
+            // only the selection moved: show that node's picture from the cache, leave everything else alone
+            self.view_pending = false;
+            self.view_only_next = true;
+            let size = self.pass_size.max(self.first_tier());
+            self.spawn_eval(size, Pass::Interactive);
         } else if self.job.is_none() {
             let settled = self.settle_at.map_or(true, |t| now >= t);
             if settled && self.thumbs_due {
@@ -2003,19 +2029,28 @@ impl eframe::App for App {
                 // progressively sharpen the 2D preview while the user holds still
                 self.refine = false;
                 if let Some(sz) = self.refine_size {
+                    self.view_only_next = self.job_view_only;
                     self.spawn_eval(sz, Pass::Interactive);
                 }
             } else if settled && self.final_due {
-                // the outputs at the full preview size: the final 3D maps
-                self.final_due = false;
-                self.settle_at = None;
-                let size = self.target_3d().max(self.preview_full());
-                if size > self.first_tier() {
-                    self.spawn_eval(size, Pass::Final);
+                // the outputs at the full preview size: the final 3D maps. They get there in steps of at most
+                // double the size, so the 3D view sharpens as soon as each step is done instead of after the last
+                let target = self.target_3d().max(self.preview_full());
+                let have = self.maps_size.max(self.first_tier());
+                if have >= target {
+                    self.final_due = false;
+                    self.settle_at = None;
+                } else {
+                    let next = (have * 2).min(target);
+                    if next >= target {
+                        self.final_due = false;
+                        self.settle_at = None;
+                    }
+                    self.spawn_eval(next, Pass::Final);
                 }
             }
         }
-        if self.job.is_some() || self.settle_at.is_some() || self.thumbs_due || self.final_due || self.refine {
+        if self.job.is_some() || self.settle_at.is_some() || self.thumbs_due || self.final_due || self.refine || self.view_pending {
             ctx.request_repaint_after(std::time::Duration::from_millis(30));
         }
         self.text_focus = ctx.egui_wants_keyboard_input();
@@ -2205,15 +2240,9 @@ fn main() -> eframe::Result<()> {
         let port = args.get(i + 1).and_then(|p| p.parse::<u16>().ok()).unwrap_or(0);
         *AUTO_CONTROL.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(port);
     }
-    // 4x MSAA + depth buffer for the GPU viewport; fall back to no MSAA on drivers that cannot provide it.
-    let make = |msaa: u16| eframe::NativeOptions {
+    let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1500.0, 920.0]).with_title("MaterialCraft").with_icon(window_icon()),
-        multisampling: msaa,
-        depth_buffer: 24,
         ..Default::default()
     };
-    match eframe::run_native("MaterialCraft", make(4), Box::new(|cc| Ok(Box::new(new_app(cc))))) {
-        Err(eframe::Error::NoGlutinConfigs(..)) => eframe::run_native("MaterialCraft", make(0), Box::new(|cc| Ok(Box::new(new_app(cc))))),
-        other => other,
-    }
+    eframe::run_native("MaterialCraft", options, Box::new(|cc| Ok(Box::new(new_app(cc)))))
 }

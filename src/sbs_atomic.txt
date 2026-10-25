@@ -529,6 +529,16 @@
 > f4
 < pos f2
 - samplecol i2 0 0
+@pow function Power
+> t
+< a t
+< b t
+@while function While Loop
+> t
+< init t
+< condition b
+< loop t
+- while i1 32 ~ -1 1000
 @passthrough function Passthrough
 > t
 < input t

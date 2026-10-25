@@ -173,3 +173,55 @@ fn pattern_maps_select_branches_and_inherit_settings() {
     assert!(at(&t, 0.25, 0.5) > 0.99, "{}", at(&t, 0.25, 0.5));
     assert!(at(&t, 0.75, 0.5) < 0.01, "{}", at(&t, 0.75, 0.5));
 }
+
+#[test]
+fn vector_assembly_uses_a_call_results_real_arity() {
+    // A function that builds a float2 from two sub-function results, each a single float. The assembly must see
+    // each call result as ONE lane (an instance node's output arity is its function's output, not its input's),
+    // so the merge produces a float2, not a mis-swizzled value. Regression for RGBtoHSV-style colour functions.
+    use materialcraft::func::{FnEnv, Prog};
+    let dir = std::env::temp_dir().join(format!("mc_arity_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // a sibling package (a normal file dependency, not the built-in library): first(v)=v.x+1, second(v)=v.y+2,
+    // each taking a float2 and returning a float1
+    let functions = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><package><identifier v=\"helpers\"/><content>\
+        <function><identifier v=\"first\"/><uid v=\"10\"/><paraminputs><paraminput><identifier v=\"v\"/><uid v=\"11\"/><type v=\"512\"/><defaultValue><constantValueFloat2 v=\"0 0\"/></defaultValue></paraminput></paraminputs>\
+        <paramValue><dynamicValue><rootnode v=\"3\"/><paramNodes>\
+        <paramNode><uid v=\"1\"/><function v=\"get_float2\"/><funcDatas><funcData><name v=\"get_float2\"/><constantValue><constantValueString v=\"v\"/></constantValue></funcData></funcDatas></paramNode>\
+        <paramNode><uid v=\"2\"/><function v=\"swizzle1\"/><connections><connection><identifier v=\"vector\"/><connRef v=\"1\"/></connection></connections><funcDatas><funcData><name v=\"swizzle1\"/><constantValue><constantValueInt32 v=\"0\"/></constantValue></funcData></funcDatas></paramNode>\
+        <paramNode><uid v=\"4\"/><function v=\"const_float1\"/><funcDatas><funcData><name v=\"const_float1\"/><constantValue><constantValueFloat1 v=\"1\"/></constantValue></funcData></funcDatas></paramNode>\
+        <paramNode><uid v=\"3\"/><function v=\"add\"/><connections><connection><identifier v=\"a\"/><connRef v=\"2\"/></connection><connection><identifier v=\"b\"/><connRef v=\"4\"/></connection></connections></paramNode>\
+        </paramNodes></dynamicValue></paramValue></function>\
+        <function><identifier v=\"second\"/><uid v=\"20\"/><paraminputs><paraminput><identifier v=\"v\"/><uid v=\"21\"/><type v=\"512\"/><defaultValue><constantValueFloat2 v=\"0 0\"/></defaultValue></paraminput></paraminputs>\
+        <paramValue><dynamicValue><rootnode v=\"3\"/><paramNodes>\
+        <paramNode><uid v=\"1\"/><function v=\"get_float2\"/><funcDatas><funcData><name v=\"get_float2\"/><constantValue><constantValueString v=\"v\"/></constantValue></funcData></funcDatas></paramNode>\
+        <paramNode><uid v=\"2\"/><function v=\"swizzle1\"/><connections><connection><identifier v=\"vector\"/><connRef v=\"1\"/></connection></connections><funcDatas><funcData><name v=\"swizzle1\"/><constantValue><constantValueInt32 v=\"1\"/></constantValue></funcData></funcDatas></paramNode>\
+        <paramNode><uid v=\"4\"/><function v=\"const_float1\"/><funcDatas><funcData><name v=\"const_float1\"/><constantValue><constantValueFloat1 v=\"2\"/></constantValue></funcData></funcDatas></paramNode>\
+        <paramNode><uid v=\"3\"/><function v=\"add\"/><connections><connection><identifier v=\"a\"/><connRef v=\"2\"/></connection><connection><identifier v=\"b\"/><connRef v=\"4\"/></connection></connections></paramNode>\
+        </paramNodes></dynamicValue></paramValue></function>\
+        </content></package>";
+    std::fs::write(dir.join("helpers.sbs"), functions).unwrap();
+    // main: build(v) = vector2(first(v), second(v)) -> float2, calling the sibling package by its file name
+    let main = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><package><identifier v=\"main\"/>\
+        <dependencies><dependency><filename v=\"helpers.sbs\"/><uid v=\"55\"/><type v=\"package\"/></dependency></dependencies><content>\
+        <function><identifier v=\"build\"/><uid v=\"9\"/><paraminputs><paraminput><identifier v=\"v\"/><uid v=\"8\"/><type v=\"512\"/><defaultValue><constantValueFloat2 v=\"0 0\"/></defaultValue></paraminput></paraminputs>\
+        <paramValue><dynamicValue><rootnode v=\"4\"/><paramNodes>\
+        <paramNode><uid v=\"1\"/><function v=\"get_float2\"/><funcDatas><funcData><name v=\"get_float2\"/><constantValue><constantValueString v=\"v\"/></constantValue></funcData></funcDatas></paramNode>\
+        <paramNode><uid v=\"2\"/><function v=\"instance\"/><connections><connection><identifier v=\"v\"/><connRef v=\"1\"/></connection></connections><funcDatas><funcData><name v=\"instance\"/><constantValue><constantValueString v=\"pkg:///first?dependency=55\"/></constantValue></funcData></funcDatas></paramNode>\
+        <paramNode><uid v=\"3\"/><function v=\"instance\"/><connections><connection><identifier v=\"v\"/><connRef v=\"1\"/></connection></connections><funcDatas><funcData><name v=\"instance\"/><constantValue><constantValueString v=\"pkg:///second?dependency=55\"/></constantValue></funcData></funcDatas></paramNode>\
+        <paramNode><uid v=\"4\"/><function v=\"vector2\"/><connections><connection><identifier v=\"componentsin\"/><connRef v=\"2\"/></connection><connection><identifier v=\"componentslast\"/><connRef v=\"3\"/></connection></connections></paramNode>\
+        </paramNodes></dynamicValue></paramValue></function>\
+        <graph><identifier v=\"g\"/><uid v=\"10\"/><compNodes/></graph></content></package>";
+    let path = dir.join("main.sbs");
+    std::fs::write(&path, main).unwrap();
+    let imported = materialcraft::sbs_import::import_file(&path).unwrap();
+    let f = imported.graph.subgraphs.get("build").expect("build imported");
+    let prog = Prog::compile(f, &imported.graph.subgraphs).unwrap();
+    let mut env = FnEnv::new([256.0, 256.0]);
+    env.args.insert("v".into(), materialcraft::func::Value::vec(2, [0.5, 0.25, 0.0, 0.0]));
+    let v = prog.run(&env, [0.5, 0.5]).unwrap();
+    let n = match v { materialcraft::func::Value::Num(n) => n, _ => panic!("not numeric") };
+    assert_eq!(n.lanes, 2, "the merge of two single floats is a float2, got {} lanes", n.lanes);
+    assert!((n.v[0] - 1.5).abs() < 1e-6 && (n.v[1] - 2.25).abs() < 1e-6, "got {:?}", &n.v[..2]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
