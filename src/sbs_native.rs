@@ -17,6 +17,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[path = "sbs_native_cache.rs"]
+mod preview_cache;
+pub(crate) use preview_cache::LowerCache;
+
 /// Positions in the editor are the file's positions times this: 1, so nodes sit as densely as in the format's own
 /// editor (a node card is about as wide as the format's node spacing allows).
 pub const POS_SCALE: f32 = 1.0;

@@ -1,15 +1,44 @@
 # all_nodes.sbs compatibility report
 
-**Both tests pass once the fixture's 34 environment maps are in `assets/panorama/`.** Every one of the 566 compositing nodes now converts to a MaterialCraft node that renders (no gray placeholders), every node in the package has an editor definition, the embedded SVG decodes, and the import paths agree. The only remaining items are two problems in how the fixture was authored; the test lists them separately and they do not fail it.
+The current fixture contains **536 compositing nodes, 237 function nodes, one FX node, and six resources**. All compositing nodes import and render finite textures, and every node has an editor definition. Direct import and native editor conversion produce identical pixels for the seven graph outputs.
 
-The previous run of this report found 207 unconverted nodes, 35 unresolved images, 28 missing definitions, an undecodable SVG, an empty value processor and an ignored output-size function. [What changed](#what-changed-since-the-previous-report) addresses each finding. [The complete node mapping](ALL_NODES_NODE_MAPPING.md) lists all 566 nodes.
+The resources are the logo, an embedded SVG, and four bundled EXRs. No stand-in environment maps are needed. Linked images resolve through the package folders and application `assets/` and `assets/panorama/` folders.
 
-**Subsequent fixture update:** The 34 unavailable HDRI references and bitmap nodes have been replaced with four EXRs from `assets/panorama/`. The missing `Untitled_Bitmap` PNG now uses the logo from `assets/logo.png`. All five references store only their filenames, allowing lookup in the package folders and fallback to application `assets/` and `assets/panorama/` folders. The current fixture has 536 compositing nodes and six resources. All four panoramas and the logo resolve and render through direct import and native conversion. The audit counts and missing-file list below describe the earlier fixture.
+## Current checks (2026-10-24)
+
+- Fixture: [`tests/assets/all_nodes.sbs`](../../tests/assets/all_nodes.sbs), SHA-256 `b6d62617e11b8ad48f70236337f9cfe42507859824ab8716913ef358c7cb73c3`.
+- Importer classification: 34 exact, 502 approximate, zero missing. These classifications do not establish pixel parity with Substance 3D Designer.
+- Unchanged exports preserve the original XML bytes. Edited exports remain stable after reopening and saving again.
+- The edit suite exercises 201 existing constants, 7,205 previously unset numeric properties, all 774 node positions, and 1,139 named output connections.
+- Focused rendering regressions cover exposure, blackbody, Crop filtering, function-driven color edits, and independent width/height for constant and function-driven output sizes, including relative sizing.
+- Export/reopen checks keep the temporary package alive through rendering and use its actual file location for resource resolution.
+- The initial cleanup preserved all 935 baseline pixel hashes: 536 fixture nodes at 32×32 and 399 library demo renders at 16×16. Shared function bindings are also compared against separate wrapper functions across argument, size, seed, graph-input, and function edits.
+- Follow-up Crop regressions check area-average downsampling for Bilinear and the crop-area output, original texels for Nearest, clamped boundary pixels, and background outside the image. Photometric albedo/normal optimizations match reference pixels across sample counts, missing inputs, tied luminance, light directions, and normal formats.
+- Cached native previews reuse one package conversion. Graph/function edits, package changes, and linked-resource resolution changes invalidate it; external editable package dependencies continue to be imported on each call. A release probe on this machine measured 20 warm 64px previews at 10.18 ms versus 294.14 ms with repeated conversion (median of five batches), with identical pixels.
+- All GPU graph parity cases pass. Diagnostics accumulate across cases; strict operations retain their `1e-6` tolerance on identical input pixels, while whole-chain comparisons account for measured upstream FBM error. GPU kernel, residency, read-back, and dynamic output-size cache checks also pass.
+
+Reproduce from the repository root:
+
+```sh
+cargo test --test sbs_all_nodes --test sbs_edit_roundtrip --test sbs_resources -- --nocapture --test-threads=1
+cargo test --lib sbs_native::preview_cache
+cargo test --test renderer_regressions --test perf
+cargo test --features gpu --test gpu_graph --test gpu --test gpu_nodes_all
+```
+
+The fixture's 237-node output-size function is an unconnected palette with no result node. Its preservation is tested, but it cannot demonstrate execution of those function nodes. Most compositing nodes are also disconnected; rendering every node/output and preserving property edits does not establish that every property matches Designer's behavior. Visual fidelity has not been verified against Designer reference renders.
+
+## Historical results
+
+The report below and the [historical node mapping](ALL_NODES_NODE_MAPPING.md) describe the earlier **566-node** fixture. Its 34 unavailable HDRI references were subsequently replaced with four bundled panoramas, and the missing temporary bitmap now uses the logo. Historical counts, hashes, missing-file notes, and environment setup are retained for context and do not describe the current fixture.
+
+<details>
+<summary>Earlier fixture report (2026-10-21)</summary>
 
 ## Run and reproduction
 
 - Completed: `2026-10-21`.
-- Fixture: [`tests/assets/all_nodes.sbs`](../../tests/assets/all_nodes.sbs) (unchanged), SHA-256 `3d259e31fb25e46a4a3fbfbe8bd575e56dbec4da0b13690f7a76af8c92dfeafb`.
+- Earlier fixture SHA-256 `3d259e31fb25e46a4a3fbfbe8bd575e56dbec4da0b13690f7a76af8c92dfeafb`.
 - Base commit: `1d319317b45203e0c6e6c2e9f12338cbfb9428ab` (branch `13-address-missing-and-broken-nodes`) plus the changes described here.
 - Toolchain: `rustc 1.97.0`; CPU renderer, default Cargo features, release build; all compositing nodes at 32×32, graph outputs at 64×64.
 - Environment maps: the run used stand-in EXR/HDR files with the fixture's 34 file names in `assets/panorama/` (the real maps are not in the repository). They exercise lookup and decoding; the real files resolve the same way.
@@ -107,3 +136,5 @@ The remaining behavior notes the test prints (informational, not failures) are:
 The Rust test supplied the pass / fail result and the behavior notes. A read-only diagnostic program linked against the same release library collected the per-node classifications, notes and 32×32 render results for the [mapping appendix](ALL_NODES_NODE_MAPPING.md). Contact sheets rendering every new node's outputs from shared test inputs were reviewed by eye; several issues found that way were fixed (listed in section 6).
 
 The mapping appendix is a snapshot of this fixture and run, not a claim about every possible SBS package or configuration.
+
+</details>

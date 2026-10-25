@@ -370,7 +370,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             emit(cx, &f, &|_| None)
         }
         "x_material_selector" => {
-            let src = cx.img_or("Input", grey(0.0));
+            let src = cx.img_or_ref("Input", grey(0.0));
             let n = cx.i("materials").clamp(1, 16);
             let (fuzz, pad) = (cx.f("fuzziness").max(0.01), cx.f("padding"));
             let sel: Vec<[f32; 4]> = (1..=n).filter(|k| cx.b(&format!("material_{k}_enable"))).map(|k| cx.col(&format!("material_{k}_color"))).collect();
@@ -613,7 +613,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
         }
         // ---------------------------------------------------------------- PBR utilities
         "x_pbr_albedo_safe_color" => {
-            let b = cx.img_or("basecolor_diffuse", grey(0.5));
+            let b = cx.img_or_ref("basecolor_diffuse", grey(0.5));
             let metal = cx.img("metallic");
             let tol = cx.f("tolerance").clamp(0.0, 1.0);
             let metal_flow = cx.i("pbr_workflow") == 0;
@@ -629,7 +629,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             })
         }
         "x_pbr_basecolor_metallic_validate_2" => {
-            let b = cx.img_or("baseColor", grey(0.5));
+            let b = cx.img_or_ref("baseColor", grey(0.5));
             let metal = cx.img("metallic");
             let overlay = cx.b("overlay_maps");
             let (ar, mr) = (cx.i("albedo_range"), cx.i("metal_reflectance_range"));
@@ -649,10 +649,10 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             })
         }
         "x_basecolor_metallic_roughness_converter" => {
-            let b = cx.img_or("basecolor", grey(0.5));
-            let n = cx.img_or("normal", [0.5, 0.5, 1.0, 1.0]);
-            let r = cx.img_or("roughness", grey(0.5));
-            let m = cx.img_or("metallic", grey(0.0));
+            let b = cx.img_or_ref("basecolor", grey(0.5));
+            let n = cx.img_or_ref("normal", [0.5, 0.5, 1.0, 1.0]);
+            let r = cx.img_or_ref("roughness", grey(0.5));
+            let m = cx.img_or_ref("metallic", grey(0.0));
             let sl = if cx.b("use_specularlevel_input") { cx.img("specularlevel") } else { None };
             let f0 = |u: f32, v: f32| -> [f32; 3] {
                 let base = b.sample(u, v);
@@ -674,7 +674,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
                             let k = 1.0 - g(&m, u, v);
                             [p[0] * k, p[1] * k, p[2] * k, p[3]]
                         }),
-                        "normal" => n.clone(),
+                        "normal" => n.clone().into_owned(),
                         "specular" | "speuclar_face_color" => Tex::from_fn(s, hs, |u, v| {
                             let f = f0(u, v);
                             [to_srgb(f[0]), to_srgb(f[1]), to_srgb(f[2]), 1.0]
@@ -684,7 +684,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
                             grey(to_srgb((f[0] + f[1] + f[2]) / 3.0))
                         }),
                         "glossiness" => r.map(|p| grey(1.0 - p[0])),
-                        "roughness" => r.clone(),
+                        "roughness" => r.clone().into_owned(),
                         "ior" => Tex::from_fn(s, hs, |u, v| {
                             let f = f0(u, v);
                             let sq = ((f[0] + f[1] + f[2]) / 3.0).clamp(0.0, 0.99).sqrt();
@@ -734,9 +734,9 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
         "x_pbr_render" => pbr_render(cx),
         "x_atlas_spliter" | "x_atlas_scatter" => atlas(cx),
         "x_smart_auto_tile" => {
-            let b = cx.img_or("baseColor", grey(0.5));
-            let n = cx.img_or("normal", [0.5, 0.5, 1.0, 1.0]);
-            let h = cx.img_or("height", grey(0.5));
+            let b = cx.img_or_ref("baseColor", grey(0.5));
+            let n = cx.img_or_ref("normal", [0.5, 0.5, 1.0, 1.0]);
+            let h = cx.img_or_ref("height", grey(0.5));
             let mat = cx.v4("crop_matrix");
             let off = cx.v2("crop_offset");
             let det = mat[0] * mat[3] - mat[1] * mat[2];
@@ -1348,7 +1348,7 @@ fn pbr_base_material(cx: &Cx) -> Tex {
 fn bitmap2material(cx: &Cx) -> Tex {
     let (s, hs) = (cx.s, cx.hs);
     let rs = cx.rs();
-    let src = cx.img_or("bitmap_diffuse", grey(0.5));
+    let src = cx.img_or_ref("bitmap_diffuse", grey(0.5));
     let metal_in = cx.img("metallic_1");
     let (hue, sat, bri, con) = (cx.f("Hue"), cx.f("Saturation"), cx.f("Brightness"), cx.f("Contrast"));
     let diffuse = src.map(|p| {
@@ -1439,10 +1439,10 @@ fn sky(env: Option<&Tex>, d: [f32; 3], rot: f32) -> [f32; 3] {
 
 fn pbr_render(cx: &Cx) -> Tex {
     let (s, hs) = (cx.s, cx.hs);
-    let base = cx.img_or("basecolor", grey(0.5));
-    let nmap = cx.img_or("normal", [0.5, 0.5, 1.0, 1.0]);
-    let rough = cx.img_or("roughness", grey(0.5));
-    let metal = cx.img_or("metallic", grey(0.0));
+    let base = cx.img_or_ref("basecolor", grey(0.5));
+    let nmap = cx.img_or_ref("normal", [0.5, 0.5, 1.0, 1.0]);
+    let rough = cx.img_or_ref("roughness", grey(0.5));
+    let metal = cx.img_or_ref("metallic", grey(0.0));
     let sl = cx.img("specularlevel");
     let em = cx.img("emissive");
     let ao = cx.img("ambient_occlusion");

@@ -14,8 +14,19 @@ fn mat3(m: &[[f32; 3]; 3], c: [f32; 3]) -> [f32; 3] {
 }
 
 /// Input `id` (black when not connected).
-fn inp(cx: &Cx, id: &str) -> Tex {
-    cx.img_or(id, [0.0, 0.0, 0.0, 1.0])
+fn inp<'a>(cx: &Cx<'a>, id: &str) -> std::borrow::Cow<'a, Tex> {
+    cx.img_or_ref(id, [0.0, 0.0, 0.0, 1.0])
+}
+
+/// Bilinear sampling without wrapping, including at non-power-of-two image boundaries.
+fn sample_clamped(t: &Tex, u: f32, v: f32) -> [f32; 4] {
+    let x = (u * t.w as f32 - 0.5).clamp(0.0, (t.w - 1) as f32);
+    let y = (v * t.h as f32 - 0.5).clamp(0.0, (t.h - 1) as f32);
+    let (x0, y0) = (x as usize, y as usize);
+    let (x1, y1) = ((x0 + 1).min(t.w - 1), (y0 + 1).min(t.h - 1));
+    let top = lerp4(t.px[y0 * t.w + x0], t.px[y0 * t.w + x1], x - x0 as f32);
+    let bot = lerp4(t.px[y1 * t.w + x0], t.px[y1 * t.w + x1], x - x0 as f32);
+    lerp4(top, bot, y - y0 as f32)
 }
 
 fn rot(u: f32, v: f32, cu: f32, cv: f32, turns: f32, aspect: f32) -> (f32, f32) {
@@ -160,7 +171,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             let t = inp(cx, "input");
             let by_alpha = cx.b("lut_intensity_by_input_alpha");
             match cx.img("lut").filter(|l| !is_blank(l)) {
-                None => t,
+                None => t.into_owned(),
                 Some(lut) => {
                     // a Hald image of level L is L^3 pixels square and holds an L^2 x L^2 x L^2 colour cube
                     let side = lut.w.min(lut.h).max(1);
@@ -235,12 +246,12 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
         }
         // ---------------------------------------------------------------- lighting cancellation
         "x_lighting_cancel_hf" | "x_lighting_cancel_lf" => {
-            let t = if cx.kind.ends_with("hf") { inp(cx, "Source") } else { inp(cx, "Source") };
+            let t = inp(cx, "Source");
             let (radius, amount) = if cx.kind.ends_with("hf") { (cx.f("Radius").max(0.0) * 2.0 * rs, cx.f("Intensity").clamp(0.0, 1.0)) } else { (cx.f("Cancellation_Radius").max(0.0) * 2.0 * rs, 1.0) };
             let l = crate::nodes10::gray_of(&t);
             let low = ops::blur(&l, radius.max(0.5));
             let mean = l.px.iter().map(|p| p[0]).sum::<f32>() / l.px.len().max(1) as f32;
-            let mut o = t.clone();
+            let mut o = t.clone().into_owned();
             for (i, p) in o.px.iter_mut().enumerate() {
                 // the light falling on the surface is what the blurred brightness says; dividing it out leaves the
                 // surface's own colour at the image's average brightness
@@ -257,7 +268,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             let t = inp(cx, "input");
             let r = [1i64, 2, 3, 4][cx.i("kernel_size").clamp(0, 3) as usize];
             let keep_alpha = !cx.b("affect_alpha");
-            let mut o = t.clone();
+            let mut o = t.clone().into_owned();
             let w = t.w;
             crate::tex::par_rows(&mut o.px, w, |start, rows| {
                 let mut buf: Vec<(f32, [f32; 4])> = Vec::with_capacity(((2 * r + 1) * (2 * r + 1)) as usize);
@@ -275,7 +286,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             o
         }
         "x_mlv_color" | "x_mlv_grayscale" => {
-            let mut t = inp(cx, "input");
+            let mut t = inp(cx, "input").into_owned();
             let r = (cx.f("intensity").max(0.0) * 3.0 * rs).round().clamp(1.0, 24.0) as i64;
             let iters = cx.i("iterations").clamp(1, 8);
             let gauss = cx.b("gaussian");
@@ -451,9 +462,9 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             Tex { w: s, h: hs, px: res.into_iter().map(grey).collect() }
         }
         "x_rt_irradiance" => {
-            let base = cx.img_or("basecolor", grey(0.5));
-            let metal = cx.img_or("metallic", grey(0.0));
-            let h = cx.img_or("height", grey(0.0));
+            let base = cx.img_or_ref("basecolor", grey(0.5));
+            let metal = cx.img_or_ref("metallic", grey(0.0));
+            let h = cx.img_or_ref("height", grey(0.0));
             let em = cx.img("emissive");
             let env = cx.img("environment");
             let hs_k = cx.f("height_scale");
@@ -496,7 +507,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             })
         }
         "x_normal_uncombine" => {
-            let n = cx.img_or("normal", [0.5, 0.5, 1.0, 1.0]);
+            let n = cx.img_or_ref("normal", [0.5, 0.5, 1.0, 1.0]);
             let h = inp(cx, "height");
             let dx = cx.i("normal_format") == 0;
             let (lo, hi) = (cx.lane("intensity_range", 0), cx.lane("intensity_range", 1));
@@ -590,11 +601,11 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
         "x_crop" | "x_crop_grayscale" | "x_multi_crop" | "x_multi_crop_grayscale" => {
             let m = cx.v4("matrix");
             let off = cx.v2("offset");
+            let nearest = cx.i("filtering") == 1; // 0 bilinear, 1 nearest (as in Transformation 2D)
             let multi = cx.kind.starts_with("x_multi");
             let bg = cx.col("background");
             let show = cx.b("show_crop_area");
             let first = if multi { "input_1" } else { "input" };
-            let src = inp(cx, first);
             let crop = |t: &Tex| Tex::from_fn(s, hs, |u, v| {
                 // the matrix zooms in around the offset (the crop area's top-left corner)
                 let det = m[0] * m[3] - m[1] * m[2];
@@ -604,7 +615,12 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
                 if !(0.0..=1.0).contains(&su) || !(0.0..=1.0).contains(&sv) {
                     return bg;
                 }
-                t.sample(su, sv)
+                if nearest {
+                    // Crop does not tile: coordinates on the far edge belong to the last texel.
+                    t.at(((su * t.w as f32).floor() as i64).min(t.w as i64 - 1), ((sv * t.h as f32).floor() as i64).min(t.h as i64 - 1))
+                } else {
+                    sample_clamped(t, su, sv)
+                }
             });
             let area = |t: &Tex| Tex::from_fn(s, hs, |u, v| {
                 let p = t.sample(u, v);
@@ -625,11 +641,19 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             if multi {
                 let n = cx.i("input_count").clamp(1, 8) as usize;
                 let mut outs: Vec<Option<Tex>> = (1..=8).map(|i| if i <= n && cx.wants(i - 1) { Some(crop(&inp(cx, &format!("input_{i}")))) } else { None }).collect();
-                outs.push(if cx.wants(8) { Some(area(&src)) } else { None });
+                outs.push(if cx.wants(8) { Some(area(&inp(cx, first))) } else { None });
                 cx.pick(outs)
             } else {
-                let c = if cx.wants(0) { Some(crop(&src)) } else { None };
-                let a = if cx.wants(1) { Some(area(&src)) } else { None };
+                let src = inp(cx, first);
+                // Keep the original texels for Nearest, but retain the executor's area-average
+                // downsampling for Bilinear and the crop-area preview. Fit at most once.
+                let fitted = if ((!nearest && cx.wants(0)) || cx.wants(1)) && (src.w != s || src.h != hs) {
+                    std::borrow::Cow::Owned(ops::resize_to(&src, s, hs))
+                } else {
+                    std::borrow::Cow::Borrowed(src.as_ref())
+                };
+                let c = if cx.wants(0) { Some(crop(if nearest { &src } else { &fitted })) } else { None };
+                let a = if cx.wants(1) { Some(area(&fitted)) } else { None };
                 cx.pick(vec![c, a])
             }
         }
@@ -691,13 +715,18 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
         // ---------------------------------------------------------------- photometric
         "x_multiangle_to_albedo" => {
             let n = cx.i("samples_amount").clamp(2, 8) as usize;
-            let ins: Vec<Tex> = (1..=n).filter_map(|i| cx.img(&format!("input_{i}")).cloned()).collect();
+            let ins: Vec<&Tex> = (1..=n).filter_map(|i| cx.img(&format!("input_{i}"))).collect();
             if ins.is_empty() {
                 Tex::solid(s, hs, grey(0.0))
             } else {
                 // the median of the lit samples drops highlights and shadows that only some light directions make
                 Tex::from_fn(s, hs, |u, v| {
-                    let mut v4: Vec<[f32; 4]> = ins.iter().map(|t| t.sample(u, v)).collect();
+                    let mut samples = [[0.0; 4]; 8];
+                    let v4 = &mut samples[..ins.len()];
+                    for (p, t) in v4.iter_mut().zip(&ins) {
+                        *p = t.sample(u, v);
+                    }
+                    // At most eight elements: stable insertion sort needs no heap allocation.
                     v4.sort_by(|a, b| lum(*a).partial_cmp(&lum(*b)).unwrap_or(std::cmp::Ordering::Equal));
                     let m = v4.len() / 2;
                     if v4.len() % 2 == 0 {
@@ -714,19 +743,22 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             let step_mode = cx.i("next_sample_light_angle");
             let intensity = cx.f("intensity").clamp(0.0, 1.0) * 4.0;
             let dx = cx.i("normal_format") == 0;
-            let ins: Vec<(f32, Tex)> = (1..=n)
+            let ins: Vec<(f32, f32, &Tex)> = (1..=n)
                 .filter_map(|i| {
                     let step = if step_mode == 0 { 1.0 / n as f32 } else { -1.0 / n as f32 };
-                    cx.img(&format!("input_{i}")).map(|t| ((first + step * (i - 1) as f32) * TAU, t.clone()))
+                    cx.img(&format!("input_{i}")).map(|t| {
+                        let a = (first + step * (i - 1) as f32) * TAU;
+                        (a.cos(), a.sin(), t)
+                    })
                 })
                 .collect();
             Tex::from_fn(s, hs, |u, v| {
                 // each sample is lit from its own direction: brighter where the surface leans toward that light
                 let (mut gx, mut gy, mut tot) = (0.0f32, 0.0f32, 0.0f32);
-                for (a, t) in &ins {
+                for (cos, sin, t) in &ins {
                     let l = g(t, u, v);
-                    gx += l * a.cos();
-                    gy += l * a.sin();
+                    gx += l * cos;
+                    gy += l * sin;
                     tot += l;
                 }
                 let k = intensity / tot.max(1e-4);
@@ -753,7 +785,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             let pos = cx.img("position");
             let nrm = cx.img("ws_normal");
             let single = cx.i("image_inputs") == 0;
-            let (tx, ty, tz) = (inp(cx, "input_x"), cx.img("input_y").cloned(), cx.img("input_z").cloned());
+            let (tx, ty, tz) = (inp(cx, "input_x"), cx.img("input_y"), cx.img("input_z"));
             let tiling = cx.f("texture_tiling").max(0.0);
             let contrast = cx.f("blending_contrast").clamp(0.001, 1.0);
             let rots = [cx.f("rotation_x"), cx.f("rotation_y"), cx.f("rotation_z")];
@@ -786,8 +818,8 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
                     } else {
                         match axis {
                             0 => &tx,
-                            1 => ty.as_ref().unwrap_or(&tx),
-                            _ => tz.as_ref().unwrap_or(&tx),
+                            1 => ty.unwrap_or(&tx),
+                            _ => tz.unwrap_or(&tx),
                         }
                     };
                     let q = src.sample(a, 1.0 - b);
@@ -883,7 +915,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
         // ---------------------------------------------------------------- PBR utilities
         "x_ao_cancel" => {
             let c = inp(cx, "color");
-            let ao = cx.img_or("AO", grey(1.0));
+            let ao = cx.img_or_ref("AO", grey(1.0));
             let (amount, sat) = (cx.f("ao_cancellation").clamp(0.0, 1.0), cx.f("sat").clamp(0.0, 1.0));
             Tex::from_fn(s, hs, |u, v| {
                 let p = c.sample(u, v);
@@ -904,7 +936,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
         }
         "x_apply_color_palette" => {
             let id = inp(cx, "id");
-            let pal = cx.img_or("palette", grey(1.0));
+            let pal = cx.img_or_ref("palette", grey(1.0));
             // the palette is a row of colour swatches; the id picks one (id 0..1 across the row)
             id.map(|p| {
                 let k = p[0].clamp(0.0, 1.0);
@@ -931,7 +963,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
         }
         "x_modify_color_palette" => {
             let id = inp(cx, "id");
-            let pal = cx.img_or("palette", grey(1.0));
+            let pal = cx.img_or_ref("palette", grey(1.0));
             let mode = cx.i("color_selection_mode");
             let sel_idx = cx.i("color_index").max(0) as f32;
             let pick = cx.v2("color_position");
@@ -1032,7 +1064,7 @@ fn hcl(p: [f32; 4]) -> (f32, f32, f32) {
 /// Generalised Kuwahara: eight sectors around the pixel, stretched along the local edge direction; each sector's
 /// mean is weighted by how calm it is.
 fn kuwahara(cx: &Cx) -> Tex {
-    let t = cx.img_or("input", [0.0, 0.0, 0.0, 1.0]);
+    let t = cx.img_or_ref("input", [0.0, 0.0, 0.0, 1.0]);
     let (s, hs) = (t.w, t.h);
     let rs = cx.rs();
     let radius_map = cx.img("radius_map");
@@ -1073,7 +1105,7 @@ fn kuwahara(cx: &Cx) -> Tex {
         dirs = d.clone();
     }
     let sectors = 8;
-    let mut out = t.clone();
+    let mut out = t.clone().into_owned();
     let tt = &t;
     let dd = &dirs;
     let res = crate::tex::par_map(s * hs, |i| {
@@ -1220,7 +1252,7 @@ impl Patch {
 /// Flood Fill Mapper: every flood-filled region gets one of the pattern inputs, fitted to its bounding box.
 fn floodfill_mapper(cx: &Cx) -> Tex {
     let (s, hs) = (cx.s, cx.hs);
-    let bbox = cx.img_or("bbox", [0.0, 0.0, 0.0, 1.0]);
+    let bbox = cx.img_or_ref("bbox", [0.0, 0.0, 0.0, 1.0]);
     let gray = cx.kind.ends_with("grayscale");
     let n = cx.i("pattern_input_number").clamp(1, 8) as usize;
     let pats: Vec<Option<&Tex>> = (1..=n).map(|i| if gray && i == 1 { cx.img("pattern_input") } else { cx.img(&format!("pattern_input_{i}")) }).collect();

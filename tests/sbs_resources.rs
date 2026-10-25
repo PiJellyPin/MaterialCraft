@@ -6,22 +6,8 @@ use std::path::{Path, PathBuf};
 const BITMAP: u32 = 1584633001; // Resources/Untitled_Bitmap in all_nodes.sbs.
 const COLOR: [f32; 4] = [0.2, 0.4, 0.6, 1.0];
 
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new() -> Self {
-        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let path = std::env::temp_dir().join(format!("mc_sbs_resources_{}_{stamp}", std::process::id()));
-        std::fs::create_dir(&path).unwrap();
-        Self(path)
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+mod common;
+use common::TempDir;
 
 fn picture(path: &Path, color: [f32; 4]) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -107,6 +93,47 @@ fn missing_bitmap_diagnostics_name_the_resource_and_search_locations() {
     assert!(report.contains(stored) && report.contains("Untitled_Bitmap") && report.contains("application assets") && report.contains("assets/panorama"), "{report}");
     assert!(report.contains(&temp.0.display().to_string()), "missing diagnostic must show where package files were searched:\n{report}");
     assert!(imported.graph.evaluate_node(BITMAP, 16).unwrap_err().to_string().contains("file not found"));
+}
+
+#[test]
+fn cached_native_previews_follow_linked_resource_changes() {
+    use materialcraft::graph::NodeCache;
+    use std::sync::Arc;
+    let temp = TempDir::new();
+    let original = temp.0.join("original/sample.png");
+    let fallback = temp.0.join("project/resources/sample.png");
+    picture(&fallback, COLOR);
+    let path = package(&temp.0.join("project"), original.to_str().unwrap());
+    let (g, _) = sbs_native::open(&path).unwrap();
+    let cache = Arc::new(NodeCache::new(16));
+    let check = |expected: Option<[f32; 4]>| {
+        let result = g.evaluate_all_cached(16, &[BITMAP], 0, &cache, Some(BITMAP), false, &mut |_| {});
+        if let Some(color) = expected {
+            assert!(result.errors.is_empty(), "{:?}", result.errors);
+            let t = &result.kept[&BITMAP];
+            assert!(t.px.iter().all(|p| p.iter().zip(color).all(|(a, b)| (a - b).abs() <= 1.0 / 255.0)), "wrong cached image: {:?}", t.px[0]);
+            assert_eq!(t.px, g.evaluate_node(BITMAP, 16).unwrap().px);
+        } else {
+            assert!(result.errors[&BITMAP].contains("file not found"));
+            assert!(!result.kept.contains_key(&BITMAP));
+        }
+    };
+    check(Some(COLOR));
+    check(Some(COLOR));
+    picture(&original, [1.0, 0.0, 0.0, 1.0]); // Higher-priority path appears.
+    check(Some([1.0, 0.0, 0.0, 1.0]));
+    // Change both pixels and length, so metadata-based invalidation is reliable on coarse filesystems too.
+    let bytes = png::encode(3, 3, &[[0.0, 1.0, 0.0, 1.0]; 9], 8);
+    std::fs::write(&original, bytes).unwrap();
+    check(Some([0.0, 1.0, 0.0, 1.0]));
+    std::fs::remove_file(&original).unwrap();
+    check(Some(COLOR));
+    std::fs::remove_file(&fallback).unwrap();
+    check(None);
+    picture(&fallback, [0.0, 0.0, 1.0, 1.0]);
+    check(Some([0.0, 0.0, 1.0, 1.0]));
+    cache.clear();
+    check(Some([0.0, 0.0, 1.0, 1.0]));
 }
 
 #[test]

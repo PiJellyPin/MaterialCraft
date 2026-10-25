@@ -18,8 +18,40 @@ fn setup() -> Option<std::sync::MutexGuard<'static, ()>> {
 }
 
 fn max_diff(a: &Tex, b: &Tex) -> f32 {
-    assert_eq!((a.w, a.h), (b.w, b.h));
+    if (a.w, a.h) != (b.w, b.h) || a.px.iter().chain(&b.px).flatten().any(|v| !v.is_finite()) {
+        return f32::INFINITY;
+    }
     a.px.iter().zip(&b.px).flat_map(|(p, q)| (0..4).map(move |c| (p[c] - q[c]).abs())).fold(0.0, f32::max)
+}
+
+/// Return diagnostics instead of panicking, so a case failure cannot hide later kernels.
+fn parity_case(g: &Graph, tol: f32, kernels: Option<usize>, mean: bool) -> Result<(), String> {
+    let eval = |cache: &Arc<NodeCache>| g.evaluate_all_cached(64, &[3], 0, cache, None, false, &mut |_| {});
+    gpu::set_enabled(false);
+    let want = eval(&Arc::new(NodeCache::new(256)));
+    gpu::set_enabled(true);
+    let cache = Arc::new(NodeCache::new(256));
+    let (before, launched) = (gpu::download_count(), gpu::submit_count());
+    let got = eval(&cache);
+    let (reads, launched) = (gpu::download_count() - before, gpu::submit_count() - launched);
+    let mut issues = Vec::new();
+    if !want.errors.is_empty() || !got.errors.is_empty() {
+        issues.push(format!("CPU errors: {:?}; GPU errors: {:?}", want.errors, got.errors));
+    }
+    match (got.kept.get(&3), want.kept.get(&3)) {
+        (Some(a), Some(b)) => {
+            let max = max_diff(a, b);
+            let d = if mean && max.is_finite() { a.px.iter().zip(&b.px).map(|(p, q)| (p[0] - q[0]).abs()).sum::<f32>() / a.px.len() as f32 } else { max };
+            if d >= tol { issues.push(format!("{} difference {d}, tolerance {tol}", if mean { "mean" } else { "max" })); }
+        }
+        _ => issues.push("missing output".into()),
+    }
+    if let Some(kernels) = kernels {
+        if launched < kernels { issues.push(format!("only {launched} kernel launches; expected at least {kernels}")); }
+        if reads != 1 { issues.push(format!("{reads} read-backs; expected one")); }
+        if cache.gpu_bytes() == 0 { issues.push("nothing stayed on the device".into()); }
+    }
+    if issues.is_empty() { Ok(()) } else { Err(issues.join("; ")) }
 }
 
 /// The editor's evaluation of `text` at size 64, keeping the nodes in `keep`.
@@ -36,6 +68,33 @@ fn cpu_only(text: &str, keep: &[u32]) -> materialcraft::graph::EvalAll {
     let r = editor(text, keep, &cache, false);
     gpu::set_enabled(true);
     r
+}
+
+#[test]
+fn native_dynamic_output_height_updates_the_device_cache() {
+    let Some(_guard) = setup() else { return };
+    use materialcraft::sbs_defs::PTy;
+    use materialcraft::sbs_native::{self as native, PVal};
+    let mut g = native::new_package("sized", 64);
+    let id = 1;
+    g.nodes.insert(id, native::new_node("sbs:uniform", None, [0.0, 0.0]));
+    let value = PVal::Const { ty: PTy::I(2), raw: "6 5".into(), rel: Some("0".into()) };
+    let pkg = g.sd.as_ref().unwrap().pkg.clone();
+    let name = native::make_function(&mut g.subgraphs, pkg, "sized", id, "outputsize", &value);
+    native::set_value(g.nodes.get_mut(&id).unwrap(), "outputsize", Some(PVal::Dyn { graph: name.clone(), rel: Some("0".into()) }));
+    let cache = Arc::new(NodeCache::new(256));
+    for (raw, expected_height) in [("6 5", 32), ("6 4", 16)] {
+        native::set_value(g.subgraphs.get_mut(&name).unwrap().nodes.get_mut(&1).unwrap(), "const_int2", Some(PVal::Const { ty: PTy::I(2), raw: raw.into(), rel: None }));
+        let (back, warnings) = native::load(&native::save_text(&g).unwrap(), None).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        for graph in [&g, &back] {
+            let result = graph.evaluate_all_cached(64, &[id], 0, &cache, Some(id), false, &mut |_| {});
+            assert!(result.errors.is_empty(), "{:?}", result.errors);
+            let t = &result.kept[&id];
+            assert_eq!((t.w, t.h), (64, expected_height), "output size {raw}");
+            assert!(cache.gpu_bytes() > 0, "the check must exercise device-resident results");
+        }
+    }
 }
 
 #[test]
@@ -97,34 +156,37 @@ fn every_gpu_node_matches_the_cpu_and_runs_resident() {
         ("node 3 ao in=@1 mode=1 quality=0 hbao_radius=0", 1e-3, 2),
         ("node 3 ao in=@1 mode=1 quality=1 use_world_units=1 height_depth_cm=10 surface_size=100", 1e-3, 2),
     ];
+    let mut failures = Vec::new();
+    // Strict point-operation comparisons must account for the actual error of their upstream FBM.
+    // Check that source separately, then check every strict operation again on identical pixels.
+    let source = format!("{src}output o 1\n");
+    let cpu_source = cpu_only(&source, &[1]);
+    let gpu_source = editor(&source, &[1], &Arc::new(NodeCache::new(256)), false);
+    let source_error = max_diff(&cpu_source.kept[&1], &gpu_source.kept[&1]);
+    if source_error >= 5e-3 { failures.push(format!("upstream FBM: max difference {source_error}")); }
+    let pixels = Tex::from_fn(64, 48, |u, v| [u, v, u * v, 0.25 + 0.5 * v]);
+    let identical = Arc::new(materialcraft::png::encode(64, 48, &pixels.px, 16));
     for (node, tol, kernels) in cases {
         let text = format!("{src}{node}\noutput o 3\n");
-        let want = cpu_only(&text, &[3]);
-        // the whole graph runs on the device; only the kept output comes back, in one read-back
-        let cache = Arc::new(NodeCache::new(256));
-        let (before, launched) = (gpu::download_count(), gpu::submit_count());
-        let got = editor(&text, &[3], &cache, false);
-        let (reads, launched) = (gpu::download_count() - before, gpu::submit_count() - launched);
-        assert!(launched >= *kernels, "{node}: only {launched} kernel launches, the node fell back to the CPU");
-        let d = max_diff(&got.kept[&3], &want.kept[&3]);
-        assert!(d < *tol, "{node}: {d}");
-        assert_eq!(reads, 1, "{node}: {reads} read-backs");
-        assert!(cache.gpu_bytes() > 0, "{node}: nothing stayed on the device");
+        let g = Graph::parse(&text).unwrap();
+        let strict = *tol <= 1e-6;
+        let chain_tol = if strict { tol + source_error.min(5e-3) } else { *tol };
+        if let Err(e) = parity_case(&g, chain_tol, Some(*kernels), false) { failures.push(format!("{node}: {e}")); }
+        if strict {
+            let mut g = Graph::parse(&format!("size 64 48\nnode 1 bitmap file=\"same.png\"\n{node}\noutput o 3\n")).unwrap();
+            g.resources.insert("same.png".into(), identical.clone());
+            let kernels = if node.contains("invert=0") || node.contains("radius=0") { 0 } else { 1 };
+            if let Err(e) = parity_case(&g, *tol, Some(kernels), false) { failures.push(format!("{node} (identical input): {e}")); }
+        }
     }
-    // Warp moves the sample positions: a few pixels at lattice borders may fall on the other side, the picture agrees
+    // Warp moves the sample positions: a few pixels at lattice borders may fall on the other side, the picture agrees.
     for (preset, extra) in [(0, "warp=1"), (20, "warp=1"), (40, "warp=1"), (20, "angle_random=0.5 seed=5"), (7, "warp=0.5 angle_random=1")] {
         let text = format!("{src}node 3 preset_noise preset={preset} scale=3 {extra}\noutput o 3\n");
-        let want = cpu_only(&text, &[3]);
-        let got = editor(&text, &[3], &Arc::new(NodeCache::new(256)), false);
-        let (a, b) = (&got.kept[&3], &want.kept[&3]);
-        let mean = a.px.iter().zip(&b.px).map(|(p, q)| (p[0] - q[0]).abs()).sum::<f32>() / a.px.len() as f32;
-        assert!(mean < 2e-3, "preset {preset} ({extra}): mean difference {mean}");
+        if let Err(e) = parity_case(&Graph::parse(&text).unwrap(), 2e-3, None, true) { failures.push(format!("preset {preset} ({extra}): {e}")); }
     }
-    // the occlusion output of the bent normal node
     let text = format!("{src}node 3 bent_normal in=@1 radius=12 relief=0.5\noutput o 3.ao\n");
-    let want = cpu_only(&text, &[3]);
-    let got = editor(&text, &[3], &Arc::new(NodeCache::new(256)), false);
-    assert!(max_diff(&got.kept[&3], &want.kept[&3]) < 1e-2);
+    if let Err(e) = parity_case(&Graph::parse(&text).unwrap(), 1e-2, None, false) { failures.push(format!("bent normal AO: {e}")); }
+    assert!(failures.is_empty(), "{} GPU parity cases failed:\n{}", failures.len(), failures.join("\n"));
 }
 
 #[test]

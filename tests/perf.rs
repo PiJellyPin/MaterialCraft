@@ -8,6 +8,26 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[test]
+fn library_nodes_do_not_mutate_shared_input_pixels() {
+    use materialcraft::{graph::Node, nodes10};
+    let input = Arc::new(Tex::from_fn(32, 24, |u, v| [u, v, u * v, 0.75]));
+    let original = input.px.clone();
+    let inputs = std::collections::BTreeMap::from([("input".into(), input.clone())]);
+    for kind in ["x_exposure", "x_median_filter_color", "x_mlv_color"] {
+        let mut node = Node::default();
+        node.nums.insert("exposure".into(), 1.0);
+        let mut output = nodes10::compute(kind, 1, &node, &inputs, 32, 24, 0).unwrap().unwrap();
+        assert_eq!((output.w, output.h), (32, 24));
+        assert_eq!(input.px, original, "{kind} mutated the shared input");
+        output.px[0] = [9.0; 4];
+        assert_eq!(input.px, original, "{kind} output aliases its input");
+    }
+    let black = nodes10::compute("x_exposure", 1, &Default::default(), &Default::default(), 32, 24, 0).unwrap().unwrap();
+    assert_eq!((black.w, black.h), (32, 24));
+    assert!(black.px.iter().all(|p| *p == [0.0, 0.0, 0.0, 1.0]));
+}
+
+#[test]
 fn pool_runs_every_piece_once_also_nested_and_from_several_threads() {
     for n in [0usize, 1, 2, 7, 64, 1000] {
         let hits: Vec<AtomicUsize> = (0..n).map(|_| AtomicUsize::new(0)).collect();

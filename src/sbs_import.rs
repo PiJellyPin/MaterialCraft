@@ -1281,14 +1281,31 @@ impl Cx {
                 let prog = self.convert_fx(&fx, &fc, name, *id);
                 c.node.strs.insert("program".into(), prog);
             }
-            for b in std::mem::take(&mut c.binds) {
-                let fname = self.unique(&format!("{name}_n{id}_{}", san(&b.param)));
-                let mut fg = self.convert_func(&b.func, &fc);
-                wrap_result(&mut fg, b.lane, b.scale, b.offset);
-                fg.meta.insert("embedded".into(), "1".into());
-                fg.meta.insert("identifier".into(), fname.clone());
-                self.lib.insert(fname.clone(), fg);
+            let binds = std::mem::take(&mut c.binds);
+            let mut shared: Vec<(&FuncGraph, String)> = Vec::new();
+            for b in &binds {
+                // Vector components (including output width/height) can share the original
+                // function. Keep unit conversions in their existing wrapper graphs.
+                let share = b.lane.is_some() && b.scale == 1.0 && b.offset == 0.0;
+                let existing = share.then(|| shared.iter().find(|(f, _)| *f == &b.func)).flatten();
+                let fname = if let Some((_, fname)) = existing {
+                    fname.clone()
+                } else {
+                    let fname = self.unique(&format!("{name}_n{id}_{}", san(&b.param)));
+                    let mut fg = self.convert_func(&b.func, &fc);
+                    wrap_result(&mut fg, if share { None } else { b.lane }, b.scale, b.offset);
+                    fg.meta.insert("embedded".into(), "1".into());
+                    fg.meta.insert("identifier".into(), fname.clone());
+                    self.lib.insert(fname.clone(), fg);
+                    if share {
+                        shared.push((&b.func, fname.clone()));
+                    }
+                    fname
+                };
                 c.node.strs.insert(format!("fn.{}", b.param), fname);
+                if share {
+                    c.node.strs.insert(format!("fl.{}", b.param), ["x", "y", "z", "w"][b.lane.unwrap().min(3)].into());
+                }
             }
             if let Some(body) = c.body.take() {
                 let fname = self.unique(&format!("{name}_n{id}_fn"));
@@ -2070,15 +2087,13 @@ pub(crate) fn size_and_format(c: &mut Conv, p: &[Param]) {
                     "0" => {
                         c.num("osize_mode", 2.0);
                         c.num("osize_abs", w.clamp(4.0, 13.0));
-                        if h != w {
-                            c.num("osize_abs_h", h.clamp(4.0, 13.0));
-                        }
+                        c.num("osize_abs_h", h.clamp(4.0, 13.0));
                     }
                     rel => {
                         c.num("osize_mode", if rel == "2" { 0.0 } else { 1.0 });
                         c.num("osize_rel", w.clamp(-12.0, 12.0));
                         if h != w {
-                            c.notes.push((Level::Approx, "a different height offset of the output size is not used (the width's is)".into()));
+                            c.num("osize_rel_h", h.clamp(-12.0, 12.0));
                         }
                     }
                 }
@@ -2094,8 +2109,11 @@ pub(crate) fn size_and_format(c: &mut Conv, p: &[Param]) {
                     c.num("osize_rel", 0.0);
                 }
                 if has_result {
-                    // the function's result (the width's power-of-two offset, or exponent) sets the size when the node runs
-                    c.binds.push(Bind { param: if rel == "0" { "osize_abs".into() } else { "osize_rel".into() }, func: f.clone(), lane: Some(0), scale: 1.0, offset: 0.0 });
+                    // Both components are exponents (absolute) or offsets (relative), evaluated before sizing the node.
+                    let params = if rel == "0" { ["osize_abs", "osize_abs_h"] } else { ["osize_rel", "osize_rel_h"] };
+                    for (lane, param) in params.into_iter().enumerate() {
+                        c.binds.push(Bind { param: param.into(), func: f.clone(), lane: Some(lane), scale: 1.0, offset: 0.0 });
+                    }
                 } else {
                     c.notes.push((Level::Info, "the output size function has no result node; the default size is used, as in the file's own editor".into()));
                 }

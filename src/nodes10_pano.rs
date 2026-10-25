@@ -170,7 +170,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             })
         }
         "x_panorama_rotation" => {
-            let t = cx.img_or("input", grey(0.0));
+            let t = cx.img_or_ref("input", grey(0.0));
             let (yaw, dir, pre, post) = (cx.f("rotation") * TAU, cx.f("direction_angle") * TAU, cx.f("pre_rotation_around_pole") * TAU, cx.f("post_rotation_around_pole") * TAU);
             Tex::from_fn(s, hs, |u, v| {
                 // undo, in reverse order: post spin, tilt of the pole toward the direction, pre spin, yaw
@@ -184,7 +184,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             })
         }
         "x_panorama_straighten_horizon" => {
-            let t = cx.img_or("input", grey(0.0));
+            let t = cx.img_or_ref("input", grey(0.0));
             let enable = cx.b("enable_horizon_correction");
             let (a, b) = (cx.v2("horizon_p1"), cx.v2("horizon_p2"));
             let yaw = cx.f("horizontal_rotation") * TAU;
@@ -204,7 +204,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             })
         }
         "x_nadir_extract" => {
-            let t = cx.img_or("input", grey(0.0));
+            let t = cx.img_or_ref("input", grey(0.0));
             let scale = cx.f("scale").max(0.01);
             let rot = cx.f("rotation") * TAU;
             let gamma = cx.i("output_gamma");
@@ -223,9 +223,9 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             })
         }
         "x_panorama_nadir_patch" => {
-            let t = cx.img_or("input", grey(0.0));
+            let t = cx.img_or_ref("input", grey(0.0));
             if !cx.b("enable") {
-                return Some(t);
+                return Some(t.into_owned());
             }
             let mask = cx.img("mask_input");
             let scale = cx.f("patch_scale").max(0.01);
@@ -322,7 +322,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             })
         }
         "x_3d_texture_offset_color" | "x_3d_texture_offset_grayscale" => {
-            let t = cx.img_or("input", grey(0.0));
+            let t = cx.img_or_ref("input", grey(0.0));
             let vol = Vol::new(&t, cx.v2("grid_size"));
             let off = cx.v3("offset");
             Tex::from_fn(s, hs, |u, v| {
@@ -331,7 +331,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             })
         }
         "x_3d_texture_sdf" => {
-            let t = cx.img_or("mask_input", grey(0.0));
+            let t = cx.img_or_ref("mask_input", grey(0.0));
             let grid = cx.v2("grid_size");
             let (gx, gy) = ((grid[0].round() as usize).clamp(1, 64), (grid[1].round() as usize).clamp(1, 64));
             let thr = cx.f("threshold");

@@ -666,7 +666,7 @@ fn smooth3(e0: &Value, e1: &Value, x: &Value) -> Result<Value, String> {
     Ok(Value::Num(Num { lanes, int: false, v }))
 }
 
-fn swizzle(a: &Value, mask: &str) -> Result<Value, String> {
+pub(crate) fn swizzle(a: &Value, mask: &str) -> Result<Value, String> {
     let n = a.num()?;
     if mask.is_empty() || mask.chars().count() > 4 {
         return Err("a swizzle mask has 1 to 4 letters".into());

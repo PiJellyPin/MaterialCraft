@@ -517,9 +517,13 @@ impl<'a> Cx<'a> {
     }
     /// Image input `id`, or a uniform picture of colour `c`.
     pub fn img_or(&self, id: &str, c: [f32; 4]) -> Tex {
+        self.img_or_ref(id, c).into_owned()
+    }
+    /// Borrow connected images; allocate only the fallback. Mutating callers keep using `img_or`.
+    pub(crate) fn img_or_ref(&self, id: &str, c: [f32; 4]) -> std::borrow::Cow<'a, Tex> {
         match self.img(id) {
-            Some(t) => t.clone(),
-            None => Tex::solid(self.s, self.hs, c),
+            Some(t) => std::borrow::Cow::Borrowed(t),
+            None => std::borrow::Cow::Owned(Tex::solid(self.s, self.hs, c)),
         }
     }
     /// Pixel size relative to a 512 px image.

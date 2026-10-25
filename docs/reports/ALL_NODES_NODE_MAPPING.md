@@ -1,8 +1,8 @@
-# all_nodes.sbs complete node mapping
+# Historical all_nodes.sbs node mapping
 
 This is the detailed inventory for the [compatibility report](ALL_NODES_COMPATIBILITY.md). All UIDs below belong to `Substance_graph`. Every node in the package, including the 237 nodes of the output-size function `Substance_graph/1584843868/outputsize`, has a native editor definition.
 
-This inventory predates the replacement of 34 HDRI bitmap nodes with four bundled panoramas. See the fixture-update note in the compatibility report; the current fixture has 536 compositing nodes.
+This inventory predates the replacement of 34 HDRI bitmap nodes with four bundled panoramas. See the current checks in the compatibility report; the current fixture has 536 compositing nodes.
 
 The tables contain all 566 compositing nodes once: 207 unconverted, 300 approximate, and 59 classified exact by the importer. `Texture` means finite pixel data was returned at 32×32; it does not prove visual fidelity. `Placeholder` means a gray fallback, even though evaluation returned a texture.
 

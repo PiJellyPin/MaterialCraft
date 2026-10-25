@@ -867,9 +867,9 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             encode(&[Sp { pts, closed: true }], 1.0, s, hs)
         }
         "x_mask_to_paths_2" => {
-            let mask = cx.img_or("mask", grey(0.0));
+            let mask = cx.img_or_ref("mask", grey(0.0));
             let blur = cx.f("mask_filtering");
-            let m = if blur > 0.1 { crate::ops::blur(&mask, blur * rs) } else { mask };
+            let m = if blur > 0.1 { std::borrow::Cow::Owned(crate::ops::blur(&mask, blur * rs)) } else { mask };
             let tol = cx.f("tolerance").max(1e-5);
             let sps: Vec<Sp> = match crate::spline::Spline::from_mask(&m, cx.f("threshold"), tol) {
                 Ok(spl) => spl
@@ -1063,8 +1063,8 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             })
         }
         "x_shape_splatter_data_extract" => {
-            let d1 = cx.img_or("splatter_data_1", [0.0; 4]);
-            let d2 = cx.img_or("splatter_data_2", [0.0; 4]);
+            let d1 = cx.img_or_ref("splatter_data_1", [0.0; 4]);
+            let d2 = cx.img_or_ref("splatter_data_2", [0.0; 4]);
             let outs: Vec<Option<Tex>> = (0..7)
                 .map(|o| {
                     if !cx.wants(o) {
@@ -1088,7 +1088,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             cx.pick(outs)
         }
         "x_shape_splatter_to_mask" => {
-            let d1 = cx.img_or("splatter_data_1", [0.0; 4]);
+            let d1 = cx.img_or_ref("splatter_data_1", [0.0; 4]);
             let (a, b) = (cx.i("id_range_start").clamp(1, 8), cx.i("id_range_end").clamp(1, 8));
             let rm = cx.f("random_mask");
             let mode = cx.i("output");
