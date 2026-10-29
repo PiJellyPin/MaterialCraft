@@ -369,7 +369,7 @@ impl App {
                 for (k, (pos, col)) in edited.iter_mut().enumerate() {
                     ui.horizontal(|ui| {
                         changed |= ui.add(egui::Slider::new(pos, 0.0..=1.0)).on_hover_text("Position of the key along the ramp").changed();
-                        changed |= ui.color_edit_button_rgba_unmultiplied(col).changed();
+                        changed |= color_field(ui, Id::new(("ramp_key", k)), col, true).changed();
                         if keys.len() > 1 && ui.small_button("x").on_hover_text("Remove this key").clicked() {
                             remove = Some(k);
                         }
@@ -398,6 +398,66 @@ impl App {
                 }
             });
         }
+        // ---- Levels: Designer's histogram with its handles
+        if node.kind == "sbs:levels" {
+            let vals = native::values(&node);
+            let read = |k: &str, d: f32| -> [f32; 4] {
+                match vals.get(k) {
+                    Some(v @ PVal::Const { .. }) => {
+                        let n = v.nums();
+                        [n.first().copied().unwrap_or(d), n.get(1).copied().unwrap_or(d), n.get(2).copied().unwrap_or(d), n.get(3).copied().unwrap_or(d)]
+                    }
+                    _ => [d; 4],
+                }
+            };
+            let mut lv = LevelsVals { in_lo: read("levelinlow", 0.0), in_mid: read("levelinmid", 0.5), in_hi: read("levelinhigh", 1.0), out_lo: read("leveloutlow", 0.0), out_hi: read("levelouthigh", 1.0) };
+            let src_px = node.ins.get("input1").and_then(|s| self.thumb_px.get(s)).cloned();
+            let chan_id = Id::new(("sd_levels_chan", id));
+            let mut chan = ui.ctx().data(|d| d.get_temp::<usize>(chan_id)).unwrap_or(0);
+            let mut changed = false;
+            egui::CollapsingHeader::new(egui::RichText::new("SPECIFIC PARAMETERS").strong()).id_salt(("sd_lvl", id)).default_open(true).show(ui, |ui| {
+                ui.label(egui::RichText::new("Levels Histogram").color(Color32::from_gray(205)));
+                egui::ComboBox::from_id_salt(("sd_levels_chan_cb", id)).width(ui.available_width() - 12.0).selected_text(LEVELS_CHANNELS[chan]).show_ui(ui, |ui| {
+                    for (i, c) in LEVELS_CHANNELS.iter().enumerate() {
+                        if ui.selectable_label(chan == i, *c).clicked() {
+                            chan = i;
+                        }
+                    }
+                });
+                ui.ctx().data_mut(|d| d.insert_temp(chan_id, chan));
+                ui.add_space(4.0);
+                changed |= levels_widget(ui, ("sd_levels_w", id), &mut lv, chan, src_px.as_deref());
+                ui.add_space(4.0);
+                // the numbers, for exact values
+                let lane = if chan == 0 { 0 } else { chan - 1 };
+                let mut num = |ui: &mut egui::Ui, label: &str, v: &mut [f32; 4]| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(label).color(Color32::from_gray(170)));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let mut x = v[lane];
+                            if ui.add(egui::DragValue::new(&mut x).range(0.0..=1.0).speed(0.002).fixed_decimals(3)).changed() {
+                                set_lane(v, chan, x);
+                                changed = true;
+                            }
+                        });
+                    });
+                };
+                num(ui, "Level In Low", &mut lv.in_lo);
+                num(ui, "Level In Mid", &mut lv.in_mid);
+                num(ui, "Level In High", &mut lv.in_hi);
+                num(ui, "Level Out Low", &mut lv.out_lo);
+                num(ui, "Level Out High", &mut lv.out_hi);
+                let mut clamp = read("clampinterm", 1.0)[0] != 0.0;
+                if ui.checkbox(&mut clamp, "Clamp in term").on_hover_text("Clamp the values between low and high before the output range").changed() {
+                    sets.push(("clampinterm".to_string(), Some(PVal::Const { ty: PTy::B, raw: (clamp as i32).to_string(), rel: Some("0".into()) })));
+                }
+            });
+            if changed {
+                for (k, v) in [("levelinlow", lv.in_lo), ("levelinmid", lv.in_mid), ("levelinhigh", lv.in_hi), ("leveloutlow", lv.out_lo), ("levelouthigh", lv.out_hi)] {
+                    sets.push((k.to_string(), Some(PVal::Const { ty: PTy::F(4), raw: format!("{} {} {} {}", v[0], v[1], v[2], v[3]), rel: Some("0".into()) })));
+                }
+            }
+        }
         // ---- parameters, by group
         let params = native::params_of(&node, &self.g.subgraphs);
         let gray_node = matches!(native::values(&node).get("colorswitch"), Some(PVal::Const { raw, .. }) if raw.trim() == "0");
@@ -415,15 +475,40 @@ impl App {
         });
         // the base settings start folded when the node has parameters of its own
         let only_base = groups.iter().all(|g| g == "Base");
+        let is_levels = node.kind == "sbs:levels";
         let mut draw_group = |ui: &mut egui::Ui, gname: &str| {
-                for p in params.iter().filter(|p| p.group == gname) {
-                    ui.horizontal(|ui| {
-                        row_label(ui, &p.label);
+                for p in params.iter().filter(|p| p.group == gname && !(is_levels && (p.id.starts_with("levelin") || p.id.starts_with("levelout") || p.id == "clampinterm"))) {
+                    // Designer's layout: the name on its own line with small tools at the right, the control full width below
+                    ui.add_space(2.0);
+                    ui.vertical(|ui| {
                         let cur = p.current();
+                        let ctl = (ui.available_width() - 12.0).max(90.0);
+                        ui.spacing_mut().slider_width = (ctl - 70.0).max(60.0);
+                        ui.spacing_mut().interact_size.y = 20.0;
+                        let is_const = matches!(cur, PVal::Const { .. });
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(&p.label).color(Color32::from_gray(205)));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if !is_const {
+                                    return;
+                                }
+                                let tool = |ui: &mut egui::Ui, t: &str, tip: &str| ui.add(egui::Button::new(egui::RichText::new(t).size(10.5).color(Color32::from_gray(150))).small().frame(false)).on_hover_text(tip).clicked();
+                                if self.g.sd.as_ref().map(|s| s.role == native::Role::Graph).unwrap_or(false) && p.group != "Base" && tool(ui, "P", "Expose: make this a parameter of the graph, set by whoever uses it") {
+                                    expose = Some((p.id.clone(), p.label.clone()));
+                                }
+                                if !matches!(p.ty, PTy::S | PTy::Path) && tool(ui, "fn", "Compute this value with a function") {
+                                    make_fn = Some((p.id.clone(), cur.clone()));
+                                }
+                                if p.value.is_some() && tool(ui, "↺", "Back to the default") {
+                                    sets.push((p.id.clone(), None));
+                                }
+                            });
+                        });
+                        ui.horizontal(|ui| {
                         match &cur {
                             PVal::Dyn { graph, .. } if native::reads_input(&self.g, graph).is_some() => {
                                 let ident = native::reads_input(&self.g, graph).unwrap_or_default();
-                                ui.label(egui::RichText::new(format!("graph parameter '{ident}'")).italics().color(Color32::from_rgb(120, 170, 235)))
+                                ui.label(egui::RichText::new(format!("● {ident}")).color(Color32::from_rgb(120, 170, 235)))
                                     .on_hover_text("Set by whoever uses this graph; its default is in the graph's settings (click the canvas)");
                                 if ui.small_button("x").on_hover_text("Stop exposing it: back to the parameter's default").clicked() {
                                     unexpose = Some(ident);
@@ -482,8 +567,15 @@ impl App {
                                     }
                                     PTy::FV | PTy::F(4) if (p.ty == PTy::FV || p.id.contains("color")) && !gray_node && nums.len() >= 3 => {
                                         let mut c = [nums[0], nums[1], nums[2], nums.get(3).copied().unwrap_or(1.0)];
-                                        if ui.color_edit_button_rgba_unmultiplied(&mut c).changed() {
+                                        if color_field(ui, ui.next_auto_id(), &mut c, true).changed() {
                                             set(c.to_vec(), &mut sets);
+                                        }
+                                    }
+                                    PTy::FV if gray_node => {
+                                        // a grey level: the same picker as a colour, in one channel
+                                        let mut g = nums.first().copied().unwrap_or(0.0);
+                                        if gray_field(ui, ui.next_auto_id(), &mut g).changed() {
+                                            set(vec![g, g, g, 1.0], &mut sets);
                                         }
                                     }
                                     _ => {
@@ -503,17 +595,9 @@ impl App {
                                         }
                                     }
                                 }
-                                if p.value.is_some() && ui.small_button("↺").on_hover_text("Back to the default").clicked() {
-                                    sets.push((p.id.clone(), None));
-                                }
-                                if !matches!(p.ty, PTy::S | PTy::Path) && ui.small_button("fn").on_hover_text("Compute this value with a function").clicked() {
-                                    make_fn = Some((p.id.clone(), cur.clone()));
-                                }
-                                if self.g.sd.as_ref().map(|s| s.role == native::Role::Graph).unwrap_or(false) && p.group != "Base" && ui.small_button("P").on_hover_text("Expose: make this a parameter of the graph, set by whoever uses it").clicked() {
-                                    expose = Some((p.id.clone(), p.label.clone()));
-                                }
                             }
                         }
+                        });
                     });
                 }
         };
@@ -758,7 +842,7 @@ impl App {
                                 }
                                 PTy::F(4) | PTy::F(3) if nums.len() >= 3 => {
                                     let mut c = [nums[0], nums[1], nums[2], nums.get(3).copied().unwrap_or(1.0)];
-                                    if ui.color_edit_button_rgba_unmultiplied(&mut c).changed() {
+                                    if color_field(ui, ui.next_auto_id(), &mut c, true).changed() {
                                         set = Some(c[..inp.ty.lanes()].to_vec());
                                     }
                                 }
@@ -879,4 +963,137 @@ impl App {
             }
         }
     }
+}
+
+const LEVELS_CHANNELS: &[&str] = &["Luminance Channel", "Red Channel", "Green Channel", "Blue Channel", "Alpha Channel"];
+
+struct LevelsVals {
+    in_lo: [f32; 4],
+    in_mid: [f32; 4],
+    in_hi: [f32; 4],
+    out_lo: [f32; 4],
+    out_hi: [f32; 4],
+}
+
+/// Luminance sets red, green and blue together; a channel sets its own lane.
+fn set_lane(v: &mut [f32; 4], chan: usize, x: f32) {
+    match chan {
+        0 => {
+            v[0] = x;
+            v[1] = x;
+            v[2] = x;
+        }
+        c => v[c - 1] = x,
+    }
+}
+
+/// Designer's Levels control: the histogram of the input with the three input handles above it and the two output
+/// handles below. `src` is the input's thumbnail (RGBA, linear, THUMB x THUMB). Returns true when a handle moved.
+fn levels_widget(ui: &mut egui::Ui, id_src: (&str, u32), lv: &mut LevelsVals, chan: usize, src: Option<&[u8]>) -> bool {
+    let lane = if chan == 0 { 0 } else { chan - 1 };
+    let full_w = ui.available_width() - 12.0;
+    let (rect, _) = ui.allocate_exact_size(vec2(full_w, 200.0), Sense::hover());
+    let painter = ui.painter();
+    let pad = 8.0;
+    let hist = Rect::from_min_max(pos2(rect.left() + pad, rect.top() + 14.0), pos2(rect.right() - pad, rect.bottom() - 34.0));
+    // histogram of the chosen channel
+    let mut bins = [0u32; 128];
+    if let Some(px) = src {
+        for p in px.chunks_exact(4) {
+            let v = match chan {
+                0 => (0.3 * p[0] as f32 + 0.59 * p[1] as f32 + 0.11 * p[2] as f32) / 255.0,
+                c => p[c - 1] as f32 / 255.0,
+            };
+            bins[((v * 127.0).round() as usize).min(127)] += 1;
+        }
+    }
+    painter.rect_filled(hist, 0.0, Color32::from_gray(150));
+    let peak = bins.iter().copied().max().unwrap_or(1).max(1) as f32;
+    let bw = hist.width() / 128.0;
+    for (i, b) in bins.iter().enumerate() {
+        if *b == 0 {
+            continue;
+        }
+        let h = (*b as f32 / peak).sqrt() * (hist.height() - 2.0);
+        let x0 = hist.left() + i as f32 * bw;
+        painter.rect_filled(Rect::from_min_max(pos2(x0, hist.bottom() - h), pos2(x0 + bw + 0.5, hist.bottom())), 0.0, Color32::from_gray(95));
+    }
+    painter.text(hist.left_bottom() + vec2(3.0, -2.0), Align2::LEFT_BOTTOM, "0", FontId::proportional(10.0), Color32::from_gray(120));
+    painter.text(hist.right_bottom() + vec2(-3.0, -2.0), Align2::RIGHT_BOTTOM, "255", FontId::proportional(10.0), Color32::from_gray(120));
+    // the output ramp under the histogram
+    let ramp = Rect::from_min_max(pos2(hist.left(), hist.bottom() + 6.0), pos2(hist.right(), hist.bottom() + 14.0));
+    let n = 32;
+    for i in 0..n {
+        let t0 = i as f32 / n as f32;
+        let t1 = (i + 1) as f32 / n as f32;
+        let g = (t0 * 255.0) as u8;
+        painter.rect_filled(Rect::from_min_max(pos2(ramp.left() + ramp.width() * t0, ramp.top()), pos2(ramp.left() + ramp.width() * t1 + 0.5, ramp.bottom())), 0.0, Color32::from_gray(g));
+    }
+    let mut changed = false;
+    let x_of = |v: f32| hist.left() + v.clamp(0.0, 1.0) * hist.width();
+    let v_of = |x: f32| ((x - hist.left()) / hist.width()).clamp(0.0, 1.0);
+    // handles: (value, y of the tip, points up?, fill)
+    let (lo, hi, mid) = (lv.in_lo[lane], lv.in_hi[lane], lv.in_mid[lane]);
+    let mid_abs = lo + (hi - lo) * mid;
+    let top_y = hist.top() - 2.0;
+    let bot_y = hist.bottom() + 16.0;
+    let handles: [(f32, f32, bool, Color32, &str); 5] = [
+        (lo, top_y, false, Color32::from_gray(20), "in_lo"),
+        (mid_abs, top_y, false, Color32::from_gray(120), "in_mid"),
+        (hi, top_y, false, Color32::from_gray(245), "in_hi"),
+        (lv.out_lo[lane], bot_y, true, Color32::from_gray(20), "out_lo"),
+        (lv.out_hi[lane], bot_y, true, Color32::from_gray(245), "out_hi"),
+    ];
+    let base = Id::new(id_src);
+    let size = 7.0;
+    for (v, y, up, fill, name) in handles {
+        let x = x_of(v);
+        let tri = if up {
+            vec![pos2(x, y - size), pos2(x - size, y + size * 0.6), pos2(x + size, y + size * 0.6)]
+        } else {
+            vec![pos2(x, y + size), pos2(x - size, y - size * 0.6), pos2(x + size, y - size * 0.6)]
+        };
+        let hit = Rect::from_center_size(pos2(x, y), vec2(size * 2.4, size * 2.4));
+        let r = ui.interact(hit, base.with(name), Sense::click_and_drag());
+        let stroke = if r.hovered() || r.dragged() { Color32::WHITE } else { Color32::from_gray(60) };
+        painter.add(egui::Shape::convex_polygon(tri, fill, Stroke::new(1.0_f32, stroke)));
+        if r.dragged() {
+            if let Some(p) = r.interact_pointer_pos() {
+                let nv = v_of(p.x);
+                match name {
+                    "in_lo" => {
+                        let nv = nv.min(hi - 0.002);
+                        set_lane(&mut lv.in_lo, chan, nv);
+                    }
+                    "in_hi" => {
+                        let nv = nv.max(lo + 0.002);
+                        set_lane(&mut lv.in_hi, chan, nv);
+                    }
+                    "in_mid" => {
+                        let span = (hi - lo).max(1e-4);
+                        set_lane(&mut lv.in_mid, chan, ((nv - lo) / span).clamp(0.001, 0.999));
+                    }
+                    "out_lo" => set_lane(&mut lv.out_lo, chan, nv),
+                    _ => set_lane(&mut lv.out_hi, chan, nv),
+                }
+                changed = true;
+            }
+        }
+        if r.double_clicked() {
+            let d = match name {
+                "in_lo" | "out_lo" => 0.0,
+                "in_mid" => 0.5,
+                _ => 1.0,
+            };
+            match name {
+                "in_lo" => set_lane(&mut lv.in_lo, chan, d),
+                "in_hi" => set_lane(&mut lv.in_hi, chan, d),
+                "in_mid" => set_lane(&mut lv.in_mid, chan, d),
+                "out_lo" => set_lane(&mut lv.out_lo, chan, d),
+                _ => set_lane(&mut lv.out_hi, chan, d),
+            }
+            changed = true;
+        }
+    }
+    changed
 }

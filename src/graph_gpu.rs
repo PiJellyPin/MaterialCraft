@@ -438,7 +438,7 @@ pub(super) fn run(n: &Node, ins: &Ins, sz: (usize, usize), ctx: &Ctx, out_idx: u
             // the plain look: octaves, tone curve, balance. The extra layers (brush, specks, streaks, scratches, cracks,
             // grain, sharpen) and Disorder run on the CPU.
             let extras = ["scratches", "specks", "streaks", "grain", "sharpen"].iter().any(|k| f(k, 0.0) != 0.0) || f("cracks", 0.0) > 1e-3 || f("brush", 0.0) > 1e-3;
-            if !no_warp || extras {
+            if !no_warp || extras || matches!(f("preset", 0.0) as i32, 80 | 81) {
                 return None;
             }
             let turns = (f("angle", 0.0) * 4.0).round() as i32;

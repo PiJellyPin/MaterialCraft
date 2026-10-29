@@ -362,6 +362,203 @@ fn panel_header(ui: &mut egui::Ui, title: &str, _closable: bool) -> bool {
     false
 }
 
+/// The quick-add row above the graph: node label and what it is for.
+const COMMON_NODES: &[(&str, &str)] = &[
+    ("Bitmap", "Bitmap"),
+    ("Blend", "Blend"),
+    ("Blur", "Blur"),
+    ("Channels Shuffle", "Channels Shuffle"),
+    ("Curve", "Curve"),
+    ("Directional Blur", "Directional Blur"),
+    ("Directional Warp", "Directional Warp"),
+    ("Distance", "Distance"),
+    ("Emboss", "Emboss"),
+    ("FX-Map", "FX-Map"),
+    ("Gradient (Dynamic)", "Gradient (Dynamic)"),
+    ("Gradient Map", "Gradient Map"),
+    ("Grayscale Conversion", "Grayscale Conversion"),
+    ("HSL", "HSL"),
+    ("Levels", "Levels"),
+    ("Normal", "Normal"),
+    ("Pixel Processor", "Pixel Processor"),
+    ("Sharpen", "Sharpen"),
+    ("SVG", "SVG"),
+    ("Text", "Text"),
+    ("Transformation 2D", "Transformation 2D"),
+    ("Uniform Color", "Uniform Color"),
+    ("Value Processor", "Value Processor"),
+    ("Warp", "Warp"),
+];
+
+/// Tile and glyph colours of a common-node button, by what the node does (generators warm, adjustments green,
+/// blur and warp blue, processors purple).
+fn node_tile_colors(label: &str) -> (Color32, Color32) {
+    let tile = match label {
+        "Bitmap" | "SVG" | "Text" | "Uniform Color" | "FX-Map" => Color32::from_rgb(150, 72, 62),
+        "Pixel Processor" | "Value Processor" => Color32::from_rgb(118, 80, 160),
+        "Levels" | "Curve" | "HSL" | "Gradient Map" | "Gradient (Dynamic)" | "Grayscale Conversion" | "Channels Shuffle" | "Blend" => Color32::from_rgb(70, 120, 96),
+        _ => Color32::from_rgb(62, 100, 150),
+    };
+    (tile, Color32::from_gray(235))
+}
+
+/// A small picture of what a common node does, inside its tile.
+fn node_glyph(p: &egui::Painter, r: Rect, label: &str, col: Color32) {
+    let c = r.center();
+    let st = Stroke::new(1.3_f32, col);
+    let l = |a: (f32, f32), b: (f32, f32)| p.line_segment([pos2(c.x + a.0, c.y + a.1), pos2(c.x + b.0, c.y + b.1)], st);
+    let bx = |dx: f32, dy: f32, w: f32, h: f32| Rect::from_min_size(pos2(c.x + dx, c.y + dy), vec2(w, h));
+    match label {
+        "Bitmap" => {
+            p.rect_stroke(bx(-6.0, -5.0, 12.0, 10.0), 1.0, st, egui::StrokeKind::Inside);
+            l((-5.0, 4.0), (-1.5, -1.0));
+            l((-1.5, -1.0), (1.0, 2.0));
+            l((1.0, 2.0), (3.0, 0.0));
+            l((3.0, 0.0), (5.0, 4.0));
+        }
+        "Blend" => {
+            p.rect_stroke(bx(-6.0, -6.0, 8.0, 8.0), 1.0, st, egui::StrokeKind::Inside);
+            p.rect_filled(bx(-2.0, -2.0, 8.0, 8.0), 1.0, col);
+        }
+        "Blur" => {
+            p.circle_filled(c, 2.5, col);
+            p.circle_stroke(c, 4.5, Stroke::new(1.0_f32, col.gamma_multiply(0.6)));
+            p.circle_stroke(c, 6.5, Stroke::new(1.0_f32, col.gamma_multiply(0.3)));
+        }
+        "Channels Shuffle" => {
+            l((-6.0, -5.0), (6.0, 5.0));
+            l((-6.0, 5.0), (6.0, -5.0));
+            l((6.0, 5.0), (3.0, 5.0));
+            l((6.0, 5.0), (6.0, 2.0));
+            l((6.0, -5.0), (3.0, -5.0));
+            l((6.0, -5.0), (6.0, -2.0));
+        }
+        "Curve" => {
+            p.rect_stroke(bx(-6.0, -6.0, 12.0, 12.0), 1.0, Stroke::new(1.0_f32, col.gamma_multiply(0.5)), egui::StrokeKind::Inside);
+            let mut prev = pos2(c.x - 6.0, c.y + 6.0);
+            for i in 1..=8 {
+                let t = i as f32 / 8.0;
+                let y = 1.0 - (t * t * (3.0 - 2.0 * t));
+                let q = pos2(c.x - 6.0 + 12.0 * t, c.y - 6.0 + 12.0 * y);
+                p.line_segment([prev, q], st);
+                prev = q;
+            }
+        }
+        "Directional Blur" => {
+            l((-6.0, -4.0), (6.0, -4.0));
+            l((-6.0, 0.0), (3.0, 0.0));
+            l((-6.0, 4.0), (0.0, 4.0));
+        }
+        "Directional Warp" | "Warp" => {
+            for row in [-4.0, 0.0, 4.0] {
+                let mut prev = pos2(c.x - 6.0, c.y + row);
+                for i in 1..=8 {
+                    let t = i as f32 / 8.0;
+                    let q = pos2(c.x - 6.0 + 12.0 * t, c.y + row + (t * std::f32::consts::TAU).sin() * 1.6);
+                    p.line_segment([prev, q], st);
+                    prev = q;
+                }
+            }
+            if label == "Directional Warp" {
+                l((2.0, -6.0), (6.0, -6.0));
+                l((6.0, -6.0), (4.5, -7.5));
+                l((6.0, -6.0), (4.5, -4.5));
+            }
+        }
+        "Distance" => {
+            p.rect_stroke(bx(-6.0, -6.0, 12.0, 12.0), 2.0, Stroke::new(1.0_f32, col.gamma_multiply(0.4)), egui::StrokeKind::Inside);
+            p.rect_stroke(bx(-3.5, -3.5, 7.0, 7.0), 1.5, Stroke::new(1.0_f32, col.gamma_multiply(0.7)), egui::StrokeKind::Inside);
+            p.rect_filled(bx(-1.0, -1.0, 2.0, 2.0), 0.0, col);
+        }
+        "Emboss" => {
+            p.rect_filled(bx(-6.0, -6.0, 12.0, 12.0), 1.0, col.gamma_multiply(0.35));
+            p.add(egui::Shape::convex_polygon(vec![pos2(c.x - 6.0, c.y - 6.0), pos2(c.x + 6.0, c.y - 6.0), pos2(c.x - 6.0, c.y + 6.0)], col, Stroke::NONE));
+        }
+        "FX-Map" => {
+            for (dx, dy) in [(0.0, -5.0), (-5.0, 0.0), (5.0, 0.0), (0.0, 5.0)] {
+                p.rect_filled(bx(dx - 2.0, dy - 2.0, 4.0, 4.0), 0.5, col);
+            }
+        }
+        "Gradient Map" | "Gradient (Dynamic)" => {
+            let n = 12;
+            for i in 0..n {
+                let t = i as f32 / n as f32;
+                p.rect_filled(bx(-6.0 + 12.0 * t, -3.0, 12.0 / n as f32 + 0.5, 6.0), 0.0, col.gamma_multiply(0.15 + 0.85 * t));
+            }
+            if label == "Gradient (Dynamic)" {
+                p.circle_filled(pos2(c.x, c.y + 5.0), 1.8, col);
+            }
+        }
+        "Grayscale Conversion" => {
+            p.circle_stroke(c, 6.0, st);
+            p.add(egui::Shape::convex_polygon((0..=12).map(|i| { let a = -std::f32::consts::FRAC_PI_2 + i as f32 / 12.0 * std::f32::consts::PI; pos2(c.x + a.cos() * 6.0, c.y + a.sin() * 6.0) }).collect(), col, Stroke::NONE));
+        }
+        "HSL" => {
+            for (i, cc) in [Color32::from_rgb(230, 80, 80), Color32::from_rgb(90, 200, 90), Color32::from_rgb(90, 120, 235)].iter().enumerate() {
+                let a0 = i as f32 / 3.0 * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+                let pts: Vec<Pos2> = std::iter::once(c).chain((0..=6).map(|k| { let a = a0 + k as f32 / 6.0 * std::f32::consts::TAU / 3.0; pos2(c.x + a.cos() * 6.5, c.y + a.sin() * 6.5) })).collect();
+                p.add(egui::Shape::convex_polygon(pts, *cc, Stroke::NONE));
+            }
+        }
+        "Levels" => {
+            for (i, h) in [3.0, 6.0, 9.0, 11.0, 7.0, 4.0].iter().enumerate() {
+                p.rect_filled(bx(-6.0 + i as f32 * 2.0, 6.0 - h, 1.6, *h), 0.0, col);
+            }
+        }
+        "Normal" => {
+            p.circle_filled(pos2(c.x - 1.0, c.y + 2.0), 4.5, col.gamma_multiply(0.5));
+            l((-1.0, 2.0), (4.0, -5.0));
+            l((4.0, -5.0), (1.0, -5.0));
+            l((4.0, -5.0), (4.0, -2.0));
+        }
+        "Pixel Processor" => {
+            for y in 0..3 {
+                for x in 0..3 {
+                    let on = (x + y) % 2 == 0;
+                    p.rect_filled(bx(-6.0 + x as f32 * 4.0, -6.0 + y as f32 * 4.0, 3.5, 3.5), 0.0, col.gamma_multiply(if on { 1.0 } else { 0.4 }));
+                }
+            }
+        }
+        "Sharpen" => {
+            p.add(egui::Shape::convex_polygon(vec![pos2(c.x, c.y - 7.0), pos2(c.x + 2.0, c.y - 2.0), pos2(c.x + 7.0, c.y), pos2(c.x + 2.0, c.y + 2.0), pos2(c.x, c.y + 7.0), pos2(c.x - 2.0, c.y + 2.0), pos2(c.x - 7.0, c.y), pos2(c.x - 2.0, c.y - 2.0)], col, Stroke::NONE));
+        }
+        "SVG" => {
+            let mut prev = pos2(c.x - 6.0, c.y + 5.0);
+            for i in 1..=10 {
+                let t = i as f32 / 10.0;
+                let x = c.x - 6.0 + 12.0 * t;
+                let y = c.y + 5.0 - 10.0 * (3.0 * t * (1.0 - t) * (1.0 - t) + t * t * t);
+                let q = pos2(x, y);
+                p.line_segment([prev, q], st);
+                prev = q;
+            }
+            p.circle_filled(pos2(c.x - 6.0, c.y + 5.0), 1.6, col);
+            p.circle_filled(pos2(c.x + 6.0, c.y - 5.0), 1.6, col);
+        }
+        "Text" => {
+            p.text(c, Align2::CENTER_CENTER, "T", FontId::proportional(14.0), col);
+        }
+        "Transformation 2D" => {
+            p.rect_stroke(bx(-4.0, -4.0, 8.0, 8.0), 0.5, st, egui::StrokeKind::Inside);
+            l((-7.0, -7.0), (-4.0, -4.0));
+            l((7.0, 7.0), (4.0, 4.0));
+            l((-7.0, -7.0), (-7.0, -4.0));
+            l((-7.0, -7.0), (-4.0, -7.0));
+            l((7.0, 7.0), (7.0, 4.0));
+            l((7.0, 7.0), (4.0, 7.0));
+        }
+        "Uniform Color" => {
+            p.rect_filled(bx(-6.0, -6.0, 12.0, 12.0), 1.5, col);
+        }
+        "Value Processor" => {
+            p.text(c, Align2::CENTER_CENTER, "x=", FontId::monospace(11.0), col);
+        }
+        _ => {
+            p.rect_stroke(bx(-6.0, -6.0, 12.0, 12.0), 1.0, st, egui::StrokeKind::Inside);
+        }
+    }
+}
+
 fn lib_group(kind: &str) -> (&'static str, &'static str) {
     match kind {
         "white_noise" | "gaussian_noise" | "perlin" | "fbm" | "clouds" | "voronoi" | "voronoi_fractal" | "bnw_spots" | "crystal" | "directional_noise" | "blue_noise" | "caustics" | "liquid_noise" | "perlin_3d" | "anisotropic_noise" | "fur_noise" | "moisture_noise" | "microscope_noise" | "worley_3d" | "fbm_3d" | "grunge" | "grunge_map" | "plasma" | "cells" | "fractal_sum" | "waveform" | "gaussian_spots" | "preset_noise" | "noise_pattern" | "noise_3d" => ("Generators", "Noises"),
@@ -1784,6 +1981,25 @@ impl App {
                     ui.small(format!("{} selected", self.sel.len()));
                 }
             });
+            // common nodes, one click away (Designer keeps the same row above the graph)
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(3.0, 3.0);
+                ui.add_space(4.0);
+                for (label, _) in COMMON_NODES {
+                    let (rect, resp) = ui.allocate_exact_size(vec2(24.0, 22.0), Sense::click_and_drag());
+                    let (tile, glyph) = node_tile_colors(label);
+                    let tile = if resp.hovered() { tile.gamma_multiply(1.35) } else { tile };
+                    ui.painter().rect_filled(rect.shrink(1.0), 0.0, tile);
+                    node_glyph(ui.painter(), rect.shrink(1.0), label, glyph);
+                    // a click adds the node after the selected one; a drag drops it where it lands on the graph
+                    if resp.drag_started() {
+                        resp.dnd_set_drag_payload(label.to_string());
+                    }
+                    if resp.on_hover_text(format!("{label}\n(click to add, or drag onto the graph)")).clicked() {
+                        acts.push(Act::QuickAdd(label));
+                    }
+                }
+            });
             self.canvas(ui);
             if self.need_fit {
                 self.need_fit = false;
@@ -1926,7 +2142,8 @@ impl eframe::App for App {
         if self.search.is_some() {
             ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab));
         } else if !self.text_focus && !self.new_dlg.open {
-            let tab = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab));
+            // Tab or Space opens the node search at the pointer, as in Designer
+            let tab = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab) | i.consume_key(Modifiers::NONE, Key::Space));
             if tab {
                 ctx.memory_mut(|m| {
                     if let Some(id) = m.focused() {
@@ -1944,15 +2161,20 @@ impl eframe::App for App {
                 let cut = i.events.iter().any(|e| matches!(e, egui::Event::Cut)) || i.consume_key(Modifiers::COMMAND, Key::X);
                 let paste = i.consume_key(Modifiers::COMMAND, Key::V);
                 let pasted: Option<String> = i.events.iter().find_map(|e| if let egui::Event::Paste(t) = e { Some(t.clone()) } else { None });
+                let dup_nl = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::D);
+                let paste_nl = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::V);
+                let disable = i.consume_key(Modifiers::SHIFT, Key::D);
+                let relink = i.consume_key(Modifiers::NONE, Key::Backspace);
+                let clear_th = i.consume_key(Modifiers::NONE, Key::F5);
                 let dup = i.consume_key(Modifiers::COMMAND, Key::D);
                 let all = i.consume_key(Modifiers::COMMAND, Key::A);
                 let save = i.consume_key(Modifiers::COMMAND, Key::S);
                 let open = i.consume_key(Modifiers::COMMAND, Key::O);
                 let newg = i.consume_key(Modifiers::COMMAND, Key::N);
-                let del = i.consume_key(Modifiers::NONE, Key::Delete) || i.consume_key(Modifiers::NONE, Key::Backspace);
+                let del = i.consume_key(Modifiers::NONE, Key::Delete);
                 let frame = i.consume_key(Modifiers::NONE, Key::F);
                 let com = i.consume_key(Modifiers::NONE, Key::C);
-                (redo, undo, copy, cut, paste, dup, all, save, open, del, frame, com, newg, pasted)
+                (redo, undo, copy, cut, paste, dup, all, save, open, del, frame, com, newg, pasted, dup_nl, paste_nl, disable, relink, clear_th)
             });
             let w = pointer.map(|p| self.screen_to_world(p));
             if let Some(text) = &k.13 {
@@ -1977,6 +2199,11 @@ impl eframe::App for App {
                 (k.10, Act::FrameAll),
                 (k.11, Act::Comment),
                 (k.12, Act::NewGraph),
+                (k.14, Act::DuplicateNoLink),
+                (k.15, Act::PasteNoLink(w)),
+                (k.16, Act::ToggleDisable),
+                (k.17, Act::DeleteRelink),
+                (k.18, Act::ClearThumbs),
             ] {
                 if on {
                     self.acts.push(a);
@@ -1985,6 +2212,7 @@ impl eframe::App for App {
         }
 
         self.editor_ui(root);
+        eyedropper_overlay(ctx);
         self.new_dialog(ctx);
         self.confirm_close_ui(ctx);
         self.rename_graph_ui(ctx);
@@ -1998,6 +2226,22 @@ impl eframe::App for App {
         }
         let now = std::time::Instant::now();
         const SETTLE: std::time::Duration = std::time::Duration::from_millis(110);
+        if self.dirty_wait && self.job.is_none() {
+            self.dirty_wait = false;
+            self.dirty = true;
+        }
+        if self.dirty && self.job.is_some() && self.job_pass == Pass::Interactive && self.job_started.elapsed() < std::time::Duration::from_millis(250) {
+            // a short interactive pass is under way: let it finish and show its picture, then run again with the latest
+            // values. Cancelling it for every frame of a drag would leave the view frozen until the drag pauses.
+            self.dirty = false;
+            self.dirty_wait = true;
+            self.thumbs_due = true;
+            self.final_due = true;
+            self.settle_at = Some(now + SETTLE);
+            if let Ok(mut t) = EDIT_AT.lock() {
+                *t = Some(now);
+            }
+        }
         if self.dirty {
             // a value changed this frame: show it at once with a cheap pass over just the on-screen nodes, and
             // (re)arm the settle timer so the passes over the whole graph run only once the input stops moving
@@ -2050,7 +2294,7 @@ impl eframe::App for App {
                 }
             }
         }
-        if self.job.is_some() || self.settle_at.is_some() || self.thumbs_due || self.final_due || self.refine || self.view_pending {
+        if self.job.is_some() || self.settle_at.is_some() || self.thumbs_due || self.final_due || self.refine || self.view_pending || self.dirty_wait {
             ctx.request_repaint_after(std::time::Duration::from_millis(30));
         }
         self.text_focus = ctx.egui_wants_keyboard_input();

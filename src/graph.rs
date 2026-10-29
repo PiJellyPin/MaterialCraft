@@ -1409,14 +1409,7 @@ impl Graph {
     #[allow(clippy::too_many_arguments)]
     fn evaluate_all_impl(&self, size: usize, keep: &[u32], defer: &[u32], persist: Option<Arc<NodeCache>>, first: Option<u32>, full: bool, on_first: &mut dyn FnMut(&Pending)) -> EvalAll {
         let mut r = EvalAll { thumbs: HashMap::new(), errors: HashMap::new(), kept: HashMap::new(), pending: HashMap::new(), sizes: HashMap::new() };
-        let lowered = match (&self.sd, &persist) {
-            (Some(sd), Some(cache)) if sd.role == crate::sbs_native::Role::Graph => match cache.lowered.lock() {
-                Ok(mut c) => c.get(self).map(Some).map_err(|e| Error::Parse(0, e)),
-                Err(_) => self.lowered().map(|g| g.map(Arc::new)),
-            },
-            _ => self.lowered().map(|g| g.map(Arc::new)),
-        };
-        match lowered {
+        match self.lowered() {
             Ok(Some(low)) => return low.evaluate_all_impl(size, keep, defer, persist, first, full, on_first),
             Ok(None) => {}
             Err(e) => {
@@ -1527,7 +1520,6 @@ impl Graph {
 /// Least recently used entries are dropped when the memory budget is exceeded.
 pub struct NodeCache {
     inner: Mutex<NcInner>,
-    lowered: Mutex<crate::sbs_native::LowerCache>,
     budget: usize,
     gbudget: usize,
     hits: std::sync::atomic::AtomicUsize,
@@ -1614,7 +1606,6 @@ impl NodeCache {
         let gmb = std::env::var("MC_GPU_CACHE_MB").ok().and_then(|s| s.parse().ok()).unwrap_or(1536usize);
         NodeCache {
             inner: Mutex::new(NcInner { map: HashMap::new(), bytes: 0, gbytes: 0, tick: 0 }),
-            lowered: Mutex::new(Default::default()),
             budget: budget_mb.max(16) << 20,
             gbudget: gmb.max(16) << 20,
             hits: Default::default(),
@@ -1769,9 +1760,6 @@ impl NodeCache {
     }
 
     pub fn clear(&self) {
-        if let Ok(mut c) = self.lowered.lock() {
-            *c = Default::default();
-        }
         if let Ok(mut g) = self.inner.lock() {
             g.map.clear();
             g.bytes = 0;
@@ -2049,7 +2037,6 @@ fn node_size_d(n: &Node, ins: &BTreeMap<String, (usize, usize)>, ctx: &Ctx) -> (
     let get = |k: &str, d: f32| n.nums.get(k).copied().unwrap_or(d);
     let mode = get("osize_mode", 0.0).round() as i32;
     let rel = get("osize_rel", 0.0).round().clamp(-12.0, 12.0) as i32;
-    let rel_h = get("osize_rel_h", rel as f32).round().clamp(-12.0, 12.0) as i32;
     let (bw, bh) = match mode {
         2 => {
             let e = get("osize_abs", 9.0).round().clamp(4.0, 13.0) as u32;
@@ -2064,7 +2051,7 @@ fn node_size_d(n: &Node, ins: &BTreeMap<String, (usize, usize)>, ctx: &Ctx) -> (
         1 => (ctx.size, ctx.height),
         _ => ins.get("in").or_else(|| ins.get("bg")).or_else(|| ins.values().next()).copied().unwrap_or((ctx.size, ctx.height)),
     };
-    let shift = |b: usize, rel: i32| -> usize {
+    let shift = |b: usize| -> usize {
         if mode != 2 && rel != 0 {
             let v = if rel > 0 { b << rel } else { (b >> (-rel)).max(1) };
             v.clamp(16.min(b), 8192)
@@ -2072,7 +2059,7 @@ fn node_size_d(n: &Node, ins: &BTreeMap<String, (usize, usize)>, ctx: &Ctx) -> (
             b
         }
     };
-    (shift(bw, rel).clamp(1, 8192), shift(bh, rel_h).clamp(1, 8192))
+    (shift(bw).clamp(1, 8192), shift(bh).clamp(1, 8192))
 }
 
 fn eval_node_out(g: &Graph, id: u32, out: Option<&str>, ctx: &Ctx, ext: &[Option<Rc<Lazy>>], cache: &mut Cache) -> Result<Rc<Tex>, Error> {
@@ -2294,7 +2281,11 @@ fn eval_res(g: &Graph, id: u32, out: Option<&str>, ctx: &Ctx, ext: &[Option<Rc<L
     let fmt = node_format(g, n);
     // Output and Dot nodes pass their input on: the same texture is shared instead of copied whenever the result would
     // be identical (same size, and no quantisation the input has not already had)
-    let through = if matches!(n.kind.as_str(), "output" | "dot") && out.is_none() {
+    // a disabled node (Shift+D in the editor) hands its first input on unchanged
+    let disabled = n.nums.get("_disabled").copied().unwrap_or(0.0) > 0.5 && !matches!(n.kind.as_str(), "input" | "output" | "dot" | "subgraph");
+    let through = if disabled && ins_l.values().next().is_some() {
+        ins_l.get("in").or_else(|| ins_l.values().next()).cloned()
+    } else if matches!(n.kind.as_str(), "output" | "dot") && out.is_none() {
         ins_l.get("in").filter(|t| (t.w, t.h) == sz).filter(|_| {
             fmt == 0 || (!n.in_out.contains_key("in") && n.ins.get("in").and_then(|r| g.nodes.get(r)).map(|m| m.kind != "subgraph" && node_format(g, m) == fmt).unwrap_or(false))
         })
@@ -2344,37 +2335,40 @@ fn eval_res(g: &Graph, id: u32, out: Option<&str>, ctx: &Ctx, ext: &[Option<Rc<L
                 for (slot, l) in &ins_l {
                     ins.insert(slot.clone(), l.tex()?);
                 }
-                // Crop applies its own filtering at the transformed source coordinates. Resizing first would
-                // interpolate the texels before its nearest-neighbour sampler can read them.
-                if !matches!(n.kind.as_str(), "x_crop" | "x_crop_grayscale") {
+                if ins.values().any(|t| t.w != sz.0 || t.h != sz.1) {
                     for t in ins.values_mut() {
                         if t.w != sz.0 || t.h != sz.1 {
                             *t = Rc::new(ops::resize_to(t, sz.0, sz.1));
                         }
                     }
                 }
-                // a secondary output of a multi-output node runs the same code with the output index set; outputs
-                // that this pass also reads (and has not got yet) may be produced by the same run
-                let idx = out.and_then(|o| outs.iter().position(|x| *x == o)).unwrap_or(0);
-                let t = if outs.len() > 1 {
-                    let mut want = cache.wants.get(&id).copied().unwrap_or(1);
-                    for (b, name) in outs.iter().enumerate() {
-                        if b == idx || want & (1 << b) == 0 {
-                            continue;
+                let t = match n.kind.as_str() {
+                    _ => {
+                        // a secondary output of a multi-output node runs the same code with the output index set; outputs
+                        // that this pass also reads (and has not got yet) may be produced by the same run
+                        let idx = out.and_then(|o| outs.iter().position(|x| *x == o)).unwrap_or(0);
+                        let r = if outs.len() > 1 {
+                            let mut want = cache.wants.get(&id).copied().unwrap_or(1);
+                            for (b, name) in outs.iter().enumerate() {
+                                if b == idx || want & (1 << b) == 0 {
+                                    continue;
+                                }
+                                let k = cache_key(g, id, Some(name));
+                                let known = cache.map.contains_key(&k) || matches!((&cache.persist, cache.hashes.get(&k)), (Some(p), Some(h)) if p.contains(*h));
+                                if known {
+                                    want &= !(1 << b);
+                                }
+                            }
+                            compute_output(id, n, idx, &ins, ctx, want)?
+                        } else {
+                            compute(id, n, &ins, ctx)?
+                        };
+                        if profiling() {
+                            eprintln!("  {:>5.0} ms  node {} {}", t0.elapsed().as_secs_f64() * 1000.0, id, n.kind);
                         }
-                        let k = cache_key(g, id, Some(name));
-                        let known = cache.map.contains_key(&k) || matches!((&cache.persist, cache.hashes.get(&k)), (Some(p), Some(h)) if p.contains(*h));
-                        if known {
-                            want &= !(1 << b);
-                        }
+                        r
                     }
-                    compute_output(id, n, idx, &ins, ctx, want)?
-                } else {
-                    compute(id, n, &ins, ctx)?
                 };
-                if profiling() {
-                    eprintln!("  {:>5.0} ms  node {} {}", t0.elapsed().as_secs_f64() * 1000.0, id, n.kind);
-                }
                 // a superseded evaluation can leave a half-finished texture behind: never keep or show it
                 if cancelled() {
                     return Err(Error::Cancelled);
@@ -2807,41 +2801,27 @@ fn thumbnail(t: &Tex) -> Vec<u8> {
 }
 
 /// Function-driven parameters: `fn.<param>="name"` runs that function and stores the result in `<param>`;
-/// `fa.<param>.<input>` numbers feed the function's inputs; `fl.<param>` selects result lanes.
+/// `fa.<param>.<input>` numbers feed the function's inputs.
 fn bind_functions(id: u32, n: &Node, ctx: &Ctx) -> Result<Node, Error> {
     use crate::func::{compile_named, FnEnv};
     let mut out = n.clone();
-    // Reuse only within this node evaluation: size, seed and graph inputs are identical,
-    // and a later edit/evaluation gets fresh programs and values without invalidation rules.
-    let mut programs = BTreeMap::new();
-    let mut results = BTreeMap::<_, crate::func::Value>::new();
     for (k, fname) in &n.strs {
         let Some(param) = k.strip_prefix("fn.") else { continue };
         if fname.is_empty() {
             continue;
         }
-        let bad_param = |e| Error::BadParam(id, format!("{k}: {e}"));
-        if !programs.contains_key(fname) {
-            programs.insert(fname, compile_named(ctx.lib, fname).map_err(bad_param)?);
-        }
-        let prog = &programs[fname];
+        let prog = compile_named(ctx.lib, fname).map_err(|e| Error::BadParam(id, format!("{k}: {e}")))?;
+        let mut env = FnEnv::new([ctx.size as f64, ctx.height as f64]);
+        env.seed = ctx.so;
+        env.graph_inputs = ctx.gin;
         let prefix = format!("fa.{param}.");
-        // Bitwise argument keys preserve signed zero and every other float bit pattern.
-        let args: Vec<_> = n.nums.iter().filter_map(|(k, v)| k.strip_prefix(&prefix).map(|input| (input, v.to_bits()))).collect();
-        let v = match results.entry((fname, args)) {
-            std::collections::btree_map::Entry::Occupied(entry) => entry.get().clone(),
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                let mut env = FnEnv::new([ctx.size as f64, ctx.height as f64]);
-                env.seed = ctx.so;
-                env.graph_inputs = ctx.gin;
-                for (input, bits) in &entry.key().1 {
-                    let pin = prog.inputs.iter().find(|i| i.0 == *input).map(|i| i.1).unwrap_or(crate::graph::Pin::Float);
-                    env.args.insert(input.to_string(), crate::func::coerce(&crate::func::Value::float(f32::from_bits(*bits) as f64), pin));
-                }
-                entry.insert(prog.run(&env, [0.5, 0.5]).map_err(bad_param)?).clone()
+        for (ak, av) in &n.nums {
+            if let Some(input) = ak.strip_prefix(&prefix) {
+                let pin = prog.inputs.iter().find(|i| i.0 == input).map(|i| i.1).unwrap_or(crate::graph::Pin::Float);
+                env.args.insert(input.to_string(), crate::func::coerce(&crate::func::Value::float(*av as f64), pin));
             }
-        };
-        let v = if let Some(mask) = n.strs.get(&format!("fl.{param}")) { crate::func::swizzle(&v, mask).map_err(bad_param)? } else { v };
+        }
+        let v = prog.run(&env, [0.5, 0.5]).map_err(|e| Error::BadParam(id, format!("{k}: {e}")))?;
         match v {
             crate::func::Value::Str(s) => {
                 out.strs.insert(param.to_string(), s.to_string());
