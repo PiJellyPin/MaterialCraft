@@ -153,18 +153,43 @@ fn qimg(t: &Tex) -> ColorImage {
     ColorImage::from_rgba_unmultiplied([t.w, t.h], &bytes)
 }
 
+/// The 2D view's picture: as made (with its alpha) and, when some pixel is not fully opaque, the same colours with the
+/// alpha ignored (the view's Alpha toggle shows one or the other; the colours under a zero alpha are lost once egui
+/// premultiplies them, so the opaque one is made from the bytes too).
+struct Pic2d {
+    img: ColorImage,
+    opaque: Option<ColorImage>,
+}
+
+fn pic2d(w: usize, h: usize, bytes: &[u8]) -> Pic2d {
+    let img = ColorImage::from_rgba_unmultiplied([w, h], bytes);
+    let opaque = if bytes.chunks_exact(4).any(|p| p[3] < 255) {
+        let solid: Vec<u8> = bytes.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2], 255]).collect();
+        Some(ColorImage::from_rgba_unmultiplied([w, h], &solid))
+    } else {
+        None
+    };
+    Pic2d { img, opaque }
+}
+
+fn pic2d_of(t: &Tex) -> Pic2d {
+    let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    let bytes: Vec<u8> = t.px.iter().flat_map(|p| [q(p[0]), q(p[1]), q(p[2]), q(p[3])]).collect();
+    pic2d(t.w, t.h, &bytes)
+}
+
 /// The 2D view's picture and value range from a node result: made on the device when the picture is there (4 bytes per
 /// pixel come back, nothing is converted on the host), otherwise from the pixels.
-fn view_of(p: &Pending) -> Result<(ColorImage, Option<(f32, f32)>), String> {
+fn view_of(p: &Pending) -> Result<(Pic2d, Option<(f32, f32)>), String> {
     let (w, h) = p.dims();
     if let Some((bytes, range)) = p.view() {
         if bytes.len() == w * h * 4 {
-            return Ok((ColorImage::from_rgba_unmultiplied([w, h], &bytes), Some(range)));
+            return Ok((pic2d(w, h, &bytes), Some(range)));
         }
     }
     let t = p.tex()?;
     let range = t.px.iter().fold((f32::MAX, f32::MIN), |m, p| (m.0.min(p[0]).min(p[1]).min(p[2]), m.1.max(p[0]).max(p[1]).max(p[2])));
-    Ok((qimg(&t), Some(range)))
+    Ok((pic2d_of(&t), Some(range)))
 }
 
 // ---------------------------------------------------------------- types
@@ -285,7 +310,7 @@ struct EvalResult {
     outputs: Vec<(String, u32)>,
     sizes: HashMap<u32, usize>,
     /// the 2D view image and the GPU textures are converted on the worker thread so the editor never stalls on them
-    img2d: Option<ColorImage>,
+    img2d: Option<Pic2d>,
     img_for: Option<u32>,
     gpu: Option<gpu3d::GpuMaps>,
     /// the normal map turned to the OpenGL convention the viewers light (made on the worker thread too)
@@ -336,7 +361,7 @@ enum Pass {
 /// The 2D view image of the selected node, sent as soon as that node is done (before the rest of the graph).
 struct Partial {
     gen: u64,
-    img2d: ColorImage,
+    img2d: Pic2d,
     img_for: u32,
 }
 
@@ -431,6 +456,10 @@ struct App {
     thumb_px: HashMap<u32, Vec<u8>>,
     node_err: HashMap<u32, String>,
     tex2d: Option<egui::TextureHandle>,
+    /// the 2D view's picture without its alpha (only when the picture has some)
+    tex2d_opaque: Option<egui::TextureHandle>,
+    /// the 2D view shows the alpha over a checkerboard (off: the colours fully opaque)
+    alpha2d: bool,
     tex2d_size: (usize, usize),
     maps: BTreeMap<String, std::sync::Arc<Tex>>,
     /// a node whose outputs the 3D view shows instead of the graph outputs (a material node such as PBR Base Material)
@@ -590,6 +619,8 @@ impl App {
             thumb_px: HashMap::new(),
             node_err: HashMap::new(),
             tex2d: None,
+            tex2d_opaque: None,
+            alpha2d: true,
             tex2d_size: (0, 0),
             maps: BTreeMap::new(),
             view3d_node: None,
@@ -1835,7 +1866,7 @@ impl App {
             }
             tex::set_job(gen);
             // the 2D view's picture and range, from the device when the node is there
-            let mut view_pic: Option<(ColorImage, Option<(f32, f32)>)> = None;
+            let mut view_pic: Option<(Pic2d, Option<(f32, f32)>)> = None;
             if let Some(a) = active {
                 if let Some(p) = r.pending.get(&a).cloned() {
                     if !outputs.iter().any(|o| o.1 == a) {
@@ -1860,6 +1891,7 @@ impl App {
                     let base = ["basecolor", "out", "diffuse"].into_iter().find(|n| pend(n).is_some());
                     let (rough, gloss) = (dev("roughness"), dev("glossiness"));
                     let (base_t, normal_t, metal_t, ao_t, emis_t, height_t) = (base.and_then(dev), dev("normal"), dev("metallic"), dev("ambient_occlusion"), dev("emissive"), dev("height"));
+                    let opacity_t = dev("opacity");
                     dev_maps = gpu3d::prepare_dev(&DevInputs {
                         base: base_t.as_ref(),
                         normal: normal_t.as_ref(),
@@ -1870,6 +1902,7 @@ impl App {
                         ao: ao_t.as_ref(),
                         emissive: emis_t.as_ref(),
                         height: height_t.as_ref(),
+                        opacity: opacity_t.as_ref(),
                     });
                 }
                 if dev_maps.is_some() {
@@ -1908,6 +1941,7 @@ impl App {
                     ao: named("ambient_occlusion"),
                     emissive: named("emissive"),
                     height: named("height"),
+                    opacity: named("opacity"),
                 }))
             } else {
                 None
@@ -1916,7 +1950,7 @@ impl App {
             let (img2d, range2d) = match view_pic {
                 Some((img, range)) => (Some(img), range),
                 None => (
-                    active.and_then(|a| r.kept.get(&a)).map(|a| qimg(a)),
+                    active.and_then(|a| r.kept.get(&a)).map(|a| pic2d_of(a)),
                     active.and_then(|a| r.kept.get(&a)).map(|t| t.px.iter().fold((f32::MAX, f32::MIN), |m, p| (m.0.min(p[0]).min(p[1]).min(p[2]), m.1.max(p[0]).max(p[1]).max(p[2])))),
                 ),
             };
@@ -1948,6 +1982,13 @@ impl App {
         });
     }
 
+    /// Show `pic` in the 2D view (and its opaque twin, when it has one).
+    fn set_view2d(&mut self, ctx: &egui::Context, pic: Pic2d, opts: egui::TextureOptions) {
+        self.tex2d_size = (pic.img.size[0], pic.img.size[1]);
+        self.tex2d = Some(ctx.load_texture("view2d", pic.img, opts));
+        self.tex2d_opaque = pic.opaque.map(|o| ctx.load_texture("view2d_opaque", o, opts));
+    }
+
     /// Resolution of the editor preview: the chosen size, or the graph's own size (at most 4096).
     fn preview_full(&self) -> usize {
         if self.prev_size == 0 {
@@ -1967,15 +2008,14 @@ impl App {
             if let Some(p) = latest {
                 if p.gen == self.gen && self.view_node() == Some(p.img_for) {
                     // a picture smaller than the final one is shown smooth, not as blocks, until the full size arrives
-                    let crisp = p.img2d.size[0] >= self.preview_full();
+                    let crisp = p.img2d.img.size[0] >= self.preview_full();
                     let opts = egui::TextureOptions {
                         magnification: if crisp { egui::TextureFilter::Nearest } else { egui::TextureFilter::Linear },
                         minification: egui::TextureFilter::Linear,
                         wrap_mode: egui::TextureWrapMode::Repeat,
                         mipmap_mode: Some(egui::TextureFilter::Linear),
                     };
-                    self.tex2d_size = (p.img2d.size[0], p.img2d.size[1]);
-                    self.tex2d = Some(ctx.load_texture("view2d", p.img2d, opts));
+                    self.set_view2d(ctx, p.img2d, opts);
                     ctx.request_repaint();
                 }
             }
@@ -2066,11 +2106,9 @@ impl App {
                 }) };
                 if let Some(a) = self.view_node() {
                     if let (Some(img), true) = (r.img2d.take(), r.img_for == Some(a)) {
-                        self.tex2d_size = (img.size[0], img.size[1]);
-                        self.tex2d = Some(ctx.load_texture("view2d", img, opts));
+                        self.set_view2d(ctx, img, opts);
                     } else if let Some(t) = r.kept.get(&a) {
-                        self.tex2d_size = (t.w, t.h);
-                        self.tex2d = Some(ctx.load_texture("view2d", qimg(t), opts));
+                        self.set_view2d(ctx, pic2d_of(t), opts);
                     } else {
                         self.tex2d = None;
                     }
@@ -2170,6 +2208,7 @@ impl App {
             ao: get("ambient_occlusion"),
             emissive: get("emissive"),
             height: get("height"),
+            opacity: get("opacity"),
         };
         let prepared = gpu3d::prepare(&m);
         if let Ok(mut g) = self.gpu.lock() {
