@@ -2175,7 +2175,8 @@ impl eframe::App for App {
                 let del = i.consume_key(Modifiers::NONE, Key::Delete);
                 let frame = i.consume_key(Modifiers::NONE, Key::F);
                 let com = i.consume_key(Modifiers::NONE, Key::C);
-                (redo, undo, copy, cut, paste, dup, all, save, open, del, frame, com, newg, pasted, dup_nl, paste_nl, disable, relink, clear_th)
+                let swap = i.consume_key(Modifiers::NONE, Key::X);
+                (redo, undo, copy, cut, paste, dup, all, save, open, del, frame, com, newg, pasted, dup_nl, paste_nl, disable, relink, clear_th, swap)
             });
             let w = pointer.map(|p| self.screen_to_world(p));
             if let Some(text) = &k.13 {
@@ -2205,6 +2206,7 @@ impl eframe::App for App {
                 (k.16, Act::ToggleDisable),
                 (k.17, Act::DeleteRelink),
                 (k.18, Act::ClearThumbs),
+                (k.19, Act::SwapLinks),
             ] {
                 if on {
                     self.acts.push(a);
