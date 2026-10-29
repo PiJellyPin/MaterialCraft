@@ -43,7 +43,8 @@ pub fn compute(kind: &str, _id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, 
                 }
                 (a, b)
             };
-            let mut t = noise_styles::render(&st, s, hs, scale, seed, &warp2);
+            let creased = matches!(f("preset", 0.0) as i32, 80 | 81);
+            let mut t = if creased { noise_styles::creased(s, hs, scale, seed, wp, &warp2) } else { noise_styles::render(&st, s, hs, scale, seed, &warp2) };
             // brush pattern: a second look with another seed is mixed in
             let brush = f("brush", 0.0).clamp(0.0, 1.0);
             if brush > 1e-3 {

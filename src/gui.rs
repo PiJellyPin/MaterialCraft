@@ -202,6 +202,20 @@ enum Act {
     Cut,
     Paste(Option<Pos2>),
     Duplicate,
+    /// Duplicate the selection without the links to nodes outside it, and paste without links
+    DuplicateNoLink,
+    PasteNoLink(Option<Pos2>),
+    /// Delete the selection and connect what fed it to what it fed
+    DeleteRelink,
+    SelectUpstream,
+    SelectDownstream,
+    ToggleDisable,
+    ComputeThumbs,
+    /// Add a node from the common-nodes toolbar (by label), after the active node when there is one
+    QuickAdd(&'static str),
+    ClearThumbs,
+    AddDot(Option<Pos2>),
+    AddFrame(Option<Pos2>),
     Delete,
     SelectAll,
     Comment,
@@ -330,6 +344,8 @@ struct ExportUi {
     open: bool,
     dir: Option<PathBuf>,
     prefix: String,
+    /// file name pattern: `$(graph)`, `$(identifier)`, `$(usage)` and `$(size)` are filled in
+    pattern: String,
     sizes: [bool; 6],
     depth16: bool,
     depth32: bool,
@@ -435,6 +451,12 @@ struct App {
     view_only_next: bool,
     /// the running (or last) pass only serves the 2D view: no maps, no thumbnails
     job_view_only: bool,
+    /// the pass the running job is, and when it started
+    job_pass: Pass,
+    job_started: std::time::Instant,
+    /// a value changed while a short interactive pass was still running: start the next one when it is done instead
+    /// of cancelling it (cancelling every frame would never show anything during a steady drag)
+    dirty_wait: bool,
     dirty3d: bool,
     gen: u64,
     job: Option<Receiver<EvalResult>>,
@@ -575,6 +597,9 @@ impl App {
             view_pending: false,
             view_only_next: false,
             job_view_only: false,
+            job_pass: Pass::Thumbs,
+            job_started: std::time::Instant::now(),
+            dirty_wait: false,
             dirty3d: true,
             gen: 0,
             job: None,
@@ -583,7 +608,7 @@ impl App {
             lib_search: String::new(),
             text_focus: false,
             mtlx_ui: MtlxUi { open: false, dir: None, opt: materialcraft::mtlx::Options::default(), size: 0, name: String::new() },
-            export: ExportUi { open: false, dir: None, prefix: String::new(), sizes: [false, true, false, false, false, false], depth16: false, depth32: false, fmt: Format::Png, quality: 92, skip: BTreeSet::new(), space: 0, target: None },
+            export: ExportUi { open: false, dir: None, prefix: String::new(), pattern: "$(graph)_$(identifier)".into(), sizes: [false, true, false, false, false, false], depth16: false, depth32: false, fmt: Format::Png, quality: 92, skip: BTreeSet::new(), space: 0, target: None },
             bake: BakeUi::new(),
             res_dirs: Vec::new(),
             show_about: false,
@@ -1055,6 +1080,103 @@ impl App {
         self.dirty = true;
     }
 
+    /// Delete the selection; each link that read a deleted node is rewired to what that node read first.
+    fn delete_relink(&mut self) {
+        if self.sel.is_empty() {
+            return self.delete_selected();
+        }
+        let before = self.g.clone();
+        let sel = self.sel.clone();
+        // what each deleted node passes through: its first input (outside the selection, following chains)
+        let mut pass: HashMap<u32, Option<(u32, Option<String>)>> = HashMap::new();
+        for id in &sel {
+            let mut cur = *id;
+            let mut seen = BTreeSet::new();
+            let mut res = None;
+            while seen.insert(cur) {
+                let Some(n) = self.g.nodes.get(&cur) else { break };
+                let first = n.ins.iter().next().map(|(slot, s)| (*s, n.in_out.get(slot).cloned()));
+                match first {
+                    Some((src, _)) if sel.contains(&src) => cur = src,
+                    Some((src, o)) => {
+                        res = Some((src, o));
+                        break;
+                    }
+                    None => break,
+                }
+            }
+            pass.insert(*id, res);
+        }
+        for (nid, n) in self.g.nodes.iter_mut() {
+            if sel.contains(nid) {
+                continue;
+            }
+            let slots: Vec<String> = n.ins.iter().filter(|(_, s)| sel.contains(s)).map(|(k, _)| k.clone()).collect();
+            for slot in slots {
+                let from = n.ins[&slot];
+                match pass.get(&from).cloned().flatten() {
+                    Some((src, o)) => {
+                        n.ins.insert(slot.clone(), src);
+                        match o {
+                            Some(o) => {
+                                n.in_out.insert(slot, o);
+                            }
+                            None => {
+                                n.in_out.remove(&slot);
+                            }
+                        }
+                    }
+                    None => {
+                        n.ins.remove(&slot);
+                        n.in_out.remove(&slot);
+                    }
+                }
+            }
+        }
+        // the nodes are gone and nothing reads them any more
+        self.delete_selected();
+        if let Some(last) = self.undo.last_mut() {
+            *last = before;
+        }
+    }
+
+    /// Select everything the selection reads (upstream) or feeds (downstream).
+    fn select_reach(&mut self, up: bool) {
+        let mut set = self.sel.clone();
+        let mut todo: Vec<u32> = set.iter().copied().collect();
+        while let Some(id) = todo.pop() {
+            let next: Vec<u32> = if up {
+                self.g.nodes.get(&id).map(|n| n.ins.values().copied().collect()).unwrap_or_default()
+            } else {
+                self.g.nodes.iter().filter(|(_, n)| n.ins.values().any(|s| *s == id)).map(|(i, _)| *i).collect()
+            };
+            for i in next {
+                if self.g.nodes.contains_key(&i) && set.insert(i) {
+                    todo.push(i);
+                }
+            }
+        }
+        self.sel = set;
+    }
+
+    fn toggle_disable(&mut self) {
+        if self.sel.is_empty() {
+            return;
+        }
+        self.snap();
+        let all_off = self.sel.iter().all(|i| self.g.nodes.get(i).map(|n| n.nums.get("_disabled").copied().unwrap_or(0.0) > 0.5).unwrap_or(true));
+        for i in self.sel.clone() {
+            if let Some(n) = self.g.nodes.get_mut(&i) {
+                if all_off {
+                    n.nums.remove("_disabled");
+                } else {
+                    n.nums.insert("_disabled".into(), 1.0);
+                }
+            }
+        }
+        self.dirty = true;
+    }
+
     fn copy(&mut self) {
         self.clip = self.sel.iter().filter_map(|i| self.g.nodes.get(i).map(|n| (*i, n.clone()))).collect();
         if self.clip.is_empty() {
@@ -1072,6 +1194,11 @@ impl App {
     }
 
     fn paste(&mut self, at: Option<Pos2>) {
+        self.paste_ex(at, true);
+    }
+
+    /// Paste the clipboard; `link` keeps the links from copied nodes to nodes that were not copied.
+    fn paste_ex(&mut self, at: Option<Pos2>, link: bool) {
         if self.clip.is_empty() {
             return;
         }
@@ -1090,9 +1217,17 @@ impl App {
             // a node of an .sbs package gets its own uid and its own copies of the functions its values use
             let mut nn = materialcraft::sbs_native::copy_node(&n, &owner, map[&id], &mut self.g.subgraphs);
             nn.pos = [target.x + n.pos[0] - origin[0], target.y + n.pos[1] - origin[1]];
-            nn.ins.retain(|_, s| map.contains_key(s));
+            let outside: Vec<String> = nn.ins.iter().filter(|(_, s)| !map.contains_key(s)).map(|(k, _)| k.clone()).collect();
+            for k in outside {
+                if !link || !self.g.nodes.contains_key(&nn.ins[&k]) {
+                    nn.ins.remove(&k);
+                    nn.in_out.remove(&k);
+                }
+            }
             for v in nn.ins.values_mut() {
-                *v = map[v];
+                if let Some(m) = map.get(v) {
+                    *v = *m;
+                }
             }
             self.g.nodes.insert(map[&id], nn);
             new_sel.insert(map[&id]);
@@ -1342,8 +1477,8 @@ impl App {
     }
 
     /// Title and outputs of the graph the Export window is for (read in place, without copying the package).
-    fn export_outputs(&self) -> (String, Vec<(String, String)>) {
-        let list = |g: &Graph| g.output_nodes().into_iter().map(|(u, i, _)| (usage_label(&u), i)).collect::<Vec<_>>();
+    fn export_outputs(&self) -> (String, Vec<(String, String, u32)>) {
+        let list = |g: &Graph| g.output_nodes().into_iter().map(|(u, i, n)| (usage_label(&u), i, n)).collect::<Vec<_>>();
         let main_name = |g: &Graph| g.meta.get("identifier").cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| "Graph".into());
         let active_root = self.parents.first().map(|p| &p.0).unwrap_or(&self.g);
         let current = self.parents.last().map(|(_, n)| n.clone());
@@ -1396,6 +1531,18 @@ impl App {
         }
     }
 
+    /// The file name (without extension) the export pattern gives one output.
+    fn export_file_name(&self, graph: &str, ident: &str, usage: &str, size: usize) -> String {
+        let pat = self.export.pattern.trim();
+        let name = if pat.is_empty() {
+            format!("{}{}", self.export.prefix, ident)
+        } else {
+            pat.replace("$(graph)", graph).replace("$(identifier)", ident).replace("$(usage)", usage).replace("$(size)", &size.to_string())
+        };
+        // whatever a file name cannot hold becomes an underscore
+        name.chars().map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c }).collect()
+    }
+
     fn run_export(&mut self) {
         let Some(dir) = self.export.dir.clone() else {
             return self.status("Choose an export folder first.", false);
@@ -1408,7 +1555,10 @@ impl App {
         if sizes.is_empty() {
             return self.status("Select at least one resolution.", false);
         }
-        let idents: Vec<String> = g.output_nodes().into_iter().map(|(_, i, _)| i).collect();
+        let outs = g.output_nodes();
+        let idents: Vec<String> = outs.iter().map(|(_, i, _)| i.clone()).collect();
+        let usages: HashMap<String, String> = outs.iter().map(|(u, i, _)| (i.clone(), usage_label(u))).collect();
+        let gname = g.meta.get("identifier").cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| "Graph".into());
         if idents.iter().all(|i| self.export.skip.contains(i)) {
             return self.status("Select at least one output to export.", false);
         }
@@ -1426,7 +1576,7 @@ impl App {
                         if self.export.skip.contains(name) {
                             continue;
                         }
-                        let p = d.join(format!("{}{}.{}", self.export.prefix, name, fmt.ext()));
+                        let p = d.join(format!("{}.{}", self.export_file_name(&gname, name, usages.get(name).map(String::as_str).unwrap_or(name), s), fmt.ext()));
                         let converted;
                         let t = if materialcraft::colorspace::is_color_output(name) && self.export.space != 0 {
                             match materialcraft::colorspace::convert(t, materialcraft::colorspace::SPACES[self.export.space].0) {
@@ -1481,13 +1631,15 @@ impl App {
     /// how long the last ones took per pixel), between 128 and 512 pixels. A light graph is then shown sharp while
     /// it is dragged, a heavy one stays responsive at a coarser size, and the settled passes bring it to full size.
     fn interactive_size(&self) -> usize {
-        const BUDGET_MS: f32 = 80.0;
+        // the biggest size the last edits suggest fits in a frame budget: on a GPU that is usually the full size, so
+        // the 2D view does not drop to a coarse picture and climb back up with every change
+        const BUDGET_MS: f32 = 50.0;
         let full = self.preview_full();
-        let cap = full.min(512);
+        let cap = full.min(1024);
         if self.drag_ms_px <= 0.0 {
             return self.first_tier();
         }
-        let mut s = 128usize.min(cap);
+        let mut s = 256usize.min(cap);
         while s * 2 <= cap && self.drag_ms_px * ((s * 2) * (s * 2)) as f32 <= BUDGET_MS {
             s *= 2;
         }
@@ -1535,6 +1687,8 @@ impl App {
         // a pass for the 2D view alone (another node was selected): the outputs, 3D maps and thumbnails stay as they are
         let view_only = std::mem::take(&mut self.view_only_next);
         self.job_view_only = view_only;
+        self.job_pass = pass;
+        self.job_started = std::time::Instant::now();
         let maps = maps && !view_only;
         let mut keep: Vec<u32> = if view_only { Vec::new() } else { g.output_nodes().iter().map(|o| o.2).collect() };
         let active = self.view_node();
@@ -1709,8 +1863,10 @@ impl App {
             }
             if let Some(p) = latest {
                 if p.gen == self.gen && self.view_node() == Some(p.img_for) {
+                    // a picture smaller than the final one is shown smooth, not as blocks, until the full size arrives
+                    let crisp = p.img2d.size[0] >= self.preview_full();
                     let opts = egui::TextureOptions {
-                        magnification: egui::TextureFilter::Nearest,
+                        magnification: if crisp { egui::TextureFilter::Nearest } else { egui::TextureFilter::Linear },
                         minification: egui::TextureFilter::Linear,
                         wrap_mode: egui::TextureWrapMode::Repeat,
                         mipmap_mode: Some(egui::TextureFilter::Linear),
@@ -1745,9 +1901,11 @@ impl App {
                     self.refine_size = Some((r.size * 2).min(full));
                     self.refine = true;
                 }
-                // zoomed in, every texel is a crisp square; zoomed out, a mip chain keeps it smooth
+                // zoomed in, every texel is a crisp square; zoomed out, a mip chain keeps it smooth. A picture that is
+                // still being refined is shown smooth so the steps up to the full size do not jump between block sizes
+                let crisp = r.size >= full;
                 let opts = egui::TextureOptions {
-                    magnification: egui::TextureFilter::Nearest,
+                    magnification: if crisp { egui::TextureFilter::Nearest } else { egui::TextureFilter::Linear },
                     minification: egui::TextureFilter::Linear,
                     wrap_mode: egui::TextureWrapMode::Repeat,
                     mipmap_mode: Some(egui::TextureFilter::Linear),
@@ -2015,6 +2173,7 @@ fn apply_theme(ctx: &egui::Context) {
     ctx.set_style_of(egui::Theme::Light, style);
 }
 
+include!("gui_color.rs");
 include!("gui_params.rs");
 include!("gui_control.rs");
 include!("gui_import.rs");

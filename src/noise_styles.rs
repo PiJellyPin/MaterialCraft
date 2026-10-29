@@ -447,3 +447,44 @@ mod tests {
         assert_eq!((t.w, t.h), (128, 64));
     }
 }
+
+/// Creased: long soft creases that bend and lean like folded cloth. Stretched ridged gradient noise, bent by a
+/// slow domain warp (`warp_amount`, the node's Warp Intensity: 0.25 is the library default look).
+pub fn creased(w: usize, h: usize, scale: f32, seed: u32, warp_amount: f32, warp: &(dyn Fn(f32, f32) -> (f32, f32) + Sync)) -> Tex {
+    let sc = scale.max(1.0) as i32;
+    let amt = 0.6 * warp_amount.clamp(0.0, 4.0);
+    // the creases lean a little: a shear of one period per tile height keeps the picture tileable
+    let lean = 1.0 / (3 * sc) as f32;
+    let mut px = vec![0.0f32; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let (mut u, mut v) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
+            let (du, dv) = warp(u, v);
+            u += du;
+            v += dv;
+            // long slow bends, with some medium ones so no lattice shows through
+            let bu = gradient(u, v, 1 * sc, 1 * sc, seed.wrapping_add(11));
+            let bv = gradient(u, v, 1 * sc, 2 * sc, seed.wrapping_add(12));
+            let bu2 = gradient(u, v, 2 * sc, 2 * sc, seed.wrapping_add(13));
+            let bu3 = gradient(u, v, 4 * sc, 3 * sc, seed.wrapping_add(14));
+            let (pu, pv) = (u + lean * v + amt * (2.2 * bu + 0.9 * bu2 + 0.2 * bu3), v + amt * 1.2 * bv);
+            // creases: soft ridged noise stretched along the lean, over a smooth stretched base whose lows are the
+            // dark pockets between creases
+            let ridge = |n: f32, k: f32| {
+                let r = 1.0 - (n * k).abs().min(1.0);
+                r * r * (3.0 - 2.0 * r)
+            };
+            let base = gradient(pu, pv, 3 * sc, 1 * sc, seed.wrapping_add(23));
+            let a = ridge(gradient(pu, pv, 3 * sc, 1 * sc, seed.wrapping_add(21)), 1.1);
+            let b = ridge(gradient(pu, pv, 6 * sc, 2 * sc, seed.wrapping_add(22)), 1.2);
+            let soft = gradient(u, v, 2 * sc, 2 * sc, seed.wrapping_add(24));
+            px[y * w + x] = 0.47 + 0.2 * base + 0.3 * a * a + 0.12 * b * b + 0.06 * soft;
+        }
+    }
+    // the range of the library node: mid grey (mean about 0.48) with a moderate spread (about 0.11), soft darks and
+    // bright creases
+    let n = px.len().max(1) as f32;
+    let mean = px.iter().sum::<f32>() / n;
+    let sd = (px.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / n).sqrt().max(1e-4);
+    Tex { w, h, px: px.iter().map(|v| { let g = (0.48 + (v - mean) / sd * 0.115).clamp(0.0, 1.0); [g, g, g, 1.0] }).collect() }
+}

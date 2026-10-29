@@ -100,7 +100,7 @@ impl App {
                 self.zoom = nz;
             }
         }
-        let pan_mode = mods.alt || ui.input(|i| i.key_down(Key::Space));
+        let pan_mode = mods.alt;
         if resp.dragged_by(PointerButton::Middle) || (resp.dragged_by(PointerButton::Primary) && pan_mode && (self.connecting.is_none() && self.connecting_in.is_none())) {
             self.pan += resp.drag_delta();
         }
@@ -420,12 +420,33 @@ impl App {
                     acts.push(Act::Copy);
                     ui.close();
                 }
-                if ui.button("Duplicate").clicked() {
+                if ui.button("Duplicate Selection    Ctrl+D").clicked() {
                     acts.push(Act::Duplicate);
                     ui.close();
                 }
-                if ui.button("Delete").clicked() {
+                if ui.button("Duplicate Selection without Link    Ctrl+Shift+D").clicked() {
+                    acts.push(Act::DuplicateNoLink);
+                    ui.close();
+                }
+                if ui.button("Delete Selection    Del").clicked() {
                     acts.push(Act::Delete);
+                    ui.close();
+                }
+                if ui.button("Delete and Relink    Backspace").clicked() {
+                    acts.push(Act::DeleteRelink);
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Select upstream nodes").clicked() {
+                    acts.push(Act::SelectUpstream);
+                    ui.close();
+                }
+                if ui.button("Select downstream nodes").clicked() {
+                    acts.push(Act::SelectDownstream);
+                    ui.close();
+                }
+                if ui.button("Disable selection    Shift+D").clicked() {
+                    acts.push(Act::ToggleDisable);
                     ui.close();
                 }
                 ui.separator();
@@ -641,25 +662,114 @@ impl App {
 
         // background context menu
         let click_pos = pointer;
+        let cats: BTreeMap<&'static str, Vec<String>> = {
+            let mut m: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
+            for e in self.entries() {
+                if !matches!(e.kind.as_str(), "comment" | "frame") && !e.label.eq_ignore_ascii_case("dot") {
+                    m.entry(e.cat).or_default().push(e.label);
+                }
+            }
+            m
+        };
+        let has_sel = !self.sel.is_empty();
+        let has_clip = !self.clip.is_empty();
         resp.context_menu(|ui| {
-            if ui.button("Add node...   Tab").clicked() {
-                acts.push(Act::Search(click_pos));
-                ui.close();
-            }
-            if ui.add_enabled(!self.clip.is_empty(), egui::Button::new("Paste")).clicked() {
-                acts.push(Act::Paste(click_pos.map(|p| self.screen_to_world(p))));
-                ui.close();
-            }
-            if ui.button("Add comment frame   C").clicked() {
+            ui.set_min_width(250.0);
+            ui.menu_button("Add Node", |ui| {
+                if ui.button("Search...   Tab / Space").clicked() {
+                    acts.push(Act::Search(click_pos));
+                    ui.close();
+                }
+                ui.separator();
+                for (cat, labels) in &cats {
+                    ui.menu_button(*cat, |ui| {
+                        egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                            for l in labels {
+                                if ui.button(l).clicked() {
+                                    if let Some(p) = click_pos {
+                                        acts.push(Act::Drop(l.clone(), p));
+                                    }
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
+                }
+            });
+            if ui.button("Add Comment    C").clicked() {
                 acts.push(Act::Comment);
                 ui.close();
             }
+            if ui.button("Add Frame").clicked() {
+                acts.push(Act::AddFrame(click_pos));
+                ui.close();
+            }
+            if ui.button("Add Dot Node").clicked() {
+                acts.push(Act::AddDot(click_pos));
+                ui.close();
+            }
             ui.separator();
-            if ui.button("Select all").clicked() {
+            if ui.button("Compute Nodes Thumbnails").clicked() {
+                acts.push(Act::ComputeThumbs);
+                ui.close();
+            }
+            if ui.button("Clear Nodes Thumbnails    F5").clicked() {
+                acts.push(Act::ClearThumbs);
+                ui.close();
+            }
+            if ui.button("Save Package    Ctrl+S").clicked() {
+                acts.push(Act::Save);
+                ui.close();
+            }
+            ui.separator();
+            if ui.add_enabled(has_clip, egui::Button::new("Paste    Ctrl+V")).clicked() {
+                acts.push(Act::Paste(click_pos.map(|p| self.screen_to_world(p))));
+                ui.close();
+            }
+            if ui.add_enabled(has_clip, egui::Button::new("Paste without Link    Ctrl+Shift+V")).clicked() {
+                acts.push(Act::PasteNoLink(click_pos.map(|p| self.screen_to_world(p))));
+                ui.close();
+            }
+            if ui.button("Select All    Ctrl+A").clicked() {
                 acts.push(Act::SelectAll);
                 ui.close();
             }
-            if ui.button("Frame all   F").clicked() {
+            ui.separator();
+            if ui.add_enabled(has_sel, egui::Button::new("Copy Selection    Ctrl+C")).clicked() {
+                acts.push(Act::Copy);
+                ui.close();
+            }
+            if ui.add_enabled(has_sel, egui::Button::new("Delete Selection    Del")).clicked() {
+                acts.push(Act::Delete);
+                ui.close();
+            }
+            if ui.add_enabled(has_sel, egui::Button::new("Delete and Relink    Backspace")).clicked() {
+                acts.push(Act::DeleteRelink);
+                ui.close();
+            }
+            if ui.add_enabled(has_sel, egui::Button::new("Duplicate Selection    Ctrl+D")).clicked() {
+                acts.push(Act::Duplicate);
+                ui.close();
+            }
+            if ui.add_enabled(has_sel, egui::Button::new("Duplicate Selection without Link    Ctrl+Shift+D")).clicked() {
+                acts.push(Act::DuplicateNoLink);
+                ui.close();
+            }
+            ui.separator();
+            if ui.add_enabled(has_sel, egui::Button::new("Select upstream nodes")).clicked() {
+                acts.push(Act::SelectUpstream);
+                ui.close();
+            }
+            if ui.add_enabled(has_sel, egui::Button::new("Select downstream nodes")).clicked() {
+                acts.push(Act::SelectDownstream);
+                ui.close();
+            }
+            if ui.add_enabled(has_sel, egui::Button::new("Disable selection    Shift+D")).clicked() {
+                acts.push(Act::ToggleDisable);
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("Frame All    F").clicked() {
                 acts.push(Act::FrameAll);
                 ui.close();
             }
@@ -728,6 +838,51 @@ impl App {
                 self.fit_view();
             }
             Act::FrameAll => self.fit_view(),
+            Act::QuickAdd(label) => {
+                if let Some(e) = self.entries().into_iter().find(|e| e.label.eq_ignore_ascii_case(label)) {
+                    let from = self.active.filter(|a| self.g.nodes.contains_key(a));
+                    let at = match from.and_then(|a| self.g.nodes.get(&a)) {
+                        Some(n) => pos2(n.pos[0] + CARD + 40.0, n.pos[1]),
+                        None => {
+                            let c = self.view_center_world();
+                            pos2(c.x - CARD * 0.5, c.y - CARD_H * 0.5)
+                        }
+                    };
+                    self.spawn(&e, at, from);
+                }
+            }
+            Act::PasteNoLink(p) => self.paste_ex(p, false),
+            Act::DuplicateNoLink => {
+                self.copy();
+                self.paste_ex(None, false);
+            }
+            Act::DeleteRelink => self.delete_relink(),
+            Act::SelectUpstream => self.select_reach(true),
+            Act::SelectDownstream => self.select_reach(false),
+            Act::ToggleDisable => self.toggle_disable(),
+            Act::ComputeThumbs => {
+                self.thumbs.clear();
+                self.thumb_px.clear();
+                self.dirty = true;
+            }
+            Act::ClearThumbs => {
+                self.thumbs.clear();
+                self.thumb_px.clear();
+            }
+            Act::AddDot(p) => {
+                let p = p.unwrap_or_else(|| self.canvas_rect.center());
+                let world = self.screen_to_world(p);
+                if let Some(e) = self.entries().into_iter().find(|e| e.label.eq_ignore_ascii_case("dot")) {
+                    self.spawn(&e, pos2(world.x - CARD * 0.5, world.y - CARD_H * 0.5), None);
+                }
+            }
+            Act::AddFrame(p) => match p {
+                Some(p) => {
+                    let w = self.screen_to_world(p);
+                    self.add_comment_at(Some(w));
+                }
+                None => self.add_comment(),
+            },
             Act::Search(p) => {
                 let p = p.unwrap_or_else(|| self.canvas_rect.center());
                 self.open_search(p, None);
@@ -954,94 +1109,172 @@ impl App {
         if self.export.open {
             let mut open = true;
             let (gtitle, outputs) = self.export_outputs();
-            egui::Window::new("Export textures").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+            // thumbnails are those of the graph on screen; another graph's outputs show without them
+            let on_screen = self.export.target.as_ref().map(|(i, n)| *i == self.pkg_active && n.as_deref() == self.parents.last().map(|(_, n)| n.as_str())).unwrap_or(true);
+            let fmt = self.export.fmt;
+            let mut do_export = false;
+            let mut close = false;
+            egui::Window::new(egui::RichText::new("Export Outputs").strong()).open(&mut open).collapsible(false).resizable(false).default_width(540.0).show(ctx, |ui| {
+                ui.set_width(540.0);
+                ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
                 ui.horizontal(|ui| {
-                    ui.label("Graph:");
-                    ui.strong(&gtitle);
+                    ui.label(egui::RichText::new("GRAPH").small().color(Color32::from_gray(140)));
+                    ui.label(egui::RichText::new(&gtitle).size(15.0).strong());
                 });
-                ui.horizontal(|ui| {
-                    if ui.button("Choose folder...").clicked() {
-                        if let Some(d) = rfd::FileDialog::new().pick_folder() {
-                            self.export.dir = Some(d);
-                        }
-                    }
-                    ui.label(self.export.dir.as_ref().map(|d| d.display().to_string()).unwrap_or_else(|| "(none)".into()));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("File prefix");
-                    ui.text_edit_singleline(&mut self.export.prefix);
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Format");
-                    egui::ComboBox::from_id_salt("exp_fmt").selected_text(self.export.fmt.name()).show_ui(ui, |ui| {
-                        for f in [Format::Png, Format::Jpeg, Format::Tiff, Format::Exr, Format::Hdr] {
-                            ui.selectable_value(&mut self.export.fmt, f, f.name());
-                        }
-                    });
-                    if self.export.fmt == Format::Jpeg {
-                        ui.add(egui::Slider::new(&mut self.export.quality, 1..=100).text("quality"));
-                    } else if self.export.fmt == Format::Hdr {
-                        ui.label("32-bit RGBE");
-                    } else if self.export.fmt == Format::Exr {
-                        ui.checkbox(&mut self.export.depth32, "32-bit float (otherwise 16-bit half)");
-                    } else {
-                        ui.checkbox(&mut self.export.depth16, "16-bit");
-                        if self.export.fmt.has_float32() {
-                            ui.checkbox(&mut self.export.depth32, "32-bit float");
-                        }
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Colour space");
-                    egui::ComboBox::from_id_salt("exp_space").selected_text(materialcraft::colorspace::SPACES[self.export.space].1).show_ui(ui, |ui| {
-                        for (i, s) in materialcraft::colorspace::SPACES.iter().enumerate() {
-                            ui.selectable_value(&mut self.export.space, i, s.1);
-                        }
-                    });
-                });
-                ui.small("Applies to colour maps only (base colour, emissive, diffuse, specular, 'output'). Data maps are never converted.");
-                ui.label("Resolutions (one sub-folder each when several are selected):");
-                ui.horizontal(|ui| {
-                    for (i, s) in [256, 512, 1024, 2048, 4096, 8192].iter().enumerate() {
-                        ui.checkbox(&mut self.export.sizes[i], s.to_string());
-                    }
-                });
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.strong("Outputs to export");
-                    if ui.small_button("All").clicked() {
-                        self.export.skip.clear();
-                    }
+                ui.add_space(2.0);
+                // ---- outputs
+                export_section(ui, "OUTPUTS", |ui| {
                     if ui.small_button("None").clicked() {
                         self.export.skip = outputs.iter().map(|o| o.1.clone()).collect();
+                    }
+                    if ui.small_button("All").clicked() {
+                        self.export.skip.clear();
                     }
                 });
                 if outputs.is_empty() {
                     ui.colored_label(Color32::from_rgb(255, 150, 120), "This graph has no Output nodes yet.");
                 }
-                egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-                    for (usage, ident) in &outputs {
-                        let mut on = !self.export.skip.contains(ident);
-                        ui.horizontal(|ui| {
-                            if ui.checkbox(&mut on, ident.as_str()).changed() {
+                egui::Frame::NONE.fill(Color32::from_gray(38)).inner_margin(egui::Margin::same(4)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    egui::ScrollArea::vertical().max_height(176.0).auto_shrink([false, true]).show(ui, |ui| {
+                        for (usage, ident, nid) in &outputs {
+                            let mut on = !self.export.skip.contains(ident);
+                            let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
+                            ui.painter().rect_filled(row, 2.0, if on { Color32::from_gray(48) } else { Color32::from_gray(42) });
+                            let mut cui = ui.new_child(egui::UiBuilder::new().max_rect(row.shrink2(vec2(6.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                            if cui.checkbox(&mut on, "").changed() {
                                 if on {
                                     self.export.skip.remove(ident);
                                 } else {
                                     self.export.skip.insert(ident.clone());
                                 }
                             }
-                            if usage != ident {
-                                ui.small(format!("({usage})"));
+                            let (tr, _) = cui.allocate_exact_size(vec2(32.0, 32.0), Sense::hover());
+                            match self.thumbs.get(nid).filter(|_| on_screen) {
+                                Some(t) => {
+                                    cui.painter().image(t.id(), tr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                                }
+                                None => {
+                                    cui.painter().rect_filled(tr, 2.0, Color32::from_gray(60));
+                                }
+                            }
+                            cui.painter().rect_stroke(tr, 2.0, Stroke::new(1.0_f32, Color32::from_gray(25)), egui::StrokeKind::Outside);
+                            cui.add_space(4.0);
+                            cui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 0.0;
+                                ui.label(egui::RichText::new(usage).color(if on { Color32::from_gray(230) } else { Color32::from_gray(140) }));
+                                let eg = self.export_file_name(&gtitle, ident, usage, 0);
+                                ui.label(egui::RichText::new(format!("{eg}.{}", fmt.ext())).small().color(Color32::from_gray(130)));
+                            });
+                        }
+                    });
+                });
+                // ---- destination
+                export_section(ui, "DESTINATION", |_| {});
+                egui::Grid::new("exp_dest").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                    ui.label("Folder");
+                    ui.horizontal(|ui| {
+                        let mut d = self.export.dir.as_ref().map(|d| d.display().to_string()).unwrap_or_default();
+                        let w = ui.available_width() - 80.0;
+                        if ui.add(egui::TextEdit::singleline(&mut d).desired_width(w).hint_text("Choose a folder...")).changed() {
+                            self.export.dir = Some(PathBuf::from(d.trim())).filter(|p| !p.as_os_str().is_empty());
+                        }
+                        if ui.button("Browse...").clicked() {
+                            if let Some(d) = rfd::FileDialog::new().pick_folder() {
+                                self.export.dir = Some(d);
+                            }
+                        }
+                    });
+                    ui.end_row();
+                    ui.label("File name").on_hover_text("$(graph), $(identifier), $(usage) and $(size) are filled in");
+                    ui.add(egui::TextEdit::singleline(&mut self.export.pattern).desired_width(ui.available_width() - 8.0));
+                    ui.end_row();
+                });
+                // ---- format
+                export_section(ui, "FORMAT", |_| {});
+                egui::Grid::new("exp_fmt_grid").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                    ui.label("Format");
+                    ui.horizontal(|ui| {
+                        egui::ComboBox::from_id_salt("exp_fmt").width(110.0).selected_text(self.export.fmt.name()).show_ui(ui, |ui| {
+                            for f in [Format::Png, Format::Jpeg, Format::Tiff, Format::Exr, Format::Hdr] {
+                                ui.selectable_value(&mut self.export.fmt, f, f.name());
                             }
                         });
-                    }
+                        ui.add_space(12.0);
+                        match self.export.fmt {
+                            Format::Jpeg => {
+                                ui.label("Quality");
+                                ui.add(egui::Slider::new(&mut self.export.quality, 1..=100));
+                            }
+                            Format::Hdr => {
+                                ui.label(egui::RichText::new("32-bit RGBE").color(Color32::from_gray(150)));
+                            }
+                            f => {
+                                ui.label("Bit depth");
+                                let mut depth = if f.has_float32() && self.export.depth32 { 32 } else if self.export.depth16 || f == Format::Exr { 16 } else { 8 };
+                                let before = depth;
+                                if f != Format::Exr {
+                                    ui.selectable_value(&mut depth, 8, "8");
+                                }
+                                ui.selectable_value(&mut depth, 16, if f == Format::Exr { "16 half" } else { "16" });
+                                if f.has_float32() {
+                                    ui.selectable_value(&mut depth, 32, "32 float");
+                                }
+                                if depth != before {
+                                    self.export.depth16 = depth == 16;
+                                    self.export.depth32 = depth == 32;
+                                }
+                            }
+                        }
+                    });
+                    ui.end_row();
+                    ui.label("Colour space").on_hover_text("Applies to colour maps only (base colour, emissive, diffuse, specular). Data maps are never converted.");
+                    egui::ComboBox::from_id_salt("exp_space").width(200.0).selected_text(materialcraft::colorspace::SPACES[self.export.space].1).show_ui(ui, |ui| {
+                        for (i, s) in materialcraft::colorspace::SPACES.iter().enumerate() {
+                            ui.selectable_value(&mut self.export.space, i, s.1);
+                        }
+                    });
+                    ui.end_row();
+                    ui.label("Resolution").on_hover_text("Several at once go to one sub-folder each");
+                    ui.horizontal(|ui| {
+                        for (i, s) in [256, 512, 1024, 2048, 4096, 8192].iter().enumerate() {
+                            let on = self.export.sizes[i];
+                            if ui.selectable_label(on, s.to_string()).clicked() {
+                                self.export.sizes[i] = !on;
+                            }
+                        }
+                    });
+                    ui.end_row();
                 });
-                ui.add_space(4.0);
-                if ui.button("Export").clicked() {
-                    self.run_export();
+                // ---- footer
+                ui.add_space(6.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let n_out = outputs.iter().filter(|o| !self.export.skip.contains(&o.1)).count();
+                    let n_sz = self.export.sizes.iter().filter(|b| **b).count();
+                    let files = n_out * n_sz;
+                    let dest = self.export.dir.as_ref().map(|d| d.display().to_string()).unwrap_or_else(|| "no folder chosen".into());
+                    ui.label(egui::RichText::new(format!("{files} file{} to {dest}", if files == 1 { "" } else { "s" })).small().color(Color32::from_gray(150)));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let ready = files > 0 && self.export.dir.is_some();
+                        let btn = egui::Button::new(egui::RichText::new("  Export  ").strong().color(Color32::BLACK)).fill(if ready { ACCENT } else { Color32::from_gray(90) });
+                        if ui.add_enabled(ready, btn).clicked() {
+                            do_export = true;
+                        }
+                        if ui.button("Close").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+                let (msg, ok) = &self.status;
+                if !msg.is_empty() && (msg.starts_with("Exported") || msg.starts_with("Export")) {
+                    ui.label(egui::RichText::new(msg).small().color(if *ok { ACCENT } else { Color32::from_rgb(255, 150, 120) }));
                 }
             });
-            self.export.open = open;
+            if do_export {
+                self.run_export();
+            }
+            self.export.open = open && !close;
         }
         if self.mtlx_ui.open {
             let mut open = true;
@@ -1161,3 +1394,13 @@ impl App {
     }
 }
 
+
+/// A section header of the export window, with room for small buttons at the right.
+fn export_section(ui: &mut egui::Ui, title: &str, right: impl FnOnce(&mut egui::Ui)) {
+    ui.add_space(4.0);
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
+    ui.painter().rect_filled(r, 2.0, Color32::from_gray(30));
+    ui.painter().text(r.left_center() + vec2(8.0, 0.0), Align2::LEFT_CENTER, title, FontId::proportional(12.0), Color32::from_gray(215));
+    let mut cui = ui.new_child(egui::UiBuilder::new().max_rect(r.shrink2(vec2(6.0, 2.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
+    right(&mut cui);
+}
