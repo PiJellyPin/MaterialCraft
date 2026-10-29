@@ -225,6 +225,10 @@ enum Act {
     FrameAll,
     Search(Option<Pos2>),
     NewOutput(String, u32),
+    /// Swap two connections: the two selected links, or the first two inputs of the selected node (X)
+    SwapLinks,
+    /// Show this node's outputs in the 3D view instead of the graph outputs (again: back to the graph outputs)
+    View3dNode(u32),
     NewGraph,
     Home,
     Drop(String, Pos2),
@@ -371,6 +375,8 @@ struct App {
     redo: Vec<Graph>,
     edit_open: bool,
     sel: BTreeSet<u32>,
+    /// selected links, each named by the node it feeds and that node's input slot
+    sel_links: BTreeSet<(u32, String)>,
     active: Option<u32>,
     sel_comment: Option<usize>,
     clip: Vec<(u32, Node)>,
@@ -422,6 +428,8 @@ struct App {
     tex2d: Option<egui::TextureHandle>,
     tex2d_size: (usize, usize),
     maps: BTreeMap<String, std::sync::Arc<Tex>>,
+    /// a node whose outputs the 3D view shows instead of the graph outputs (a material node such as PBR Base Material)
+    view3d_node: Option<u32>,
     /// outputs still on the device (see `ensure_maps`), and whether the normal map needs its green channel flipped
     maps_pending: Vec<(String, Pending)>,
     maps_pending_flip: bool,
@@ -540,6 +548,7 @@ impl App {
             redo: Vec::new(),
             edit_open: false,
             sel: BTreeSet::new(),
+            sel_links: BTreeSet::new(),
             active,
             sel_comment: None,
             clip: Vec::new(),
@@ -576,6 +585,7 @@ impl App {
             tex2d: None,
             tex2d_size: (0, 0),
             maps: BTreeMap::new(),
+            view3d_node: None,
             maps_pending: Vec::new(),
             maps_pending_flip: false,
             view3d: View { tess: 512, ..View::default() },
@@ -1054,7 +1064,84 @@ impl App {
         self.dirty = true;
     }
 
+    /// Take the selected links out of the graph (no undo step of its own).
+    fn remove_selected_links(&mut self) {
+        for (dst, slot) in std::mem::take(&mut self.sel_links) {
+            if let Some(n) = self.g.nodes.get_mut(&dst) {
+                n.ins.remove(&slot);
+                n.in_out.remove(&slot);
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// Swap what feeds two inputs: the two selected links; one selected link and the next input of its node; or the
+    /// first two inputs of the selected node (a Blend's foreground and background). A swap that would join pins of
+    /// different types is refused.
+    fn swap_links(&mut self) {
+        let next_slot = |app: &App, id: u32, not: Option<&str>| -> Option<String> {
+            let n = app.g.nodes.get(&id)?;
+            node_slots(n, &app.g.subgraphs).into_iter().map(|s| s.0).find(|s| Some(*s) != not).map(str::to_string)
+        };
+        let links: Vec<(u32, String)> = self.sel_links.iter().cloned().collect();
+        let pair = match links.as_slice() {
+            [a, b] => Some((a.clone(), b.clone())),
+            [a] => next_slot(self, a.0, Some(a.1.as_str())).map(|s| (a.clone(), (a.0, s))),
+            [] if self.sel.len() == 1 => {
+                let id = *self.sel.iter().next().unwrap();
+                let first = next_slot(self, id, None);
+                let second = first.as_deref().and_then(|f| next_slot(self, id, Some(f)));
+                first.zip(second).map(|(f, s)| ((id, f), (id, s)))
+            }
+            _ => None,
+        };
+        let Some((a, b)) = pair else {
+            return self.status("Swap (X): select two links, one link, or a node with two inputs.", false);
+        };
+        let feed = |g: &Graph, (dst, slot): &(u32, String)| g.nodes.get(dst).and_then(|n| n.ins.get(slot).map(|s| (*s, n.in_out.get(slot).cloned())));
+        let (fa, fb) = (feed(&self.g, &a), feed(&self.g, &b));
+        if fa.is_none() && fb.is_none() {
+            return self.status("Swap (X): neither input is connected.", false);
+        }
+        let set = |g: &mut Graph, (dst, slot): &(u32, String), f: Option<(u32, Option<String>)>| {
+            if let Some(n) = g.nodes.get_mut(dst) {
+                n.ins.remove(slot);
+                n.in_out.remove(slot);
+                if let Some((src, out)) = f {
+                    n.ins.insert(slot.clone(), src);
+                    if let Some(o) = out {
+                        n.in_out.insert(slot.clone(), o);
+                    }
+                }
+            }
+        };
+        // a source may not feed a node it depends on (a link between two nodes swapped into a loop)
+        let cycle = [(&a, &fb), (&b, &fa)].iter().any(|(dst, f)| f.as_ref().map(|(src, _)| *src == dst.0 || self.depends_on(*src, dst.0)).unwrap_or(false));
+        if cycle {
+            return self.status("Swap rejected: it would create a cycle.", false);
+        }
+        let issues = |g: &Graph| materialcraft::graph::connection_issues(g).into_iter().map(|(n, s, _)| (n, s)).collect::<BTreeSet<_>>();
+        let before = issues(&self.g);
+        self.snap();
+        set(&mut self.g, &a, fb.clone());
+        set(&mut self.g, &b, fa.clone());
+        if let Some(bad) = issues(&self.g).difference(&before).next() {
+            let (_, slot) = bad.clone();
+            self.undo.pop();
+            set(&mut self.g, &a, fa);
+            set(&mut self.g, &b, fb);
+            return self.status(format!("Swap rejected: input '{slot}' cannot take that connection's type."), false);
+        }
+        // the selection follows the links to their new inputs
+        self.sel_links = [a, b].into_iter().filter(|(dst, slot)| self.g.nodes.get(dst).map(|n| n.ins.contains_key(slot)).unwrap_or(false)).filter(|_| !links.is_empty()).collect();
+        self.dirty = true;
+    }
+
     fn delete_selected(&mut self) {
+        if self.sel.is_empty() && !self.sel_links.is_empty() {
+            self.snap();
+            return self.remove_selected_links();
+        }
         if self.sel.is_empty() {
             if let Some(ci) = self.sel_comment.take() {
                 if ci < self.g.comments.len() {
@@ -1065,6 +1152,7 @@ impl App {
             return;
         }
         self.snap();
+        self.remove_selected_links();
         let sel = std::mem::take(&mut self.sel);
         // graph inputs and outputs go with the nodes that read and write them
         materialcraft::sbs_native::remove_nodes(&mut self.g, &sel);
@@ -1270,6 +1358,7 @@ impl App {
     /// The shown graph changed (switch, open, enter or leave a subgraph): drop the previews of the old one right away
     /// instead of leaving them on screen until the new evaluation finishes.
     fn clear_views(&mut self) {
+        self.view3d_node = None;
         self.maps.clear();
         self.maps_pending.clear();
         self.tex2d = None;
@@ -1674,9 +1763,16 @@ impl App {
         let full = pass == Pass::Thumbs;
         // every pass feeds the 3D view (a drag too, at the small size it runs at), so the viewport follows the edit
         let maps = true;
-        let g = match self.g.preview_host() {
+        let host = self.g.preview_host();
+        let own_graph = host.is_none();
+        let mut g = match host {
             Some((h, _)) => h,
             None => self.g.clone(),
+        };
+        // what the 3D view reads: the graph outputs, or the outputs of the node it was set to show
+        let outputs: Vec<(String, u32)> = match self.view3d_node.filter(|n| own_graph && g.nodes.contains_key(n)) {
+            Some(nid) => view3d_taps(&mut g, nid),
+            None => g.output_nodes().into_iter().map(|(u, _, id)| (u, id)).collect(),
         };
         let prev_full = self.preview_full();
         // the final pass may go above the 2D preview size: the 3D textures follow the output resolution
@@ -1690,7 +1786,7 @@ impl App {
         self.job_pass = pass;
         self.job_started = std::time::Instant::now();
         let maps = maps && !view_only;
-        let mut keep: Vec<u32> = if view_only { Vec::new() } else { g.output_nodes().iter().map(|o| o.2).collect() };
+        let mut keep: Vec<u32> = if view_only { Vec::new() } else { outputs.iter().map(|o| o.1).collect() };
         let active = self.view_node();
         if let Some(a) = active {
             keep.push(a);
@@ -1718,7 +1814,6 @@ impl App {
                     }
                 }
             };
-            let outputs: Vec<(String, u32)> = g.output_nodes().into_iter().map(|(u, _, id)| (u, id)).collect();
             // the material outputs are not read back when the 3D view can take them packed from the device
             // (and the node of the 2D view, which the viewer packs on the device as well)
             let mut defer: Vec<u32> = if maps && defer_outputs { outputs.iter().map(|o| o.1).filter(|id| Some(*id) != active).collect() } else { Vec::new() };
