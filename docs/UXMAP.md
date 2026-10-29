@@ -25,6 +25,7 @@ For installation, see [README.md](../README.md); for automation, see
 | Create a material | Home > New graph, File > New > Material Graph, or Ctrl+N. Choose a template, name, package, size, and output format. |
 | Open a package | File > Open package(s), Ctrl+O, a recent-file card, or drop an .sbs file on the window. |
 | Try a finished material | Home > TEMPLATES or File > Templates and examples. |
+| Reuse a graph for new projects | File > Save graph as template..., or right-click a graph in the Explorer > Save as template.... It then appears under MY TEMPLATES in the New dialog and in File > New from template. |
 | Add a node | Tab over the graph, drag a Library tile, or right-click the graph > Add node. |
 | Connect nodes | Drag between output and input sockets. Drag into empty space to open node search and auto-connect. |
 | Change a parameter | Select a node and use Properties. See [the node reference](NODES.md) for its parameters. |
@@ -293,6 +294,9 @@ Use [NODES.md](NODES.md) for node-specific controls and parameter descriptions.
 Choose a workflow template, graph name, destination package, initial width/height, and output format.
 Unlink dimensions for a non-square graph. RESET restores the defaults; CANCEL leaves the current work.
 File > New > Empty Package uses the package variant of this dialog.
+MY TEMPLATES lists the graphs saved with Save graph as template: a project made from one is a copy of that graph,
+renamed, with its nodes, settings and the graphs it uses, at its own resolution. Double-click creates it; right-click
+deletes the template. Templates are `.sbs` files in the `templates` folder of MaterialCraft's settings folder.
 
 ### Export textures
 
