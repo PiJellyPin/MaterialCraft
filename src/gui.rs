@@ -225,6 +225,8 @@ enum Act {
     FrameAll,
     Search(Option<Pos2>),
     NewOutput(String, u32),
+    /// Show this node's outputs in the 3D view instead of the graph outputs (again: back to the graph outputs)
+    View3dNode(u32),
     NewGraph,
     Home,
     Drop(String, Pos2),
@@ -422,6 +424,8 @@ struct App {
     tex2d: Option<egui::TextureHandle>,
     tex2d_size: (usize, usize),
     maps: BTreeMap<String, std::sync::Arc<Tex>>,
+    /// a node whose outputs the 3D view shows instead of the graph outputs (a material node such as PBR Base Material)
+    view3d_node: Option<u32>,
     /// outputs still on the device (see `ensure_maps`), and whether the normal map needs its green channel flipped
     maps_pending: Vec<(String, Pending)>,
     maps_pending_flip: bool,
@@ -576,6 +580,7 @@ impl App {
             tex2d: None,
             tex2d_size: (0, 0),
             maps: BTreeMap::new(),
+            view3d_node: None,
             maps_pending: Vec::new(),
             maps_pending_flip: false,
             view3d: View { tess: 512, ..View::default() },
@@ -1270,6 +1275,7 @@ impl App {
     /// The shown graph changed (switch, open, enter or leave a subgraph): drop the previews of the old one right away
     /// instead of leaving them on screen until the new evaluation finishes.
     fn clear_views(&mut self) {
+        self.view3d_node = None;
         self.maps.clear();
         self.maps_pending.clear();
         self.tex2d = None;
@@ -1674,9 +1680,16 @@ impl App {
         let full = pass == Pass::Thumbs;
         // every pass feeds the 3D view (a drag too, at the small size it runs at), so the viewport follows the edit
         let maps = true;
-        let g = match self.g.preview_host() {
+        let host = self.g.preview_host();
+        let own_graph = host.is_none();
+        let mut g = match host {
             Some((h, _)) => h,
             None => self.g.clone(),
+        };
+        // what the 3D view reads: the graph outputs, or the outputs of the node it was set to show
+        let outputs: Vec<(String, u32)> = match self.view3d_node.filter(|n| own_graph && g.nodes.contains_key(n)) {
+            Some(nid) => view3d_taps(&mut g, nid),
+            None => g.output_nodes().into_iter().map(|(u, _, id)| (u, id)).collect(),
         };
         let prev_full = self.preview_full();
         // the final pass may go above the 2D preview size: the 3D textures follow the output resolution
@@ -1690,7 +1703,7 @@ impl App {
         self.job_pass = pass;
         self.job_started = std::time::Instant::now();
         let maps = maps && !view_only;
-        let mut keep: Vec<u32> = if view_only { Vec::new() } else { g.output_nodes().iter().map(|o| o.2).collect() };
+        let mut keep: Vec<u32> = if view_only { Vec::new() } else { outputs.iter().map(|o| o.1).collect() };
         let active = self.view_node();
         if let Some(a) = active {
             keep.push(a);
@@ -1718,7 +1731,6 @@ impl App {
                     }
                 }
             };
-            let outputs: Vec<(String, u32)> = g.output_nodes().into_iter().map(|(u, _, id)| (u, id)).collect();
             // the material outputs are not read back when the 3D view can take them packed from the device
             // (and the node of the 2D view, which the viewer packs on the device as well)
             let mut defer: Vec<u32> = if maps && defer_outputs { outputs.iter().map(|o| o.1).filter(|id| Some(*id) != active).collect() } else { Vec::new() };

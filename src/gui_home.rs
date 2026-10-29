@@ -1422,6 +1422,7 @@ impl App {
                 }
             });
             self.view3d_menus(ui, &mut ch);
+            self.view3d_source(ui, &mut ch);
             ui.menu_button("Renderer", |ui| {
                 if ui.checkbox(&mut self.gpu_on, "GPU rendering (wgpu)").changed() {
                     self.gpu_maps_dirty = true;

@@ -187,3 +187,62 @@ fn broken_packages_are_errors_not_panics() {
     let (_, warnings) = sbs_native::load(&odd, None).expect("damaged links should produce warnings");
     assert!(!warnings.is_empty(), "all_nodes.sbs: broken link was silently accepted");
 }
+
+#[test]
+fn a_renamed_output_keeps_its_users() {
+    let mut g = sbs_native::new_package("mat", 64);
+    let out = sbs_native::add_output(&mut g, "baseColor", Some("base"), [0.0, 0.0]);
+    sbs_native::add_output(&mut g, "normal", Some("nrm"), [0.0, 80.0]);
+    // a graph of the package that runs this one and reads the output by name
+    let mut user = sbs_native::new_package("user", 64);
+    user.nodes.insert(1, Node { kind: "sbs:graph".into(), strs: [("#graph".to_string(), "mat".to_string())].into(), ..Default::default() });
+    let mut reader = Node { kind: "sbs:blend".into(), ..Default::default() };
+    reader.ins.insert("source".into(), 1);
+    reader.in_out.insert("source".into(), "base".into());
+    user.nodes.insert(2, reader);
+
+    assert!(sbs_native::rename_output(&mut g, out, "nrm").is_err(), "two outputs cannot share a name");
+    assert!(sbs_native::rename_output(&mut g, out, "bad name").is_err());
+    assert_eq!(sbs_native::rename_output(&mut g, out, "albedo").unwrap(), ("base".to_string(), "albedo".to_string()));
+    sbs_native::retarget_output(&mut user, "mat", "base", "albedo");
+    assert_eq!(user.nodes[&2].in_out["source"], "albedo");
+    assert_eq!(sbs_native::label(&g.nodes[&out], &g), "albedo");
+    assert!(g.output_nodes().iter().any(|(usage, ident, id)| *id == out && usage == "basecolor" && ident == "albedo"));
+    let text = sbs_native::save_text(&g).unwrap();
+    assert!(text.contains("\"albedo\"") && !text.contains("\"base\""), "{text}");
+}
+
+#[test]
+fn pbr_base_material_inputs_follow_their_switches() {
+    let mut n = Node { kind: "sbs:lib:pbr_base_material/pbr_base_material".into(), ..Default::default() };
+    assert!(!sbs_native::input_switches(&n).is_empty());
+    assert!(!sbs_native::input_used(&n, "basecolor_input"), "every map input starts off");
+    n.strs.insert("user_basecolor".into(), PVal::Const { ty: PTy::B, raw: "1".into(), rel: Some("0".into()) }.enc());
+    assert!(sbs_native::input_used(&n, "basecolor_input"));
+    assert!(!sbs_native::input_used(&n, "normal_input"));
+    // inputs without a switch are always read
+    assert!(sbs_native::input_used(&Node { kind: "sbs:blend".into(), ..Default::default() }, "source"));
+}
+
+#[test]
+fn a_pass_through_reads_one_output_of_a_material_node() {
+    // the 3D view shows a material node through one pass-through per output
+    let mut g = sbs_native::new_package("m", 32);
+    let mut n = Node { kind: "sbs:lib:pbr_base_material/pbr_base_material".into(), ..Default::default() };
+    n.strs.insert("metallic".into(), PVal::Const { ty: PTy::F(1), raw: "0".into(), rel: None }.enc());
+    n.strs.insert("roughness".into(), PVal::Const { ty: PTy::F(1), raw: "0.3".into(), rel: None }.enc());
+    g.nodes.insert(5, n);
+    for (id, pin) in [(100, "diffuse"), (101, "roughness"), (102, "glossiness"), (103, "normal")] {
+        let mut t = Node { kind: "sbs:passthrough".into(), ..Default::default() };
+        t.ins.insert("input".into(), 5);
+        t.in_out.insert("input".into(), pin.into());
+        g.nodes.insert(id, t);
+    }
+    let keep = [100, 101, 102, 103];
+    let r = g.evaluate_all_cached_ex(32, &keep, &[], 0, &std::sync::Arc::new(materialcraft::graph::NodeCache::new(64)), None, false, &mut |_| {});
+    let px = |id: u32| r.kept.get(&id).unwrap_or_else(|| panic!("{id}: {:?}", r.errors.get(&id))).px[0];
+    assert!((px(100)[0] - 0.498).abs() < 0.01, "a dielectric's diffuse is its base colour");
+    assert!((px(101)[0] - 0.3).abs() < 1e-4);
+    assert!((px(102)[0] - 0.7).abs() < 1e-4, "glossiness follows roughness");
+    assert_eq!(px(103), [0.5, 0.5, 1.0, 1.0]);
+}
