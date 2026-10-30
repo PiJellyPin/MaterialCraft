@@ -589,6 +589,8 @@ Spline, path and splatter data travel between these nodes as images in MaterialC
 | `x_rough_concrete_with_lines` | Rough Concrete With Lines | `rough_concrete_with_lines/rough_concrete_with_lines` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
 | `x_rust_weathering` | Rust Weathering | `rust_weathering_material/rust_weathering` | diffuse_1, basecolor_1, normal_1, specular_1, glossiness_1, roughness_1, metallic_1, height_1, ambientOcclusion_1, ambientOcclusion, curvature, position, mask_1 | Diffuse, basecolor, Normal, Specular, Glossiness, Roughness, Metallic, Height, ambient_occlusion |
 | `x_snow_cover` | Snow Cover | `me_snow_cover/snow_cover` | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion, mask | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_tile_random` | Tile Random | `pattern_tile_random/tile_random` | pattern_input, background_input | output |
+| `x_tile_random_color` | Tile Random Color | `pattern_tile_random/tile_random_color` | pattern_input, background_input_1 | output |
 | `x_tiles_002` | Tiles 002 | `tiles_002/tiles_002` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
 | `x_tiles_008` | Tiles 008 | `tiles_008/tiles_008` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
 | `x_tiles_011` | Tiles 011 | `tiles_011/tiles_011` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |

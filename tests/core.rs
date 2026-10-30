@@ -216,7 +216,7 @@ fn displacement_renders_every_shape_and_camera_without_panics() {
     use materialcraft::tex::Tex;
     let hm = Tex::gray_fn(32, 32, |u, v| (u * 6.0).sin() * 0.5 + 0.5 + v * 0.0);
     let (b, n, r, m, a) = (Tex::solid(4, 4, [0.8, 0.2, 0.2, 1.0]), Tex::solid(4, 4, [0.5, 0.5, 1.0, 1.0]), Tex::solid(4, 4, [0.4; 4]), Tex::solid(4, 4, [0.0, 0.0, 0.0, 1.0]), Tex::solid(4, 4, [1.0; 4]));
-    let maps = Maps { base: &b, normal: &n, rough: &r, metal: &m, ao: &a, emissive: None, height: Some(&hm), env: None };
+    let maps = Maps { base: &b, normal: &n, rough: &r, metal: &m, ao: &a, emissive: None, height: Some(&hm), opacity: None, env: None };
     for shape in 0..3 {
         let plain = render(&maps, &View { shape, relief: RELIEF_NONE, ..View::default() }, 64, 64);
         let center = plain.px[32 * 64 + 32];
@@ -1468,3 +1468,54 @@ fn colorspace_conversion_roundtrips_and_keeps_alpha() {
     assert!(colorspace::is_color_output("basecolor") && !colorspace::is_color_output("normal"));
 }
 
+
+#[test]
+fn rgba_merge_takes_the_alpha_from_a_grey_map() {
+    // a grey map's own alpha is 1: the alpha slot reads its grey value
+    let g = Graph::parse("size 32\nnode 1 fbm scale=4 seed=5\nnode 2 merge r=@1 g=@1 b=@1 a=@1\noutput basecolor 2\n").unwrap();
+    let out = g.evaluate(None).unwrap();
+    let t = &out["basecolor"];
+    assert!(t.px.iter().all(|p| (p[3] - p[0]).abs() < 1e-5), "alpha follows the grey map");
+    assert!(t.px.iter().any(|p| p[3] < 0.9));
+}
+
+#[test]
+fn tile_random_settings_change_the_result() {
+    let mean_diff = |a: &materialcraft::tex::Tex, b: &materialcraft::tex::Tex| a.px.iter().zip(&b.px).map(|(p, q)| (0..4).map(|c| (p[c] - q[c]).abs()).sum::<f32>()).sum::<f32>() / (a.px.len() * 4) as f32;
+    let render = |line: &str| {
+        let g = Graph::parse(&format!("size 128\nnode 1 fbm scale=3 seed=4\nnode 2 color r=0.2 g=0.2 b=0.2\nnode 3 {line}\noutput o 3\n")).unwrap();
+        g.evaluate(None).unwrap()["o"].clone()
+    };
+    let base = "x_tile_random seed=3 size_random_y=0.5 shape_rotation_constraint=0";
+    let plain = render(base);
+    assert!(plain.px.iter().any(|p| p[0] > 0.99) && plain.px.iter().any(|p| p[0] < 0.01), "tiles and gaps");
+    for v in [
+        "x_amount=6", "y_amount=2", "size_random_x=0", "size_random_y=0", "split_mode=1 split_multiplier=2 split_threshold=0.2", "split_mode=4 split_multiplier=2 split_threshold=0.2",
+        "interstice_amount=0.05", "interstice_mode=0", "pattern=3", "pattern=7 pattern_specific=0.5", "pattern_rotation=1 pattern=10", "pattern_rotation_random=0.5 pattern=10", "pattern_symmetry_random=1 pattern=10",
+        "pattern=7 pattern_specific_random=1", "shape_scale=0.5", "shape_scale_random=0.8", "shape_rotation=0.1", "shape_rotation_random=0.4", "shape_rotation=0.1 shape_rotation_constraint=1", "position_offset=0.5", "position_offset_random=0.5",
+        "position_random=0.5", "position_random=0.5 position_random_constraints=0", "pattern_color=0.5", "pattern_color_random=0.8", "pattern_color_parametrisation=1 pattern_color_parametrisation_intensity=0.8",
+        "pattern_color_parametrisation=3 pattern_color_parametrisation_intensity=0.8", "background_color=0.5", "background_input=@2", "pattern=1 pattern_input=@1", "blending_mode=1 position_random=1 position_random_constraints=0 shape_scale=1 background_color=0.9", "mask_random=0.5", "seed=9",
+    ] {
+        let d = mean_diff(&plain, &render(&format!("{base} {v}")));
+        assert!(d > 1e-3, "{v}: no visible change ({d})");
+    }
+    // the mask hides that part of the tiles, inverted the other part
+    let lit = |t: &materialcraft::tex::Tex| t.px.iter().filter(|p| p[0] > 0.5).count();
+    let (some, rest) = (render(&format!("{base} mask_random=0.3")), render(&format!("{base} mask_random=0.3 mask_invert=1")));
+    assert!(lit(&some) < lit(&plain) && lit(&rest) < lit(&plain));
+    assert!(lit(&some) + lit(&rest) >= lit(&plain) * 9 / 10, "together they cover the tiles");
+    assert_eq!(render(&format!("{base} pattern=0")).px.iter().filter(|p| p[0] > 0.01).count(), 0, "no pattern, no tiles");
+    // splitting makes more, smaller tiles; a threshold of 1 leaves them alone
+    let tiles = |t: &materialcraft::tex::Tex| t.px.windows(2).filter(|p| (p[0][0] - p[1][0]).abs() > 0.5).count();
+    assert!(tiles(&render(&format!("{base} split_mode=1 split_multiplier=3 split_threshold=0.1"))) > tiles(&plain));
+    assert_eq!(mean_diff(&plain, &render(&format!("{base} split_mode=1 split_multiplier=3 split_threshold=1"))), 0.0);
+
+    // the colour graph: colour, random per channel, alpha blending, what the size affects
+    let colours = render("x_tile_random_color seed=3 pattern_color_0=1 pattern_color_1=0.5 pattern_color_2=0 interstice_amount=0.1 shape_rotation_constraint=0");
+    assert!(colours.px.iter().any(|p| (p[0] - 1.0).abs() < 1e-3 && (p[1] - 0.5).abs() < 1e-3 && p[2] < 1e-3));
+    let varied = render("x_tile_random_color seed=3 pattern_color_random_0=1 interstice_amount=0.1 shape_rotation_constraint=0");
+    assert!(varied.px.iter().any(|p| p[0] < 0.6 && p[1] > 0.99), "only red varies");
+    let by_size = "x_tile_random_color seed=3 pattern_color_parametrisation=1 pattern_color_parametrisation_intensity=1 interstice_amount=0.1 shape_rotation_constraint=0 blending_mode=2 background_color_0=1";
+    let (rgb, alpha) = (render(by_size), render(&format!("{by_size} color_parametrization_affect=2")));
+    assert!(mean_diff(&rgb, &alpha) > 1e-3, "the size tints the colour or the alpha");
+}
