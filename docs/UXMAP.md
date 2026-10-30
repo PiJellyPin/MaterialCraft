@@ -25,11 +25,13 @@ For installation, see [README.md](../README.md); for automation, see
 | Create a material | Home > New graph, File > New > Material Graph, or Ctrl+N. Choose a template, name, package, size, and output format. |
 | Open a package | File > Open package(s), Ctrl+O, a recent-file card, or drop an .sbs file on the window. |
 | Try a finished material | Home > TEMPLATES or File > Templates and examples. |
+| Reuse a graph for new projects | File > Save graph as template..., or right-click a graph in the Explorer > Save as template.... It then appears under MY TEMPLATES in the New dialog and in File > New from template. |
 | Add a node | Tab over the graph, drag a Library tile, or right-click the graph > Add node. |
 | Connect nodes | Drag between output and input sockets. Drag into empty space to open node search and auto-connect. |
 | Change a parameter | Select a node and use Properties. See [the node reference](NODES.md) for its parameters. |
 | Inspect a result | Select a node to view its result in 2D View. The material outputs feed 3D View. |
 | Check a tile seam | 2D View > Tile 2x2 preview. |
+| Check transparency | A result with alpha shows a checkerboard in 2D View; 2D View > Alpha toggles it. An opacity output (or the base color's alpha) cuts the 3D model out. |
 | Change working resolution | Canvas toolbar > Parent Size, or Properties > GRAPH SETTINGS > Output Size. Unlink width and height for a non-square graph. |
 | Organize a graph | Select nodes and press C for a comment frame, or use Tools > Auto-layout. |
 | Reuse selected nodes | Edit > Create subgraph from selection; double-click the resulting subgraph to edit it. |
@@ -66,7 +68,9 @@ Help > Keyboard shortcuts opens the in-app reference.
 | Ctrl+Y or Ctrl+Shift+Z | Redo |
 | Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+D | Copy / cut / paste / duplicate nodes |
 | Ctrl+A | Select all nodes |
-| Delete or Backspace | Delete the selection |
+| Delete or Backspace | Delete the selection (nodes and selected links) |
+| Click a link (Shift-click adds) | Select the link |
+| X | Swap connections: the two selected links, one selected link with the next input of its node, or the first two inputs of the selected node |
 | Tab over the graph | Search for a node at the cursor |
 | F | Frame all nodes |
 | C | Add a comment frame around the selection |
@@ -224,6 +228,8 @@ The default workspace places Explorer and Library on the left, Graph in the cent
 - Click a graph to open it; drag a graph to the canvas to reuse it.
 - Right-click empty space to create/open packages or create a material graph.
 - A package's menu offers graph creation, save, and close.
+- Right-click a graph to open, export, save as package or template, duplicate, rename, or delete it. Delete is refused
+  while another graph uses it; deleting the graph the package opens on makes the next graph the main one. Ctrl+Z undoes it.
 - Closing a modified package offers Save, Discard changes, and Cancel.
 
 ### Library
@@ -250,6 +256,8 @@ The default workspace places Explorer and Library on the left, Graph in the cent
 
 - Displays the selected node's image, dimensions, zoom, and value range.
 - Fit to view or double-click to fit; Tile 2x2 preview checks edges.
+- When the image has an alpha channel, transparent pixels show a checkerboard. Alpha (next to Tile 2x2) switches
+  between that and the colors shown fully opaque.
 - Values outside 0..1 produce an HDR warning. Use a floating-point export format to retain that range.
 - Edit spline adds controls for paths, closure, smoothing, snapping, point width/height, and tangent mode.
   Done leaves spline editing; edits participate in undo/redo.
@@ -257,6 +265,8 @@ The default workspace places Explorer and Library on the left, Graph in the cent
 ### 3D View
 
 The material outputs feed the preview. Add a height output to use height-based relief.
+Transparency comes from an opacity output (its luminance), else from the base color's alpha: transparent texels are
+cut out and partial opacity is dithered (the path tracer lets rays through instead). Fixed scene materials stay opaque.
 
 | Menu | Controls |
 |---|---|
@@ -278,6 +288,8 @@ and path-traced exports; Save turntable frames writes a sequence.
 - With a node selected, shows its inputs, parameter controls, output size, and output format.
 - Lower per-node resolution can reduce the cost of expensive operations.
 - P exposes a parameter; fn assigns a function graph.
+- On an instance of a graph from the same package, a parameter whose "visible if" condition is false for the
+  node's current values is hidden; an invalid condition, or one reading a function-driven value, shows it.
 - FUNCTIONS AND PATTERN PROGRAMS creates/opens those graphs.
 - PUBLISHED PARAMETERS lists exposed labels and ranges, with a remove control.
 - Selecting a comment frame exposes its title, color, body, and delete control.
@@ -291,6 +303,9 @@ Use [NODES.md](NODES.md) for node-specific controls and parameter descriptions.
 Choose a workflow template, graph name, destination package, initial width/height, and output format.
 Unlink dimensions for a non-square graph. RESET restores the defaults; CANCEL leaves the current work.
 File > New > Empty Package uses the package variant of this dialog.
+MY TEMPLATES lists the graphs saved with Save graph as template: a project made from one is a copy of that graph,
+renamed, with its nodes, settings and the graphs it uses, at its own resolution. Double-click creates it; right-click
+deletes the template. Templates are `.sbs` files in the `templates` folder of MaterialCraft's settings folder.
 
 ### Export textures
 

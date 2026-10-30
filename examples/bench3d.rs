@@ -44,6 +44,7 @@ fn main() {
         ao: named("ambient_occlusion"),
         emissive: named("emissive"),
         height: named("height"),
+        opacity: named("opacity"),
     });
     println!("gpu prepare ({}): {:>6.0} ms", p.size, t.elapsed().as_secs_f64() * 1e3);
 }
