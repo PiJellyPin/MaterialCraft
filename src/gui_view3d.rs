@@ -75,8 +75,34 @@ fn build_maps<'a>(maps: &'a BTreeMap<String, Arc<Tex>>, f: &'a Fallbacks) -> Map
         ao: get("ambient_occlusion").unwrap_or(&f.one),
         emissive: get("emissive"),
         height: get("height"),
+        opacity: get("opacity"),
         env: None,
     }
+}
+
+/// The output names of a node that the 3D view can read as material maps (base colour, normal, roughness ...).
+fn material_outs(outs: &[String]) -> usize {
+    outs.iter().filter(|o| materialcraft::sbs_import::usage(o) != "out").count()
+}
+
+/// Pass-through nodes, one per material output of node `nid`, added to `g` (the copy that is evaluated): while the 3D
+/// view shows that node it reads them in place of the graph outputs. Returns (usage, node) for each.
+fn view3d_taps(g: &mut Graph, nid: u32) -> Vec<(String, u32)> {
+    let Some(n) = g.nodes.get(&nid) else { return Vec::new() };
+    let mut taps = Vec::new();
+    for o in native::outputs(n, &g.subgraphs) {
+        let usage = materialcraft::sbs_import::usage(&o);
+        if usage == "out" || taps.iter().any(|(u, _)| u == usage) {
+            continue;
+        }
+        let mut t = Node { kind: "sbs:passthrough".into(), ..Default::default() };
+        t.ins.insert("input".into(), nid);
+        t.in_out.insert("input".into(), o);
+        let id = native::free_id(g);
+        g.nodes.insert(id, t);
+        taps.push((usage.to_string(), id));
+    }
+    taps
 }
 
 fn hash_of<T: std::hash::Hash>(t: &T) -> u64 {
@@ -87,6 +113,30 @@ fn hash_of<T: std::hash::Hash>(t: &T) -> u64 {
 }
 
 impl App {
+    /// Show node `id`'s outputs in the 3D view, or (when it already shows them) go back to the graph outputs.
+    fn toggle_view3d_node(&mut self, id: u32) {
+        self.view3d_node = if self.view3d_node == Some(id) { None } else { Some(id) };
+        // the next pass brings the 3D view its new maps, a thumbnail pass included
+        self.maps_size = 0;
+        self.dirty = true;
+    }
+
+    /// In the 3D view's menu bar: which node it shows when not the graph outputs, and the way back.
+    fn view3d_source(&mut self, ui: &mut egui::Ui, ch: &mut bool) {
+        let Some(id) = self.view3d_node else { return };
+        let Some(n) = self.g.nodes.get(&id) else {
+            self.view3d_node = None;
+            return;
+        };
+        let name = n.strs.get("title").filter(|t| !t.is_empty()).cloned().unwrap_or_else(|| native::label(n, &self.g));
+        ui.separator();
+        ui.label(egui::RichText::new(format!("3D: {name}")).color(Color32::from_rgb(110, 225, 200))).on_hover_text("The 3D view shows this node's outputs, not the graph outputs");
+        if ui.small_button("x").on_hover_text("Back to the graph outputs").clicked() {
+            self.toggle_view3d_node(id);
+            *ch = true;
+        }
+    }
+
     // ------------------------------------------------------------ menus
     /// Everything the 3D view's menu bar offers beyond the shape and material menus.
     fn view3d_menus(&mut self, ui: &mut egui::Ui, ch: &mut bool) {

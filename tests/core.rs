@@ -216,7 +216,7 @@ fn displacement_renders_every_shape_and_camera_without_panics() {
     use materialcraft::tex::Tex;
     let hm = Tex::gray_fn(32, 32, |u, v| (u * 6.0).sin() * 0.5 + 0.5 + v * 0.0);
     let (b, n, r, m, a) = (Tex::solid(4, 4, [0.8, 0.2, 0.2, 1.0]), Tex::solid(4, 4, [0.5, 0.5, 1.0, 1.0]), Tex::solid(4, 4, [0.4; 4]), Tex::solid(4, 4, [0.0, 0.0, 0.0, 1.0]), Tex::solid(4, 4, [1.0; 4]));
-    let maps = Maps { base: &b, normal: &n, rough: &r, metal: &m, ao: &a, emissive: None, height: Some(&hm), env: None };
+    let maps = Maps { base: &b, normal: &n, rough: &r, metal: &m, ao: &a, emissive: None, height: Some(&hm), opacity: None, env: None };
     for shape in 0..3 {
         let plain = render(&maps, &View { shape, relief: RELIEF_NONE, ..View::default() }, 64, 64);
         let center = plain.px[32 * 64 + 32];
@@ -1468,3 +1468,47 @@ fn colorspace_conversion_roundtrips_and_keeps_alpha() {
     assert!(colorspace::is_color_output("basecolor") && !colorspace::is_color_output("normal"));
 }
 
+
+#[test]
+fn rgba_merge_takes_the_alpha_from_a_grey_map() {
+    // a grey map's own alpha is 1: the alpha slot reads its grey value
+    let g = Graph::parse("size 32\nnode 1 fbm scale=4 seed=5\nnode 2 merge r=@1 g=@1 b=@1 a=@1\noutput basecolor 2\n").unwrap();
+    let out = g.evaluate(None).unwrap();
+    let t = &out["basecolor"];
+    assert!(t.px.iter().all(|p| (p[3] - p[0]).abs() < 1e-5), "alpha follows the grey map");
+    assert!(t.px.iter().any(|p| p[3] < 0.9));
+}
+
+#[test]
+fn material_blend_mixes_each_channel_by_its_own_settings() {
+    let pre = "size 8\nnode 1 color r=0.2 g=0.4 b=0.6\nnode 2 color r=0.8 g=0.6 b=0.2\nnode 3 color r=0.5 g=0.5 b=0.5\nnode 4 color r=0.3 g=0.3 b=0.3\nnode 5 color r=0.9 g=0.9 b=0.9\n";
+    let base = "x_material_blend material1_basecolor=@1 material2_basecolor=@2 material1_roughness=@4 material2_roughness=@5";
+    let px = |line: &str, pin: &str| {
+        let g = Graph::parse(&format!("{pre}node 6 {base} {line}\noutput o 6.{pin}\n")).unwrap();
+        g.evaluate(None).unwrap()["o"].px[0]
+    };
+    let near = |a: [f32; 4], b: [f32; 3]| (0..3).all(|c| (a[c] - b[c]).abs() < 1e-3);
+    // the grey mask: white shows material 2
+    assert!(near(px("", "basecolor"), [0.8, 0.6, 0.2]), "no mask: material 2");
+    assert!(near(px("Input_21=@3", "basecolor"), [0.5, 0.5, 0.4]));
+    // opacity of one channel leaves the others alone
+    assert!(near(px("Input_21=@3 basecolor_opacity=0.5", "basecolor"), [0.35, 0.45, 0.5]));
+    assert!(near(px("Input_21=@3 basecolor_opacity=0.5", "roughness"), [0.6, 0.6, 0.6]));
+    // a channel switched off keeps material 1
+    assert!(near(px("channel_roughness=0", "roughness"), [0.3, 0.3, 0.3]));
+    assert!(near(px("channel_roughness=0", "basecolor"), [0.8, 0.6, 0.2]));
+    // blending modes in the library's order
+    assert!(near(px("basecolor_blending_mode=1", "basecolor"), [1.0, 1.0, 0.8]), "add");
+    assert!(near(px("basecolor_blending_mode=3", "basecolor"), [0.16, 0.24, 0.12]), "multiply");
+    assert!(near(px("basecolor_blending_mode=5", "basecolor"), [0.8, 0.6, 0.6]), "max");
+    assert!(near(px("roughness_blending_mode=4", "roughness"), [1.0, 1.0, 1.0]), "add/sub");
+    assert!(near(px("basecolor_blending_mode=7 basecolor_opacity=0.5", "basecolor"), [0.5, 0.5, 0.4]), "switch");
+    // a Color ID mask replaces the grey one
+    let id = "ColorMask=1 Input_20=@1 Input_21=@3 Color_0=0.2 Color_1=0.4 Color_2=0.6";
+    assert!(near(px(id, "basecolor"), [0.8, 0.6, 0.2]), "the picked colour");
+    let other = "ColorMask=1 Input_20=@2 Input_21=@3 Color_0=0.2 Color_1=0.4 Color_2=0.6";
+    assert!(near(px(other, "basecolor"), [0.2, 0.4, 0.6]), "another colour");
+    // a channel the plain Material Blend node has no pins for
+    let g = Graph::parse(&format!("{pre}node 6 x_material_blend material1_emissive=@1 material2_emissive=@2 channel_emissive=1 Input_21=@3\noutput o 6.emissive\n")).unwrap();
+    assert!(near(g.evaluate(None).unwrap()["o"].px[0], [0.5, 0.5, 0.4]));
+}
