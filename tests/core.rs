@@ -216,7 +216,7 @@ fn displacement_renders_every_shape_and_camera_without_panics() {
     use materialcraft::tex::Tex;
     let hm = Tex::gray_fn(32, 32, |u, v| (u * 6.0).sin() * 0.5 + 0.5 + v * 0.0);
     let (b, n, r, m, a) = (Tex::solid(4, 4, [0.8, 0.2, 0.2, 1.0]), Tex::solid(4, 4, [0.5, 0.5, 1.0, 1.0]), Tex::solid(4, 4, [0.4; 4]), Tex::solid(4, 4, [0.0, 0.0, 0.0, 1.0]), Tex::solid(4, 4, [1.0; 4]));
-    let maps = Maps { base: &b, normal: &n, rough: &r, metal: &m, ao: &a, emissive: None, height: Some(&hm), env: None };
+    let maps = Maps { base: &b, normal: &n, rough: &r, metal: &m, ao: &a, emissive: None, height: Some(&hm), opacity: None, env: None };
     for shape in 0..3 {
         let plain = render(&maps, &View { shape, relief: RELIEF_NONE, ..View::default() }, 64, 64);
         let center = plain.px[32 * 64 + 32];
@@ -1468,3 +1468,395 @@ fn colorspace_conversion_roundtrips_and_keeps_alpha() {
     assert!(colorspace::is_color_output("basecolor") && !colorspace::is_color_output("normal"));
 }
 
+
+#[test]
+fn rgba_merge_takes_the_alpha_from_a_grey_map() {
+    // a grey map's own alpha is 1: the alpha slot reads its grey value
+    let g = Graph::parse("size 32\nnode 1 fbm scale=4 seed=5\nnode 2 merge r=@1 g=@1 b=@1 a=@1\noutput basecolor 2\n").unwrap();
+    let out = g.evaluate(None).unwrap();
+    let t = &out["basecolor"];
+    assert!(t.px.iter().all(|p| (p[3] - p[0]).abs() < 1e-5), "alpha follows the grey map");
+    assert!(t.px.iter().any(|p| p[3] < 0.9));
+}
+
+#[test]
+fn shape_splatter_v2_settings_change_the_result() {
+    use materialcraft::tex::Tex;
+    // every output together: a setting may only show in the normals or the UVs
+    let outs = ["height", "sdf_color", "sdf_metalness", "sdf_roughness", "normal", "splatter_uvw", "splatter_data_1", "splatter_data_2", "splatter_data_3"];
+    let render = |line: &str| -> Vec<Tex> {
+        let mut text = String::from("size 96\nnode 1 fbm scale=3 octaves=3 seed=4\nnode 2 gradient mode=0 angle=0.1\nnode 3 color r=0.5 g=0.9 b=0.1\nnode 4 shape shape=2 size_x=0.8 size_y=0.8\nnode 5 sdf_shape shape=1 size=0.25\n");
+        text += &format!("node 9 x_shape_splatter_v2 {line}\n");
+        for (i, o) in outs.iter().enumerate() {
+            text += &format!("output o{i} 9.{o}\n");
+        }
+        let got = Graph::parse(&text).unwrap().evaluate(None).unwrap();
+        (0..outs.len()).map(|i| got[&format!("o{i}")].clone()).collect()
+    };
+    let diff = |a: &[Tex], b: &[Tex]| a.iter().zip(b).map(|(p, q)| p.px.iter().zip(&q.px).map(|(x, y)| (0..4).map(|c| (x[c] - y[c]).abs()).sum::<f32>()).sum::<f32>() / p.px.len() as f32).fold(0.0, f32::max);
+    let base = "seed=3 x_amount=4 y_amount=4 shape_type=1 shape_scale=0.6 height_scale=0.8";
+    let cases: &[(&str, &str)] = &[
+        ("", "position_distribution_mode=1"),
+        ("", "position_distribution_mode=2"),
+        ("", "position_distribution_mode=3"),
+        ("position_distribution_mode=3 position_random=0.3", "position_function_0=0.2"),
+        ("position_distribution_mode=3 position_random=0.3", "position_function_1=0.2"),
+        ("", "x_amount=6"),
+        ("", "y_amount=6"),
+        ("position_distribution_mode=2", "amount=20"),
+        ("position_distribution_mode=2", "position_distribution_sequence=1"),
+        ("3d_rotation_0=0.1", "output_normal_format=1"),
+        ("", "shape_type=0 pattern_sdf_function=0.2"),
+        ("", "shape_type=2"),
+        ("", "shape_type=3"),
+        ("", "shape_type=4"),
+        ("", "shape_type=5"),
+        ("", "shape_type=6 pattern_input_1=@4"),
+        ("", "shape_type=7 grid_atlas_height=@5"),
+        ("", "shape_type=8 pattern_function=0.5"),
+        ("shape_type=7 grid_atlas_height=@1", "grid_atlas_size_0=3"),
+        ("shape_type=7 grid_atlas_height=@1", "grid_atlas_size_1=3"),
+        ("shape_type=7 grid_atlas_height=@1 grid_atlas_normal=@3", "recompute_grid_atlas_normal=1"),
+        ("shape_type=7 grid_atlas_height=@1 grid_atlas_normal=@3", "grid_atlas_normal_format=1"),
+        ("shape_type=6 pattern_input_1=@4 pattern_input_2=@5", "pattern_input_number=2"),
+        ("shape_type=6 pattern_input_1=@4", "enable_shape_extrude=1"),
+        ("shape_type=6 pattern_input_1=@4 enable_shape_extrude=1", "shape_extrude_symmetry=1 3d_rotation_0=0.1"),
+        ("shape_type=6 pattern_input_1=@4 enable_shape_extrude=1", "shape_extrude_height=0.4"),
+        ("shape_type=6 pattern_input_1=@4 enable_shape_extrude=1 3d_rotation_0=0.15", "shape_extrude_samples=2"),
+        ("shape_type=8", "pattern_function=0.5"),
+        ("shape_type=0", "pattern_sdf_function=0.2"),
+        ("shape_type=0", "sdf_bounding_frame_size_0=0.5"),
+        ("shape_type=0", "sdf_bounding_frame_size_1=0.5"),
+        ("shape_type=0 3d_rotation_0=0.1", "sdf_bounding_frame_size_2=0.5"),
+        ("shape_type=6 pattern_input_1=@4 height_offset=0.1", "enable_cutout=0"),
+        ("shape_type=6 pattern_input_1=@4", "cutout_threshold=0.6"),
+        ("", "normalized_workflow=1"),
+        ("", "shape_scale_affects_height_scale=0"),
+        ("", "height_scale=0.3"),
+        ("", "height_scale_random=0.8"),
+        ("height_scale_map=@1", "height_scale_map_multiplier=1"),
+        ("background_height=@1", "background_input_opacity=0.2"),
+        ("background_height=@1", "height_offset_from_background=0.5"),
+        ("background_height=@1 height_offset_from_background=0.5", "conform_to_background=1"),
+        ("background_height=@1 height_offset_from_background=0.5 conform_to_background=1", "smooth_background_slope=0.5"),
+        ("", "height_offset=0.2"),
+        ("", "height_offset_random=0.2"),
+        ("", "height_offset_from_id=0.2"),
+        ("height_offset_map=@1", "height_offset_map_multiplier=0.5"),
+        ("", "size_mode=1"),
+        ("x_amount=2 y_amount=6", "keep_size_ratio=0"),
+        ("", "shape_scale=0.9"),
+        ("", "shape_scale_random=0.8"),
+        ("shape_scale_map=@1", "scale_map_multiplier=1"),
+        ("position_distribution_mode=1", "shape_scale_post_poisson=0.5"),
+        ("", "shape_size_0=0.5"),
+        ("", "shape_size_1=0.5"),
+        ("3d_rotation_0=0.1", "shape_size_2=0.5"),
+        ("", "shape_size_random_0=0.8"),
+        ("", "shape_size_random_1=0.8"),
+        ("3d_rotation_0=0.1", "shape_size_random_2=0.8"),
+        ("shape_type=6 pattern_input_1=@4", "shape_size_2d_0=0.5"),
+        ("shape_type=6 pattern_input_1=@4", "shape_size_2d_1=0.5"),
+        ("shape_type=6 pattern_input_1=@4", "shape_size_random_2d_0=0.8"),
+        ("shape_type=6 pattern_input_1=@4", "shape_size_random_2d_1=0.8"),
+        ("shape_type=3", "cylinder_radius=0.2"),
+        ("", "position_random=0.2"),
+        ("position_random=0.2", "position_random_multiplier_0=0.2"),
+        ("position_random=0.2", "position_random_multiplier_1=0.2"),
+        ("density_map=@1", "density_map_multiplier=1"),
+        ("3d_rotation_0=0.1", "offset_along_normal=0.2"),
+        ("", "offset_along_normal_random=0.2"),
+        ("vector_map=@3", "vector_map_displacement=0.3"),
+        ("vector_map=@3 vector_map_displacement=0.3", "vector_displacement_multiplier_0=0"),
+        ("vector_map=@3 vector_map_displacement=0.3", "vector_displacement_multiplier_1=0"),
+        ("vector_map=@3 vector_map_displacement=0.3", "vector_displacement_multiplier_2=0"),
+        ("", "global_offset_0=0.13"),
+        ("", "global_offset_1=0.13"),
+        ("", "line_position_offset=0.5"),
+        ("line_position_offset=0.5", "line_position_offset_mode=3"),
+        ("3d_rotation_0=0.1", "pivot_position_local_0=1"),
+        ("3d_rotation_0=0.1", "pivot_position_local_1=1"),
+        ("3d_rotation_0=0.1", "pivot_position_local_2=-1"),
+        ("", "3d_rotation_0=0.1"),
+        ("", "3d_rotation_1=0.1"),
+        ("", "3d_rotation_2=0.1"),
+        ("", "3d_rotation_random=0.2"),
+        ("3d_rotation_random=0.2", "3d_rotation_random_multiplier_0=0"),
+        ("3d_rotation_random=0.2", "3d_rotation_random_multiplier_1=0"),
+        ("3d_rotation_random=0.2", "3d_rotation_random_multiplier_2=0"),
+        ("shape_rotation_map=@1", "3d_rotation_map_multiplier_0=1"),
+        ("shape_rotation_map=@1", "3d_rotation_map_multiplier_1=1"),
+        ("shape_rotation_map=@1", "3d_rotation_map_multiplier_2=1"),
+        ("", "rotation_around_normal=0.1"),
+        ("", "rotation_around_normal_random=0.2"),
+        ("background_height=@1", "slope_rotation=1"),
+        ("background_height=@1 vector_map=@3 slope_rotation=1", "slope_rotation_input=1"),
+        ("vector_map=@3", "vector_map_multiplier=1"),
+        ("vector_map=@3 vector_map_multiplier=1 3d_rotation_0=0.15", "vector_map_rotation_axis=1"),
+        ("", "mask_random=0.5"),
+        ("mask_map=@2", "mask_map_threshold=0.7"),
+        ("", "uv_scale_0=2"),
+        ("", "uv_scale_1=2"),
+        ("shape_type=3 3d_rotation_0=0.03", "cap_uv_scale_0=3"),
+        ("shape_type=3 3d_rotation_0=0.03", "cap_uv_scale_1=3"),
+        ("shape_type=3 3d_rotation_0=0.03", "cap_uv_mode=1"),
+        ("", "show_shape_2d_bbox=1"),
+        ("3d_rotation_0=0.1", "show_shape_3d_bbox=1"),
+        ("", "show_shape_pivot=1"),
+        ("position_random=0.1", "seed=9"),
+    ];
+    for (extra, change) in cases {
+        let (a, b) = (render(&format!("{base} {extra}")), render(&format!("{base} {extra} {change}")));
+        let d = diff(&a, &b);
+        assert!(d > 1e-3, "[{extra}] {change}: no visible change ({d})");
+    }
+    // non_square_expansion needs a non-square picture: see shape_splatter_v2_in_a_non_square_picture
+    for p in materialcraft::nodes10::pdefs("x_shape_splatter_v2").into_iter().filter(|p| p.name != "non_square_expansion") {
+        assert!(cases.iter().any(|(_, c)| c.split_whitespace().any(|w| w.split('=').next() == Some(p.name))), "parameter {} is not tested", p.name);
+    }
+
+    // the shapes are 3D: a sphere rises to its middle, a cube's height scales with it
+    let top = |t: &Tex| t.px.iter().map(|p| p[0]).fold(0.0, f32::max);
+    assert!((top(&render("x_amount=1 y_amount=1 shape_type=2")[0]) - 1.0).abs() < 0.02);
+    assert!((top(&render("x_amount=1 y_amount=1 shape_type=1 shape_scale=0.5")[0]) - 0.5).abs() < 1e-3);
+    // the normal format flips green
+    let (dx, gl) = (render(&format!("{base} shape_type=2")), render(&format!("{base} shape_type=2 output_normal_format=1")));
+    assert!(dx[4].px.iter().zip(&gl[4].px).all(|(a, b)| (a[1] + b[1] - 1.0).abs() < 1e-3));
+    // the IDs reach the data: 4 x 4 shapes, the first with the id 1
+    let ids: std::collections::BTreeSet<i32> = render(base)[5].px.iter().map(|p| p[3] as i32).collect();
+    assert_eq!(ids.len(), 17, "16 shapes and the background: {ids:?}");
+    assert!(ids.contains(&0) && ids.contains(&1) && ids.contains(&16));
+    // masking by map hides the shapes standing on its dark part
+    let lit = |t: &Tex| t.px.iter().filter(|p| p[0] > 0.01).count();
+    assert!(lit(&render(&format!("{base} mask_map=@2 mask_map_threshold=0.5"))[0]) < lit(&render(base)[0]));
+    assert_eq!(lit(&render(&format!("{base} mask_random=1"))[0]), 0);
+    // a background above the shapes hides them: the sign says so and they leave no UVW
+    let high = render(&format!("{base} background_height=@3 height_scale=0.1"));
+    assert!(high[6].px.iter().any(|p| p[3] < 0.0));
+    assert!(high[5].px.iter().all(|p| p[3] == 0.0));
+}
+
+#[test]
+fn shape_splatter_v2_wraps_around_the_picture() {
+    // moving the shapes by a whole number of pixels is a circular shift of the picture: no copy of a shape is lost
+    let render = |line: &str| Graph::parse(&format!("size 96\nnode 1 x_shape_splatter_v2 seed=4 {line}\noutput o 1\n")).unwrap().evaluate(None).unwrap()["o"].clone();
+    for line in ["x_amount=5 y_amount=3 shape_type=2 shape_scale=1.3 position_random=0.2", "position_distribution_mode=2 amount=30 shape_type=1 3d_rotation_random=0.2", "size_mode=1 shape_scale=0.8 x_amount=2 y_amount=2 shape_type=5 3d_rotation_random=0.1"] {
+        let (still, moved) = (render(line), render(&format!("{line} global_offset_0=0.5 global_offset_1=0.25")));
+        let off = (0..96 * 96).filter(|i| {
+            let (x, y) = ((i % 96) as i64, (i / 96) as i64);
+            (still.at(x, y)[0] - moved.at(x + 48, y + 24)[0]).abs() > 1e-3
+        });
+        let count = off.count();
+        assert!(count <= 96, "{line}: {count} pixels differ");
+    }
+}
+
+#[test]
+fn shape_splatter_v2_runs_function_graphs() {
+    use materialcraft::tex::Tex;
+    let functions = "subgraph place\nmeta kind \"function\"\nnode 1 f_get name=\"shape.id\"\nnode 2 f_get name=\"shape.amount\"\nnode 3 f_div a=@1 b=@2\nnode 4 f_float v=0.5\nnode 5 f_vec2 x=@3 y=@4\nnode 6 f_out in=@5\nend\n\
+        subgraph stripes\nmeta kind \"function\"\nnode 1 f_pos\nnode 2 f_swizzle a=@1 mask=\"x\"\nnode 3 f_float v=8\nnode 4 f_mul a=@2 b=@3\nnode 5 f_floor a=@4\nnode 6 f_float v=2\nnode 7 f_mod a=@5 b=@6\nnode 8 f_out in=@7\nend\n\
+        subgraph ball\nmeta kind \"function\"\nnode 1 f_get name=\"shape.position.os\"\nnode 2 f_length a=@1\nnode 3 f_float v=0.3\nnode 4 f_sub a=@2 b=@3\nnode 5 f_float v=0.75\nnode 6 f_set a=@5 name=\"shape.metalness\"\nnode 7 f_sequence a=@6 b=@4\nnode 8 f_out in=@7\nend\n\
+        subgraph tint\nmeta kind \"function\"\nnode 1 f_get name=\"shape.id\"\nnode 2 f_float v=16\nnode 3 f_div a=@1 b=@2\nnode 4 f_out in=@3\nend\n";
+    let render = |line: &str, out: &str| -> Tex { Graph::parse(&format!("size 96\n{functions}node 9 {line}\noutput o 9{out}\n")).unwrap().evaluate(None).unwrap()["o"].clone() };
+    // Custom function: one row of shapes, wherever the function says
+    let row = render("x_shape_splatter_v2 position_distribution_mode=3 amount=8 shape_type=2 size_mode=1 shape_scale=0.08 fn.position_function_0=\"place\" fn.position_function_1=\"place\"", "");
+    let lit = |t: &Tex, y: usize| (0..96).filter(|x| t.px[y * 96 + x][0] > 0.05).count();
+    assert!(lit(&row, 48) > 16 && lit(&row, 4) == 0 && lit(&row, 90) == 0, "{} {}", lit(&row, 48), lit(&row, 4));
+    let columns: Vec<_> = (0..96).map(|x| row.px[48 * 96 + x][0] > 0.05).collect();
+    assert!(columns.windows(2).filter(|w| w[0] != w[1]).count() >= 14, "the shapes stand apart");
+    // Pattern function: stripes across the shape
+    let bands = render("x_shape_splatter_v2 x_amount=1 y_amount=1 shape_type=8 fn.pattern_function=\"stripes\"", "");
+    assert!(bands.px[48 * 96..49 * 96].windows(2).filter(|w| (w[0][0] - w[1][0]).abs() > 0.5).count() >= 6);
+    // SDF function: a ball, with the metalness it sets
+    let ball = render("x_shape_splatter_v2 x_amount=1 y_amount=1 shape_type=0 fn.pattern_sdf_function=\"ball\"", "");
+    assert!(ball.px[0][0] < 0.01 && ball.px[48 * 96 + 48][0] > 0.5);
+    let metal = render("x_shape_splatter_v2 x_amount=1 y_amount=1 shape_type=0 fn.pattern_sdf_function=\"ball\"", ".sdf_metalness");
+    assert!((metal.px[48 * 96 + 48][0] - 0.75).abs() < 1e-3 && metal.px[0][0] == 0.0);
+    // Custom mapping: each shape gets the value its function computes from the id
+    let text = format!("size 96\n{functions}node 1 x_shape_splatter_v2 x_amount=4 y_amount=4 shape_type=1 shape_scale=0.8\nnode 2 x_shape_splatter_v2_mapper_grayscale projection_mode=2 fn.custom_function=\"tint\" splatter_uvw=@1.splatter_uvw splatter_data_4=@1.splatter_data_4\noutput o 2\n");
+    let by_id = Graph::parse(&text).unwrap().evaluate(None).unwrap()["o"].clone();
+    let levels: std::collections::BTreeSet<i32> = by_id.px.iter().map(|p| (p[0] * 16.0).round() as i32).collect();
+    assert_eq!(levels.len(), 17, "{levels:?}");
+}
+
+#[test]
+fn shape_splatter_v2_in_a_non_square_picture() {
+    let render = |line: &str| Graph::parse(&format!("size 128 64\nnode 1 x_shape_splatter_v2 x_amount=4 y_amount=4 shape_type=1 shape_scale=0.5 {line}\noutput o 1\n")).unwrap().evaluate(None).unwrap()["o"].clone();
+    let width = |t: &materialcraft::tex::Tex| (0..t.w).filter(|x| t.px[t.h / 8 * t.w + x][0] > 0.1).count();
+    let (expanded, squeezed) = (render(""), render("non_square_expansion=0"));
+    assert_eq!((expanded.w, expanded.h), (128, 64));
+    assert!(width(&expanded) > width(&squeezed), "expansion keeps the cells square, so the shapes stay larger");
+    assert!(width(&render("non_square_expansion=0 keep_size_ratio=0")) > width(&squeezed), "without the ratio they fill their cells");
+}
+
+#[test]
+fn shape_splatter_v2_mapper_settings_change_the_result() {
+    let splat = "size 96\nnode 1 fbm scale=3 octaves=3 seed=4\nnode 2 gradient mode=0 angle=0.1\nnode 3 color r=0.2 g=0.5 b=0.9\nnode 4 color r=0.9 g=0.4 b=0.1\nnode 5 color r=0.1 g=0.8 b=0.2\nnode 6 x_shape_splatter_v2 x_amount=4 y_amount=4 shape_type=2 shape_scale=0.9 seed=3 3d_rotation_random=0.2\nnode 7 x_shape_splatter_v2 x_amount=4 y_amount=4 shape_type=6 pattern_input_number=3 seed=3\nnode 8 x_shape_splatter_v2 x_amount=4 y_amount=4 shape_type=7 seed=3\n";
+    let data = |n: u32| format!("splatter_uvw=@{n}.splatter_uvw splatter_data_1=@{n}.splatter_data_1 splatter_data_2=@{n}.splatter_data_2 splatter_data_3=@{n}.splatter_data_3 splatter_data_4=@{n}.splatter_data_4 normal=@{n}.normal");
+    let render = |kind: &str, n: u32, line: &str| Graph::parse(&format!("{splat}node 9 x_shape_splatter_v2_mapper_{kind} {} {line}\noutput o 9\n", data(n))).unwrap().evaluate(None).unwrap()["o"].clone();
+    let mean_diff = |a: &materialcraft::tex::Tex, b: &materialcraft::tex::Tex| a.px.iter().zip(&b.px).map(|(p, q)| (0..4).map(|c| (p[c] - q[c]).abs()).sum::<f32>()).sum::<f32>() / (a.px.len() * 4) as f32;
+    let three = "pattern_input_number=3 pattern_input_1=@3 pattern_input_2=@4 pattern_input_3=@5";
+    let colour: &[(u32, String, &str)] = &[
+        (6, "pattern_input_1=@1".into(), "projection_mode=1"),
+        (6, "pattern_input_1=@1".into(), "projection_mode=2 custom_function_0=0.3"),
+        (6, "projection_mode=2".into(), "custom_function_0=0.3"),
+        (6, "projection_mode=2".into(), "custom_function_1=0.3"),
+        (6, "projection_mode=2".into(), "custom_function_2=0.3"),
+        (6, "projection_mode=2 background_input=@3".into(), "custom_function_3=0.3"),
+        (6, "pattern_input_1=@3".into(), "is_normal_map=1"),
+        (6, "pattern_input_1=@4 is_normal_map=1".into(), "input_normal_format=1"),
+        (6, "projection_mode=1 pattern_input_1=@1".into(), "blending_contrast=1"),
+        (6, format!("projection_mode=1 {three}"), "image_projection=1"),
+        (6, format!("projection_mode=1 {three}"), "image_projection=2 pattern_input_number=6"),
+        (7, format!("projection_mode=1 {three}"), "image_projection=3"),
+        (6, "projection_mode=1 pattern_input_1=@1".into(), "projection_center_0=0.2"),
+        (6, "projection_mode=1 pattern_input_1=@1".into(), "projection_center_1=0.2"),
+        (6, "projection_mode=1 pattern_input_1=@1".into(), "projection_center_2=0.2"),
+        (6, "projection_mode=1 pattern_input_1=@1".into(), "projection_scale=3"),
+        (7, three.into(), "input_selection_mode=1"),
+        (7, three.into(), "input_selection_mode=2"),
+        (7, "pattern_input_1=@3 pattern_input_2=@4 pattern_input_3=@5".into(), "pattern_input_number=3"),
+        (7, format!("{three} input_selection_mode=1"), "image_index=2"),
+        (7, format!("{three} input_selection_mode=2"), "random_range_0=1"),
+        (7, format!("{three} input_selection_mode=2"), "random_range_1=1"),
+        (6, "pattern_input_1=@3".into(), "hsl_adjustment_0=0.3"),
+        (6, "pattern_input_1=@3".into(), "hsl_adjustment_1=-0.5"),
+        (6, "pattern_input_1=@3".into(), "hsl_adjustment_2=-0.5"),
+        (6, "pattern_input_1=@3".into(), "hsl_random_0=0.4"),
+        (6, "pattern_input_1=@3".into(), "hsl_random_1=0.5"),
+        (6, "pattern_input_1=@3".into(), "hsl_random_2=0.5"),
+        (6, "pattern_input_1=@3 color_input=@1".into(), "color_input_opacity=1"),
+        (6, "pattern_input_1=@3 color_input=@1 color_input_opacity=1".into(), "color_input_blending_mode=1"),
+        (6, "pattern_input_1=@3 color_input=@1 color_input_opacity=1".into(), "color_input_blending_mode=2"),
+        (6, "pattern_input_1=@3 color_input=@1 color_input_opacity=1".into(), "color_input_blending_mode=3"),
+        (6, "pattern_input_1=@3 color_input=@1 color_input_opacity=1".into(), "color_input_blending_mode=4"),
+        (6, "pattern_input_1=@3 is_normal_map=1".into(), "normal_angle_random=0.8"),
+        (6, "pattern_input_1=@1 uv_offset_0=0.4".into(), "tiling_mode=0"),
+        (6, "pattern_input_1=@1 uv_offset_1=0.4".into(), "tiling_mode=1"),
+        (6, "pattern_input_1=@1 uv_offset_0=0.4".into(), "tiling_mode=2"),
+        (6, "pattern_input_1=@1".into(), "uv_tiling=3"),
+        (6, "pattern_input_1=@1".into(), "uv_scale_0=3"),
+        (6, "pattern_input_1=@1".into(), "uv_scale_1=3"),
+        (6, "pattern_input_1=@1".into(), "uv_offset_0=0.3"),
+        (6, "pattern_input_1=@1".into(), "uv_offset_1=0.3"),
+        (6, "pattern_input_1=@1".into(), "random_offset=0.4"),
+        (6, "pattern_input_1=@1 random_offset=0.4".into(), "seed=5"),
+    ];
+    for (n, extra, change) in colour {
+        let d = mean_diff(&render("color", *n, extra), &render("color", *n, &format!("{extra} {change}")));
+        assert!(d > 5e-4, "color [{extra}] {change}: no visible change ({d})");
+    }
+    let grey: &[(u32, String, &str)] = &[
+        (6, "pattern_input_1=@1".into(), "projection_mode=1"),
+        (6, "projection_mode=2".into(), "custom_function=0.3"),
+        (6, "projection_mode=1 pattern_input_1=@1".into(), "blending_contrast=1"),
+        (6, format!("projection_mode=1 {three}"), "image_projection=1"),
+        (6, "projection_mode=1 pattern_input_1=@1".into(), "projection_center_0=0.2"),
+        (6, "projection_mode=1 pattern_input_1=@1".into(), "projection_scale=3"),
+        (7, three.into(), "input_selection_mode=2"),
+        (7, "pattern_input_1=@3 pattern_input_2=@4".into(), "pattern_input_number=2"),
+        (7, format!("{three} input_selection_mode=1"), "image_index=1"),
+        (7, format!("{three} input_selection_mode=2"), "random_range_0=1"),
+        (6, "pattern_input_1=@3".into(), "luminance_adjustment=0.3"),
+        (6, "pattern_input_1=@3".into(), "luminance_random=0.4"),
+        (6, "pattern_input_1=@3 color_input=@1".into(), "color_input_opacity=1"),
+        (6, "pattern_input_1=@3 color_input=@1 color_input_opacity=1".into(), "color_input_blending_mode=3"),
+        (6, "pattern_input_1=@1 uv_offset_0=0.4".into(), "tiling_mode=0"),
+        (6, "pattern_input_1=@1".into(), "uv_tiling=3"),
+        (6, "pattern_input_1=@1".into(), "uv_scale_1=3"),
+        (6, "pattern_input_1=@1".into(), "uv_offset_0=0.3"),
+        (6, "pattern_input_1=@1".into(), "random_offset=0.4"),
+    ];
+    for (n, extra, change) in grey {
+        let d = mean_diff(&render("grayscale", *n, extra), &render("grayscale", *n, &format!("{extra} {change}")));
+        assert!(d > 5e-4, "grayscale [{extra}] {change}: no visible change ({d})");
+    }
+
+    // the background stays around the shapes
+    let plain = render("color", 6, "background_input=@3 pattern_input_1=@4");
+    assert!(plain.px.iter().any(|p| (p[0] - 0.9).abs() < 1e-3) && plain.px.iter().any(|p| (p[2] - 0.9).abs() < 1e-3));
+    // the mapper reads the cell the splatter chose, in an atlas packed by Grid Atlas
+    let text = format!("{splat}node 9 x_grid_atlas_color grid_size_x=2 grid_size_y=2 input_1=@3 input_2=@4 input_3=@5 input_4=@2\nnode 10 x_shape_splatter_v2_mapper_color grid_atlas_input=@9 {}\noutput o 10\n", data(8));
+    let mapped = Graph::parse(&text).unwrap().evaluate(None).unwrap()["o"].clone();
+    for c in [[0.2, 0.5, 0.9], [0.9, 0.4, 0.1], [0.1, 0.8, 0.2]] {
+        assert!(mapped.px.iter().any(|p| (0..3).all(|i| (p[i] - c[i]).abs() < 1e-2)), "colour {c:?} of the atlas is on a shape");
+    }
+}
+
+#[test]
+fn shape_splatter_v2_to_mask_selects_shapes() {
+    let render = |line: &str| Graph::parse(&format!("size 96\nnode 1 x_shape_splatter_v2 x_amount=4 y_amount=4 shape_type=6 pattern_input_number=4 shape_scale=0.8 seed=3\nnode 2 x_shape_splatter_v2_to_mask splatter_uvw=@1.splatter_uvw {line}\noutput o 2\n")).unwrap().evaluate(None).unwrap()["o"].clone();
+    let values = |t: &materialcraft::tex::Tex| t.px.iter().map(|p| (p[0] * 1000.0).round() as i32).collect::<std::collections::BTreeSet<i32>>();
+    let lit = |t: &materialcraft::tex::Tex| t.px.iter().filter(|p| p[0] > 0.0).count();
+    let all = render("");
+    assert_eq!(values(&all).len(), 2, "binary: background and shapes");
+    assert_eq!(values(&render("output=1")).len(), 17, "the 16 shape ids");
+    assert!(values(&render("output=2")).len() >= 3, "the pattern ids");
+    // the lowest selected id is 0 here, like the background
+    assert_eq!(values(&render("output=3")).len(), 16);
+    assert!(render("output=3").px.iter().all(|p| p[0] <= 1.0));
+    assert_eq!(render("output=4").px.iter().map(|p| p[0]).fold(0.0, f32::max), 1.0);
+    let few = render("shape_id_start_range=3 shape_id_end_range=6");
+    assert_eq!(values(&render("shape_id_start_range=3 shape_id_end_range=6 output=1")).len(), 5);
+    assert!(lit(&few) < lit(&all));
+    assert!(lit(&render("shape_id_end_range=6")) > lit(&few));
+    let moved = render("shape_id_start_range=3 shape_id_end_range=6 shape_id_offset=4");
+    assert!(lit(&moved) > 0);
+    assert!(moved.px.iter().zip(&few.px).any(|(a, b)| a[0] != b[0]));
+    let pattern = "material_pattern_id_start_range=1 material_pattern_id_end_range=1";
+    let and = render(&format!("shape_id_end_range=8 material_pattern_id_mask_combination=1 {pattern}"));
+    let or = render(&format!("shape_id_end_range=8 material_pattern_id_mask_combination=2 {pattern}"));
+    let id = render("shape_id_end_range=8");
+    assert!(lit(&and) < lit(&id) && lit(&or) > lit(&id));
+    assert!(render("shape_id_end_range=8 material_pattern_id_mask_combination=1 material_pattern_id_start_range=0 material_pattern_id_end_range=0").px.iter().zip(&and.px).any(|(a, b)| a[0] != b[0]));
+    let half = render("shape_random_mask=0.5");
+    assert!(lit(&half) < lit(&all) && lit(&half) > 0);
+    assert_eq!(lit(&render("shape_random_mask=1")), 0);
+    assert!(render("seed=2 shape_random_mask=0.5").px.iter().zip(&half.px).any(|(a, b)| a[0] != b[0]));
+}
+
+#[test]
+fn grid_atlas_packs_the_pictures() {
+    let render = |line: &str| Graph::parse(&format!("size 64\nnode 1 color r=1 g=0 b=0\nnode 2 color r=0 g=1 b=0\nnode 3 color r=0 g=0 b=1\nnode 4 color r=0.5 g=0.5 b=0.5\nnode 5 {line}\noutput o 5\n")).unwrap().evaluate(None).unwrap()["o"].clone();
+    let at = |t: &materialcraft::tex::Tex, x: usize, y: usize| t.px[y * t.w + x];
+    let grid = render("x_grid_atlas_color input_1=@1 input_2=@2 input_3=@3 input_4=@4");
+    assert_eq!(at(&grid, 8, 8), [1.0, 0.0, 0.0, 1.0]);
+    assert_eq!(at(&grid, 40, 8), [0.0, 1.0, 0.0, 1.0]);
+    assert_eq!(at(&grid, 8, 40), [0.0, 0.0, 1.0, 1.0]);
+    assert_eq!(at(&grid, 40, 40)[0], 0.5);
+    // the grid's size: more columns, more rows, an empty cell stays transparent
+    let wide = render("x_grid_atlas_color input_1=@1 input_2=@2 input_3=@3 grid_size_x=3 grid_size_y=1");
+    assert_eq!((at(&wide, 5, 60)[0], at(&wide, 30, 60)[1], at(&wide, 60, 60)[2]), (1.0, 1.0, 1.0));
+    let tall = render("x_grid_atlas_color input_1=@1 input_2=@2 grid_size_x=1 grid_size_y=2");
+    assert_eq!((at(&tall, 60, 5)[0], at(&tall, 60, 60)[1]), (1.0, 1.0));
+    assert_eq!(at(&render("x_grid_atlas_color input_1=@1"), 60, 60), [0.0; 4]);
+    // sixteen cells, the last input in the corner
+    let many = render("x_grid_atlas_grayscale grid_size_x=4 grid_size_y=4 input_1=@1 input_16=@4");
+    assert!((at(&many, 60, 60)[0] - 0.5).abs() < 1e-3 && at(&many, 5, 60)[0] == 0.0);
+    // grayscale is gray
+    let gray = render("x_grid_atlas_grayscale input_1=@1");
+    assert!(gray.px.iter().all(|p| p[0] == p[1] && p[1] == p[2] && p[3] == 1.0));
+    assert!(gray.px[0][0] > 0.0);
+    // automatic ratio: the picture follows the grid, rounded to a power of two
+    let size = |line: &str| {
+        let t = render(line);
+        (t.w, t.h)
+    };
+    assert_eq!(size("x_grid_atlas_color grid_size_x=2 grid_size_y=1"), (64, 64));
+    assert_eq!(size("x_grid_atlas_color grid_size_x=2 grid_size_y=1 output_size_mode=1"), (64, 32));
+    assert_eq!(size("x_grid_atlas_color grid_size_x=1 grid_size_y=4 output_size_mode=1"), (16, 64));
+    assert_eq!(size("x_grid_atlas_grayscale grid_size_x=3 grid_size_y=2 output_size_mode=1"), (64, 32));
+    assert_eq!(size("x_grid_atlas_grayscale grid_size_x=4 grid_size_y=3 output_size_mode=1"), (64, 64));
+}
+
+#[test]
+fn shape_splatter_v2_and_grid_atlas_labels_avoid_registered_names() {
+    use materialcraft::graph::label;
+    for k in ["x_shape_splatter_v2", "x_shape_splatter_v2_mapper_color", "x_shape_splatter_v2_mapper_grayscale", "x_shape_splatter_v2_to_mask", "x_grid_atlas_color", "x_grid_atlas_grayscale"] {
+        assert!(materialcraft::nodes10::info(k).is_some(), "{k} is registered");
+        let l = label(k);
+        assert!(!l.contains("Substance") && !l.contains("Bitmap2Material"), "{l}");
+    }
+    assert_eq!(label("x_shape_splatter_v2_to_mask"), "Shape Splatter V2 To Mask");
+}

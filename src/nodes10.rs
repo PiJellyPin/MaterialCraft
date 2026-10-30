@@ -72,6 +72,8 @@ pub const LIBS: &[(&str, &str, &str)] = &[
     ("x_get_size_color", "value_get_size", "get_size_color"),
     ("x_get_size_grayscale", "value_get_size", "get_size_grayscale"),
     ("x_gravel", "gravel", "gravel"),
+    ("x_grid_atlas_color", "grid_atlas", "grid_atlas_color"),
+    ("x_grid_atlas_grayscale", "grid_atlas", "grid_atlas_grayscale"),
     ("x_hald_clut", "hald_clut", "hald_clut"),
     ("x_hdr_exposure_preview", "hdr_exposure_preview", "hdr_exposure_preview"),
     ("x_hdr_merge_2", "hdr_merge", "hdr_merge_2"),
@@ -192,6 +194,10 @@ pub const LIBS: &[(&str, &str, &str)] = &[
     ("x_shape_splatter_blend_color", "shape_splatter", "shape_splatter_blend_color"),
     ("x_shape_splatter_data_extract", "shape_splatter", "shape_splatter_data_extract"),
     ("x_shape_splatter_to_mask", "shape_splatter", "shape_splatter_to_mask"),
+    ("x_shape_splatter_v2", "shape_splatter_v2", "shape_splatter_v2"),
+    ("x_shape_splatter_v2_mapper_color", "shape_splatter_v2", "shape_splatter_v2_mapper_color"),
+    ("x_shape_splatter_v2_mapper_grayscale", "shape_splatter_v2", "shape_splatter_v2_mapper_grayscale"),
+    ("x_shape_splatter_v2_to_mask", "shape_splatter_v2", "shape_splatter_v2_to_mask"),
     ("x_smart_auto_tile", "smart_auto_tile", "smart_auto_tile"),
     ("x_snow_cover", "me_snow_cover", "snow_cover"),
     ("x_spline_2dtransform", "spline_tools", "spline_2dtransform"),
@@ -313,7 +319,7 @@ pub fn category(kind: &str) -> &'static str {
     let k = kind.strip_prefix("x_").unwrap_or(kind);
     if k.starts_with("mg_") || k.starts_with("material_") || k.ends_with("_weathering") || k.starts_with("pbr_") || k.starts_with("snow") || k.starts_with("water") || k == "mesh_data_combiner" || k == "multi_material_blend" || preset_material(kind) {
         "Material"
-    } else if k.starts_with("spline") || k.contains("path") || k.starts_with("scatter_") || k == "point_list" || k.starts_with("shape_splatter") || k.starts_with("panorama") || k == "blackbody" || k.starts_with("cube_3d") || k == "3d_texture_position" || k == "scratches_generator_normal" {
+    } else if k.starts_with("spline") || k.contains("path") || k.starts_with("scatter_") || k == "point_list" || k.starts_with("shape_splatter") || k.starts_with("grid_atlas") || k.starts_with("panorama") || k == "blackbody" || k.starts_with("cube_3d") || k == "3d_texture_position" || k == "scratches_generator_normal" {
         "Generators"
     } else {
         "Filters"
@@ -335,7 +341,7 @@ pub fn preset_material(kind: &str) -> bool {
 pub fn data_node(kind: &str) -> bool {
     let k = kind.strip_prefix("x_").unwrap_or(kind);
     k.starts_with("spline_") && !matches!(k, "spline_render" | "spline_fill" | "spline_flow_mapper" | "spline_mapper_color" | "spline_mapper_grayscale" | "spline_bridge_mapper_color" | "spline_bridge_mapper_grayscale")
-        || matches!(k, "point_list" | "scatter_splines_on_splines" | "path_to_spline" | "2dtransform_path" | "mask_to_paths_2" | "paths_polygon" | "paths_warp" | "quad_transform_path" | "select_path" | "vertex_processor" | "vertex_processor_simple" | "shape_splatter" | "3d_texture_position" | "3d_texture_sdf" | "panorama_3d_position" | "cube_3d_gbuffers" | "get_size_color" | "get_size_grayscale" | "histogram_compute")
+        || matches!(k, "point_list" | "scatter_splines_on_splines" | "path_to_spline" | "2dtransform_path" | "mask_to_paths_2" | "paths_polygon" | "paths_warp" | "quad_transform_path" | "select_path" | "vertex_processor" | "vertex_processor_simple" | "shape_splatter" | "shape_splatter_v2" | "3d_texture_position" | "3d_texture_sdf" | "panorama_3d_position" | "cube_3d_gbuffers" | "get_size_color" | "get_size_grayscale" | "histogram_compute")
 }
 
 /// Type of output `out` (None: not one of these nodes).
@@ -343,7 +349,7 @@ pub fn pin(kind: &str, out: Option<&str>) -> Option<Pin> {
     let i = info(kind)?;
     let name = out.map(str::to_string).unwrap_or_else(|| i.lib.outputs.first().map(|s| s.to_string()).unwrap_or_default()).to_ascii_lowercase();
     let k = kind.to_ascii_lowercase();
-    if k.ends_with("_grayscale") || k.ends_with("_greyscale") || k.starts_with("x_mg_") && k != "x_mg_light" || k == "x_material_selector" || k == "x_id_to_mask_grayscale" {
+    if k.ends_with("_grayscale") || k.ends_with("_greyscale") || k.starts_with("x_mg_") && k != "x_mg_light" || k == "x_material_selector" || k == "x_id_to_mask_grayscale" || k == "x_shape_splatter_v2_to_mask" {
         if !matches!(name.as_str(), "uv" | "direction_map" | "spline_coords" | "spline_data" | "position" | "uv_shape_space" | "uv_texture_space" | "bounding_box_size") {
             return Some(Pin::Gray);
         }
@@ -352,7 +358,7 @@ pub fn pin(kind: &str, out: Option<&str>) -> Option<Pin> {
         "diffuse", "basecolor", "normal", "specular", "emissive", "color", "position", "uv", "spline_coords", "spline_data", "point_list", "paths", "tracing", "direction_map", "splatter_data", "palette", "albedo", "raw_irradiance", "raw_specular", "normalws", "output", "clone", "areas", "area", "speuclar_face_color", "reflection", "input", "preview",
         "uv_shape_space", "uv_texture_space", "bounding_box_size", "lighting_cancel", "vertex_color", "direction",
     ];
-    let gray_names = ["roughness", "metallic", "height", "glossiness", "ambient", "opacity", "mask", "depth", "thickness", "curvature", "shape_count", "pattern", "user1", "user2", "histogram", "cdf", "ior", "f0", "spline_amount", "point_number", "shape_index", "pattern_id", "shape_angle", "guessed_intensity", "specularlevel", "specular_level", "anisotropy", "displacement", "relief", "id", "palette_color_amount", "position_grayscale", "height_mask"];
+    let gray_names = ["roughness", "metallic", "height", "glossiness", "ambient", "opacity", "mask", "depth", "thickness", "curvature", "shape_count", "pattern", "user1", "user2", "histogram", "cdf", "ior", "f0", "spline_amount", "point_number", "shape_index", "pattern_id", "shape_angle", "sdf_metalness", "sdf_roughness", "guessed_intensity", "specularlevel", "specular_level", "anisotropy", "displacement", "relief", "id", "palette_color_amount", "position_grayscale", "height_mask"];
     if gray_names.iter().any(|g| name.starts_with(g)) && !name.starts_with("height_mask_color") {
         if name == "id" && k.starts_with("x_spline") {
             return Some(Pin::Gray);
@@ -439,6 +445,7 @@ fn note(kind: &str) -> Option<&'static str> {
             "spline data travels in MaterialCraft's own encoding: these nodes work together, not with other programs' spline images"
         }
         k if k.contains("path") || k.starts_with("x_vertex_processor") => "path data travels in MaterialCraft's own encoding: these nodes work together, not with other programs' path images",
+        k if k.starts_with("x_shape_splatter_v2") || k.starts_with("x_grid_atlas") => "the identifiers and input names of this graph are inferred from its public documentation and may not bind to a real file; splatter data travels in MaterialCraft's own encoding, read by the Shape Splatter v2 nodes only",
         k if k.starts_with("x_shape_splatter") => "splatter data travels in MaterialCraft's own encoding: these nodes work together, not with other programs' splatter images",
         k if k.starts_with("x_3d_texture") => "3D textures are slice atlases in MaterialCraft's own layout (grid of slices, first slice top left)",
         k if k.ends_with("_weathering") => "the weathering is MaterialCraft's own (masks from curvature, occlusion and noise)",
@@ -560,11 +567,21 @@ pub fn compute(kind: &str, _id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, 
     let t = crate::nodes10_img::compute(&cx)
         .or_else(|| crate::nodes10_mat::compute(&cx))
         .or_else(|| crate::nodes10_spl::compute(&cx))
-        .or_else(|| crate::nodes10_pano::compute(&cx));
+        .or_else(|| crate::nodes10_pano::compute(&cx))
+        .or_else(|| crate::nodes10_sv2::compute(&cx));
     match t {
         Some(t) => Ok(Some(t)),
         None => Err(Error::BadParam(_id, format!("{kind}: not implemented"))),
     }
+}
+
+/// Runs `f` with what the implementation of node `n` sees, for implementations that need more than [`compute`] hands on.
+pub fn with_inputs<R>(kind: &str, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, s: usize, hs: usize, seed: u32, f: impl FnOnce(&Cx) -> R) -> Option<R> {
+    let info = info(kind)?;
+    let out = n.nums.get("_out").copied().unwrap_or(0.0).max(0.0).round() as usize;
+    let want = n.nums.get("_want").copied().unwrap_or(0.0).max(0.0) as u32 | (1u32 << out.min(31));
+    let cx = Cx { kind, n, lib: info.lib, ins, s: s.max(1), hs: hs.max(1), seed, out, want, outs: info.outs };
+    Some(f(&cx))
 }
 
 /// Runs `f` with a parameter reader for node `n` of extension kind `kind` (no input pictures): the GPU code reads a

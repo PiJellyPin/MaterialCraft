@@ -3503,6 +3503,233 @@ id_range_start i1 1 ~ 1 8
 id_range_end i1 1 ~ 1 8
 random_mask f1 0 ~ 0 1
 output i1 0
+@shape_splatter_v2 shape_splatter_v2
+> height sdf_color sdf_metalness sdf_roughness normal splatter_uvw splatter_data_1 splatter_data_2 splatter_data_3 splatter_data_4
+background_height g
+density_map g
+height_offset_map g
+height_scale_map g
+shape_scale_map g
+shape_rotation_map g
+vector_map c
+mask_map g
+pattern_input_1 g
+pattern_input_2 g
+pattern_input_3 g
+pattern_input_4 g
+pattern_input_5 g
+pattern_input_6 g
+pattern_input_7 g
+pattern_input_8 g
+grid_atlas_height g
+grid_atlas_normal c
+position_distribution_mode i1 0 ~ 0 3
+position_function f2 0.5 0.5 ~ 0 1
+x_amount i1 8 ~ 1 64
+y_amount i1 8 ~ 1 64
+amount i1 64 ~ 1 4096
+position_distribution_sequence i1 0 ~ 0 1
+output_normal_format i1 0
+non_square_expansion b 1
+shape_type i1 2 ~ 0 8
+grid_atlas_size i2 2 2 ~ 1 4
+recompute_grid_atlas_normal b 0
+grid_atlas_normal_format i1 0
+pattern_input_number i1 1 ~ 1 8
+enable_shape_extrude b 0
+shape_extrude_symmetry b 0
+shape_extrude_height f1 0.1 ~ 0 1
+shape_extrude_samples i1 16 ~ 1 64
+pattern_function f1 1 ~ 0 1
+pattern_sdf_function f1 0 ~ 0 0.5
+sdf_bounding_frame_size f3 1 1 1 ~ 0 2
+enable_cutout b 1
+cutout_threshold f1 0.01 ~ 0 1
+normalized_workflow b 0
+shape_scale_affects_height_scale b 1
+height_scale f1 1 ~ 0 1
+height_scale_random f1 0 ~ 0 1
+height_scale_map_multiplier f1 0 ~ 0 1
+background_input_opacity f1 1 ~ 0 1
+height_offset_from_background f1 0 ~ 0 1
+conform_to_background f1 0 ~ 0 1
+smooth_background_slope f1 0 ~ 0 1
+height_offset f1 0 ~ -1 1
+height_offset_random f1 0 ~ 0 1
+height_offset_from_id f1 0 ~ 0 1
+height_offset_map_multiplier f1 0 ~ 0 1
+size_mode i1 0 ~ 0 1
+keep_size_ratio b 1
+shape_scale f1 1 ~ 0 2
+shape_scale_random f1 0 ~ 0 1
+scale_map_multiplier f1 0 ~ 0 1
+shape_scale_post_poisson f1 1 ~ 0 2
+shape_size f3 1 1 1 ~ 0 2
+shape_size_random f3 0 0 0 ~ 0 1
+shape_size_2d f2 1 1 ~ 0 2
+shape_size_random_2d f2 0 0 ~ 0 1
+cylinder_radius f1 0.5 ~ 0 1
+position_random f1 0 ~ 0 1
+position_random_multiplier f2 1 1 ~ 0 1
+density_map_multiplier f1 0 ~ 0 1
+offset_along_normal f1 0 ~ -1 1
+offset_along_normal_random f1 0 ~ 0 1
+vector_map_displacement f1 0 ~ 0 1
+vector_displacement_multiplier f3 1 1 1 ~ 0 1
+global_offset f2 0 0 ~ -1 1
+line_position_offset f1 0 ~ -1 1
+line_position_offset_mode i1 2 ~ 0 3
+pivot_position_local f3 0 0 0 ~ -1 1
+3d_rotation f3 0 0 0 ~ -1 1
+3d_rotation_random f1 0 ~ 0 1
+3d_rotation_random_multiplier f3 1 1 1 ~ 0 1
+3d_rotation_map_multiplier f3 0 0 0 ~ 0 1
+rotation_around_normal f1 0 ~ -1 1
+rotation_around_normal_random f1 0 ~ 0 1
+slope_rotation f1 0 ~ 0 1
+slope_rotation_input i1 0
+vector_map_multiplier f1 0 ~ 0 1
+vector_map_rotation_axis i1 0
+mask_random f1 0 ~ 0 1
+mask_map_threshold f1 0.5 ~ 0 1
+uv_scale f2 1 1 ~ 0 8
+cap_uv_scale f2 1 1 ~ 0 8
+cap_uv_mode i1 0
+show_shape_2d_bbox b 0
+show_shape_3d_bbox b 0
+show_shape_pivot b 0
+@shape_splatter_v2 shape_splatter_v2_mapper_color
+> output
+grid_atlas_input c
+pattern_input_1 c
+pattern_input_2 c
+pattern_input_3 c
+pattern_input_4 c
+pattern_input_5 c
+pattern_input_6 c
+pattern_input_7 c
+pattern_input_8 c
+background_input c
+color_input c
+normal c
+splatter_uvw c
+splatter_data_1 c
+splatter_data_2 c
+splatter_data_3 c
+splatter_data_4 c
+projection_mode i1 0
+custom_function f4 1 1 1 1 ~ 0 1
+is_normal_map b 0
+input_normal_format i1 0
+blending_contrast f1 0.5 ~ 0 1
+image_projection i1 0
+projection_center f3 0 0 0 ~ -1 1
+projection_scale f1 1 ~ 0 8
+input_selection_mode i1 0
+pattern_input_number i1 1 ~ 1 8
+image_index i1 0 ~ 0 15
+random_range i2 0 7 ~ 0 15
+hsl_adjustment f3 0 0 0 ~ -1 1
+hsl_random f3 0 0 0 ~ 0 1
+color_input_opacity f1 0 ~ 0 1
+color_input_blending_mode i1 0
+normal_angle_random f1 0 ~ 0 1
+tiling_mode i1 3
+uv_tiling f1 1 ~ 0 8
+uv_scale f2 1 1 ~ 0 8
+uv_offset f2 0 0 ~ -1 1
+random_offset f1 0 ~ 0 1
+@shape_splatter_v2 shape_splatter_v2_mapper_grayscale
+> output
+grid_atlas_input g
+pattern_input_1 g
+pattern_input_2 g
+pattern_input_3 g
+pattern_input_4 g
+pattern_input_5 g
+pattern_input_6 g
+pattern_input_7 g
+pattern_input_8 g
+background_input g
+color_input g
+normal c
+splatter_uvw c
+splatter_data_1 c
+splatter_data_2 c
+splatter_data_3 c
+splatter_data_4 c
+projection_mode i1 0
+custom_function f1 1 ~ 0 1
+blending_contrast f1 0.5 ~ 0 1
+image_projection i1 0
+projection_center f3 0 0 0 ~ -1 1
+projection_scale f1 1 ~ 0 8
+input_selection_mode i1 0
+pattern_input_number i1 1 ~ 1 8
+image_index i1 0 ~ 0 15
+random_range i2 0 7 ~ 0 15
+luminance_adjustment f1 0 ~ -1 1
+luminance_random f1 0 ~ 0 1
+color_input_opacity f1 0 ~ 0 1
+color_input_blending_mode i1 0
+tiling_mode i1 3
+uv_tiling f1 1 ~ 0 8
+uv_scale f2 1 1 ~ 0 8
+uv_offset f2 0 0 ~ -1 1
+random_offset f1 0 ~ 0 1
+@shape_splatter_v2 shape_splatter_v2_to_mask
+> output
+splatter_uvw c
+output i1 0
+shape_id_start_range i1 0 ~ 0 4096
+shape_id_end_range i1 4096 ~ 0 4096
+shape_id_offset i1 0 ~ -4096 4096
+material_pattern_id_mask_combination i1 0
+material_pattern_id_start_range i1 0 ~ 0 255
+material_pattern_id_end_range i1 255 ~ 0 255
+shape_random_mask f1 0 ~ 0 1
+@grid_atlas grid_atlas_color
+> output
+input_1 c
+input_2 c
+input_3 c
+input_4 c
+input_5 c
+input_6 c
+input_7 c
+input_8 c
+input_9 c
+input_10 c
+input_11 c
+input_12 c
+input_13 c
+input_14 c
+input_15 c
+input_16 c
+grid_size_x i1 2 ~ 1 4
+grid_size_y i1 2 ~ 1 4
+output_size_mode i1 0
+@grid_atlas grid_atlas_grayscale
+> output
+input_1 g
+input_2 g
+input_3 g
+input_4 g
+input_5 g
+input_6 g
+input_7 g
+input_8 g
+input_9 g
+input_10 g
+input_11 g
+input_12 g
+input_13 g
+input_14 g
+input_15 g
+input_16 g
+grid_size_x i1 2 ~ 1 4
+grid_size_y i1 2 ~ 1 4
+output_size_mode i1 0
 @splatter splatter
 > Splatter_Grayscale
 Pattern_size_width f1 100 ~ 0 1000

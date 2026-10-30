@@ -2268,7 +2268,7 @@ fn eval_res(g: &Graph, id: u32, out: Option<&str>, ctx: &Ctx, ext: &[Option<Rc<L
     }
     // the node's own output size; inputs of another size are resampled to it
     let dims: BTreeMap<String, (usize, usize)> = ins_l.iter().map(|(k, t)| (k.clone(), (t.w, t.h))).collect();
-    let sz = node_size_d(n, &dims, ctx);
+    let sz = crate::nodes10_sv2::output_size(n, node_size_d(n, &dims, ctx));
     let node_ctx;
     let ctx = if sz.0 != ctx.size || sz.1 != ctx.height {
         node_ctx = Ctx { size: sz.0, height: sz.1, nominal: ctx.nominal, lib: ctx.lib, res: ctx.res, so: ctx.so, depth: ctx.depth, gin: ctx.gin };
@@ -2807,7 +2807,7 @@ fn bind_functions(id: u32, n: &Node, ctx: &Ctx) -> Result<Node, Error> {
     let mut out = n.clone();
     for (k, fname) in &n.strs {
         let Some(param) = k.strip_prefix("fn.") else { continue };
-        if fname.is_empty() {
+        if fname.is_empty() || crate::nodes10_sv2::per_shape_param(&n.kind, param) {
             continue;
         }
         let prog = compile_named(ctx.lib, fname).map_err(|e| Error::BadParam(id, format!("{k}: {e}")))?;
@@ -3013,6 +3013,14 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
             t
         }
     };
+    if crate::nodes10_sv2::runs_functions(&n.kind) {
+        if let Some(r) = crate::nodes10_sv2::compute_with_functions(&n.kind, n, ins, s, hs, seed, ctx.lib, ctx.gin) {
+            return r.map_err(|e| match e {
+                Error::BadParam(_, m) => Error::BadParam(id, m),
+                e => e,
+            });
+        }
+    }
     let out = match n.kind.as_str() {
         "color" => {
             if f("gray", 0.0) > 0.5 {
@@ -3843,7 +3851,8 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
         "channel" => ops::channel(tex("in")?, f("ch", 0.0).max(0.0) as usize),
         "merge" => {
             let g = |slot: &str, ch: usize| ins.get(slot).map(|t| ops::channel(t, ch));
-            let (r, gg, b, a) = (g("r", 0), g("g", 1), g("b", 2), g("a", 3));
+            // the alpha is the grey value of its input (its luminance), not that input's own alpha (1 for a grey map)
+            let (r, gg, b, a) = (g("r", 0), g("g", 1), g("b", 2), ins.get("a").map(|t| ops::to_gray(t)));
             Tex::from_fn(s, hs, |u, v| {
                 let q = |t: &Option<Tex>, d: f32| t.as_ref().map(|t| t.sample(u, v)[0]).unwrap_or(d);
                 [q(&r, 0.0), q(&gg, 0.0), q(&b, 0.0), q(&a, 1.0)]
