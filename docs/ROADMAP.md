@@ -62,7 +62,7 @@ Note: Initial MaterialX exports may not fully reproduce advanced node graph beha
 
 ## Crash Reporting and Local Playbacks
 
-- [ ] Improve the undo/redo system by supporting a timeline scrubbing of user actions stored as a complimentary object file (can be turned off)
+- [ ] Improve the undo/redo system by supporting a timeline scrubbing of user actions stored as a complimentary project file (can be turned off)
 - [ ] Have an automatic crash report screen that can be used to easily populate a GitHub issue request
 
 ## User Interface
