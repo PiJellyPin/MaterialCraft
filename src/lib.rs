@@ -74,6 +74,7 @@ pub mod sbs_lib;
 pub mod sbs_adapt;
 pub mod sbs_defs;
 pub mod sbs_native;
+pub mod user_templates;
 pub mod noise_styles;
 pub mod session;
 pub mod pool;

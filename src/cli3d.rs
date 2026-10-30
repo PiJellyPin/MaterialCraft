@@ -91,6 +91,7 @@ impl MaterialMaps {
             ao: get("ambient_occlusion").unwrap_or(&self.one),
             emissive: get("emissive"),
             height: get("height"),
+            opacity: get("opacity"),
             env: None,
         }
     }
