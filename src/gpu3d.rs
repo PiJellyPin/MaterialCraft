@@ -53,7 +53,7 @@ impl Default for GpuOpts {
 /// Texture data prepared on the CPU (resampled to one size, packed, converted) and ready to upload.
 pub struct GpuMaps {
     pub size: usize,
-    /// sRGB RGBA8
+    /// sRGB RGBA8; alpha is the opacity (the opacity map, else the base colour's own alpha)
     pub base: Vec<u8>,
     /// linear RGBA8 tangent-space normal
     pub normal: Vec<u8>,
@@ -80,6 +80,8 @@ pub struct MapInputs<'a> {
     pub ao: Option<&'a Tex>,
     pub emissive: Option<&'a Tex>,
     pub height: Option<&'a Tex>,
+    /// opacity map (luminance); without one the base colour's alpha is the opacity
+    pub opacity: Option<&'a Tex>,
 }
 
 fn b8(v: f32) -> u8 {
@@ -116,7 +118,7 @@ fn fit(t: &Tex, size: usize) -> Tex {
 
 /// Convert graph outputs into upload-ready buffers. All colour maps are brought to the largest map size.
 pub fn prepare(m: &MapInputs) -> GpuMaps {
-    let all = [m.base, m.normal, m.rough, m.metal, m.ao, m.emissive];
+    let all = [m.base, m.normal, m.rough, m.metal, m.ao, m.emissive, m.opacity];
     let size = all.iter().flatten().map(|t| t.w.max(t.h)).max().unwrap_or(4).clamp(1, 4096);
     let fitted: Vec<Option<Tex>> = all.iter().map(|t| t.filter(|t| t.w != size || t.h != size).map(|t| fit(t, size))).collect();
     let px = |k: usize, t: Option<&Tex>, dflt: [f32; 4], i: usize| -> [f32; 4] {
@@ -134,7 +136,19 @@ pub fn prepare(m: &MapInputs) -> GpuMaps {
         });
         v.into_iter().flatten().collect()
     };
-    let base = rgba(0, m.base, [0.5, 0.5, 0.5, 1.0]);
+    // the base colour carries the opacity in its alpha
+    let base: Vec<u8> = {
+        let v: Vec<[u8; 4]> = par_map(n, |i| {
+            let p = px(0, m.base, [0.5, 0.5, 0.5, 1.0], i);
+            let a = match m.opacity {
+                Some(o) => lum(px(6, Some(o), [1.0; 4], i)),
+                None if m.base.is_some() => p[3],
+                None => 1.0,
+            };
+            [b8(p[0]), b8(p[1]), b8(p[2]), b8(if a.is_nan() { 1.0 } else { a })]
+        });
+        v.into_iter().flatten().collect()
+    };
     let normal = rgba(1, m.normal, [0.5, 0.5, 1.0, 1.0]);
     let rma: Vec<u8> = {
         let v: Vec<[u8; 4]> = par_map(n, |i| {
@@ -172,6 +186,8 @@ pub struct DevInputs<'a> {
     pub ao: Option<&'a crate::gpu::GTex>,
     pub emissive: Option<&'a crate::gpu::GTex>,
     pub height: Option<&'a crate::gpu::GTex>,
+    /// opacity map, packed into the base colour's alpha
+    pub opacity: Option<&'a crate::gpu::GTex>,
 }
 
 /// Graph outputs that are still in device memory; the viewer packs them into its textures there.
@@ -186,6 +202,7 @@ pub struct DevMaps {
     ao: Option<GTex>,
     emissive: Option<GTex>,
     height: Option<GTex>,
+    opacity: Option<GTex>,
 }
 
 fn mix_ids(parts: &[u64]) -> u64 {
@@ -203,7 +220,7 @@ fn mix_ids(parts: &[u64]) -> u64 {
 pub fn prepare_dev(m: &DevInputs) -> Option<GpuMaps> {
     let (_, _) = crate::gpu::viewer_parts()?;
     let lim = crate::gpu::viewer_limits()?;
-    let colour = [m.base, m.normal, m.rough, m.metal, m.ao, m.emissive];
+    let colour = [m.base, m.normal, m.rough, m.metal, m.ao, m.emissive, m.opacity];
     let size = colour.iter().flatten().map(|t| t.w().max(t.h())).max().unwrap_or(4).clamp(1, 4096);
     if colour.iter().flatten().any(|t| t.w() != size || t.h() != size) {
         return None;
@@ -218,7 +235,7 @@ pub fn prepare_dev(m: &DevInputs) -> Option<GpuMaps> {
     }
     let id = |t: Option<&GTex>| t.map(|t| t.id() as u64).unwrap_or(0);
     let hashes = [
-        mix_ids(&[1, id(m.base)]),
+        mix_ids(&[1, id(m.base), id(m.opacity)]),
         mix_ids(&[2, id(m.normal), m.flip_normal_g as u64]),
         mix_ids(&[3, id(m.rough), m.rough_invert as u64, id(m.metal), id(m.ao)]),
         if m.emissive.is_some() { mix_ids(&[4, id(m.emissive)]) } else { 0 },
@@ -234,6 +251,7 @@ pub fn prepare_dev(m: &DevInputs) -> Option<GpuMaps> {
         ao: m.ao.cloned(),
         emissive: m.emissive.cloned(),
         height: m.height.cloned(),
+        opacity: m.opacity.cloned(),
     };
     Some(GpuMaps { size, base: Vec::new(), normal: Vec::new(), rma: Vec::new(), emissive: None, height: None, height_half: None, hashes, dev: Some(dev) })
 }
@@ -557,7 +575,7 @@ fn build_pipes(dev: Dev, msaa: u32) -> Pipes {
             wgpu::BindGroupLayoutEntry { binding: 10, visibility: S::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison), count: None },
         ],
     );
-    let bgl_depth = make_bgl(dev, "depth", &[bgl_uniform(0, S::VERTEX), bgl_samp(1, S::VERTEX), bgl_tex(2, S::VERTEX, true)]);
+    let bgl_depth = make_bgl(dev, "depth", &[bgl_uniform(0, S::VERTEX | S::FRAGMENT), bgl_samp(1, S::VERTEX | S::FRAGMENT), bgl_tex(2, S::VERTEX, true), bgl_tex(3, S::FRAGMENT, true)]);
     let bgl_wire = make_bgl(dev, "wire", &[bgl_uniform(0, vf), bgl_samp(1, S::VERTEX), bgl_tex(2, S::VERTEX, true), bgl_tex(3, S::FRAGMENT, false)]);
     let bgl_bg = make_bgl(dev, "bg", &[bgl_uniform(0, S::FRAGMENT), bgl_tex(1, S::FRAGMENT, true), bgl_samp(2, S::FRAGMENT)]);
     let bgl_post = make_bgl(dev, "post", &[bgl_uniform(0, S::FRAGMENT), bgl_tex(1, S::FRAGMENT, true), bgl_tex(2, S::FRAGMENT, false), bgl_tex(3, S::FRAGMENT, true), bgl_samp(4, S::FRAGMENT)]);
@@ -599,7 +617,8 @@ fn build_pipes(dev: Dev, msaa: u32) -> Pipes {
         primitive: tri_list,
         depth_stencil: Some(depth_state(true, wgpu::CompareFunction::Less, wgpu::DepthBiasState { constant: 2, slope_scale: 1.5, clamp: 0.0 })),
         multisample: ms1,
-        fragment: None,
+        // transparent texels (opacity) cast no shadow
+        fragment: Some(wgpu::FragmentState { module: &m_depth, entry_point: "fs_main", compilation_options: Default::default(), targets: &[] }),
         multiview: None,
         cache: None,
     });
@@ -1153,7 +1172,7 @@ fn upload_maps(r: &mut Res, maps: &GpuMaps) -> u64 {
         match &maps.dev {
             Some(d) => {
                 let job = pack_src;
-                filled += put_tx(this, &mut enc, &mut base, srgb, s, s, job(0, [d.base.as_ref(), None, None], false, false), maps.hashes[0]) as u64;
+                filled += put_tx(this, &mut enc, &mut base, srgb, s, s, job(0, [d.base.as_ref(), d.opacity.as_ref(), None], false, false), maps.hashes[0]) as u64;
                 filled += put_tx(this, &mut enc, &mut normal, unorm, s, s, job(3, [d.normal.as_ref(), None, None], d.flip_normal_g, false), maps.hashes[1]) as u64;
                 filled += put_tx(this, &mut enc, &mut rma, unorm, s, s, job(1, [d.rough.as_ref(), d.metal.as_ref(), d.ao.as_ref()], false, d.rough_invert), maps.hashes[2]) as u64;
                 match &d.emissive {
@@ -1203,7 +1222,7 @@ pub fn read_packed(maps: &GpuMaps) -> Option<GpuMaps> {
         (buf, row, w, h)
     };
     let mut jobs: Vec<(Option<(wgpu::Buffer, u32, u32, u32)>, u32)> = Vec::new();
-    jobs.push((Some(mk(&mut enc, 0, [d.base.as_ref(), None, None], false, false, s, s)), 4));
+    jobs.push((Some(mk(&mut enc, 0, [d.base.as_ref(), d.opacity.as_ref(), None], false, false, s, s)), 4));
     jobs.push((Some(mk(&mut enc, 3, [d.normal.as_ref(), None, None], d.flip_normal_g, false, s, s)), 4));
     jobs.push((Some(mk(&mut enc, 1, [d.rough.as_ref(), d.metal.as_ref(), d.ao.as_ref()], false, d.rough_invert, s, s)), 4));
     jobs.push((d.emissive.as_ref().map(|e| mk(&mut enc, 0, [Some(e), None, None], false, false, s, s)), 4));
@@ -1813,6 +1832,7 @@ fn render(r: &mut Res, opts: &GpuOpts, view: &View, w: u32, h: u32, height_gen: 
                     wgpu::BindGroupEntry { binding: 0, resource: r.shadow_u[layer].as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&r.maps_samp) },
                     wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(height_view) },
+                    wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&base.view) },
                 ],
             });
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1980,7 +2000,7 @@ impl Gpu {
                 self.renderer = crate::gpu::adapter_name().unwrap_or_default();
                 self.applied = None;
                 if self.pending.is_none() {
-                    self.pending = Some(prepare(&MapInputs { base: None, normal: None, rough: None, metal: None, ao: None, emissive: None, height: None }));
+                    self.pending = Some(prepare(&MapInputs { base: None, normal: None, rough: None, metal: None, ao: None, emissive: None, height: None, opacity: None }));
                 }
                 r
             }

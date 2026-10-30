@@ -219,7 +219,11 @@ pub const LIBS: &[(&str, &str, &str)] = &[
     ("x_tiles_008", "tiles_008", "tiles_008"),
     ("x_tiles_011", "tiles_011", "tiles_011"),
     ("x_tiles_025", "tiles_025", "tiles_025"),
+    ("x_triplanar", "triplanar", "triplanar"),
+    ("x_triplanar_2", "triplanar", "triplanar_2"),
     ("x_triplanar_3", "triplanar", "triplanar_3"),
+    ("x_triplanar_grayscale", "triplanar", "triplanar_grayscale"),
+    ("x_triplanar_grayscale_2", "triplanar", "triplanar_grayscale_2"),
     ("x_triplanar_grayscale_3", "triplanar", "triplanar_grayscale_3"),
     ("x_uv_mapper_color", "uv_mapper", "uv_mapper_color"),
     ("x_uv_mapper_grayscale", "uv_mapper", "uv_mapper_grayscale"),
@@ -364,7 +368,7 @@ pub fn pin(kind: &str, out: Option<&str>) -> Option<Pin> {
     }
     if colour.iter().any(|c| name.starts_with(c)) || name.starts_with("output") {
         // single outputs of grayscale tools stay grayscale
-        if matches!(k.as_str(), "x_shadows" | "x_rt_shadows" | "x_3d_linear_gradient" | "x_3d_volume_mask" | "x_3d_texture_sdf" | "x_histogram_render" | "x_directional_distance" | "x_spline_render" | "x_spline_fill" | "x_spline_flow_mapper" | "x_get_size_grayscale" | "x_3d_texture_offset_grayscale") && name != "uv" {
+        if matches!(k.as_str(), "x_shadows" | "x_rt_shadows" | "x_3d_linear_gradient" | "x_3d_volume_mask" | "x_3d_texture_sdf" | "x_histogram_render" | "x_directional_distance" | "x_spline_render" | "x_spline_fill" | "x_spline_flow_mapper" | "x_get_size_grayscale" | "x_3d_texture_offset_grayscale" | "x_triplanar_grayscale_2" | "x_triplanar_grayscale_3") && name != "uv" {
             return Some(Pin::Gray);
         }
         return Some(Pin::Color);
