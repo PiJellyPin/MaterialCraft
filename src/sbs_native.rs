@@ -65,6 +65,8 @@ pub struct SdGraph {
     pub inputs: Vec<XElem>,
     /// graph outputs (`graphOutputs`), as written
     pub outputs: Vec<XElem>,
+    /// the graph's presets (`sbspresets`), as written; see [`presets`]
+    pub presets: Option<XElem>,
     /// graph settings (`baseParameters`) by name, encoded as node values
     pub base: BTreeMap<String, String>,
     /// function graphs: the node whose value is the result
@@ -78,7 +80,7 @@ pub struct SdGraph {
 
 impl SdGraph {
     pub fn new(role: Role, path: &str, pkg: Arc<SdPackage>) -> SdGraph {
-        SdGraph { role, path: path.to_string(), uid: String::new(), inputs: Vec::new(), outputs: Vec::new(), base: BTreeMap::new(), root: None, gui: Vec::new(), orig: None, pkg }
+        SdGraph { role, path: path.to_string(), uid: String::new(), inputs: Vec::new(), outputs: Vec::new(), presets: None, base: BTreeMap::new(), root: None, gui: Vec::new(), orig: None, pkg }
     }
 
     /// The function or FX-map graph `g` (which carries this) is as it was read.
@@ -342,6 +344,7 @@ impl Loader {
         sd.uid = e.v("uid").unwrap_or_default();
         sd.inputs = e.child("paramInputs").map(|l| l.elems().cloned().collect()).unwrap_or_default();
         sd.outputs = e.child("graphOutputs").map(|l| l.elems().cloned().collect()).unwrap_or_default();
+        sd.presets = e.child("sbspresets").cloned();
         let mut g = Graph::default();
         g.meta.insert("identifier".into(), path.to_string());
         if let Some(a) = e.child("attributes") {
@@ -1262,7 +1265,7 @@ fn insert_in_folder(content: &mut XElem, path: &str, el: XElem, ind: &Indent, de
 fn child_order(parent: &str) -> &'static [&'static str] {
     match parent {
         "package" => &["identifier", "desc", "formatVersion", "updaterVersion", "fileUID", "versionUID", "dependencies", "content"],
-        "graph" => &["identifier", "uid", "graphtype", "attributes", "paraminputs", "graphOutputs", "compNodes", "baseParameters", "GUIObjects", "options", "root"],
+        "graph" => &["identifier", "uid", "graphtype", "attributes", "paraminputs", "graphOutputs", "compNodes", "baseParameters", "GUIObjects", "options", "root", "sbspresets"],
         "compNode" => &["uid", "GUIName", "disabled", "connections", "GUILayout", "compOutputs", "compImplementation"],
         "compFilter" => &["filter", "parameters", "paramsArrays", "paramsGraphs"],
         "compInstance" => &["path", "parameters", "outputBridgings"],
@@ -1413,6 +1416,7 @@ fn sync_graph(w: &mut Writer, el: &mut XElem, name: &str, g: &Graph, ind: &Inden
     set_list(el, "paraminputs", sd.inputs.clone(), ind, depth);
     set_list(el, "graphOutputs", sd.outputs.clone(), ind, depth);
     sync_root_outputs(el, sd, ind, depth);
+    sync_presets(el, sd, ind, depth);
     // nodes
     sync_nodes(w, el, name, g, ind, depth);
     // settings
@@ -1420,6 +1424,21 @@ fn sync_graph(w: &mut Writer, el: &mut XElem, name: &str, g: &Graph, ind: &Inden
     // comments and frames
     sync_gui(el, g, sd, ind, depth);
     sync_mc_options(el, g, ind, depth);
+}
+
+/// The graph's presets: rewritten only when they changed (an unchanged list keeps its bytes), removed with the
+/// last one.
+fn sync_presets(el: &mut XElem, sd: &SdGraph, ind: &Indent, depth: usize) {
+    let have = el.child("sbspresets").map(|p| p.to_element());
+    if have == sd.presets.as_ref().map(|p| p.to_element()) {
+        return;
+    }
+    match &sd.presets {
+        Some(p) => replace_child(el, "sbspresets", p.clone(), ind, depth),
+        None => {
+            el.remove_where(|e| e.name.eq_ignore_ascii_case("sbspresets"));
+        }
+    }
 }
 
 /// Graph settings of MaterialCraft kept in the graph's `options` (other programs ignore options they do not know).
@@ -1836,6 +1855,9 @@ fn new_graph_elem(w: &mut Writer, name: &str, g: &Graph) -> XElem {
             push(&mut root, list("rootOutputs", roots));
         }
         push(&mut e, root);
+        if let Some(p) = &sd.presets {
+            push(&mut e, p.clone());
+        }
     }
     e
 }
@@ -3493,4 +3515,178 @@ pub fn reads_input(g: &Graph, fname: &str) -> Option<String> {
 /// The value inputs of a graph: (identifier, label, type, default).
 pub fn value_inputs(g: &Graph) -> Vec<(String, String, PTy, String)> {
     g.sd.as_ref().map(|s| s.inputs.iter().filter_map(input_info).map(|(id, ty, def, _, _, label, _)| (id, label, ty, def)).collect()).unwrap_or_default()
+}
+
+// ------------------------------------------------------------------------------------------------ presets
+
+/// A named set of values for some or all of a graph's inputs (an `sbspreset` of the graph's `sbspresets`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Preset {
+    pub label: String,
+    /// (input identifier, value), in the order the preset keeps them
+    pub values: Vec<(String, PVal)>,
+}
+
+/// An attribute of a preset element, or its `<name v=".."/>` child (both spellings are read).
+fn preset_field(e: &XElem, name: &str) -> Option<String> {
+    e.attr(name).or_else(|| e.v(name))
+}
+
+/// The value of a `presetinput`: a constant element in it (or in its `value`), else the text of `<value v=".."/>`
+/// read as the entry's type (or the type of the graph input it sets).
+fn preset_value(e: &XElem, input: Option<PTy>) -> Option<PVal> {
+    let val = e.child("value");
+    if let Some(c) = const_in(e).or_else(|| val.and_then(const_in)) {
+        return Some(c);
+    }
+    let raw = val.and_then(|x| x.attr("v")).or_else(|| val.map(|x| x.text()))?;
+    let ty = preset_field(e, "type").and_then(|t| t.trim().parse::<u32>().ok()).and_then(PTy::from_type_code).or(input)?;
+    Some(PVal::Const { ty, raw: raw.trim().to_string(), rel: None })
+}
+
+/// The presets of graph `g`. Entries whose value cannot be read are left out (the file keeps them).
+pub fn presets(g: &Graph) -> Vec<Preset> {
+    let Some(sd) = &g.sd else { return Vec::new() };
+    let Some(list) = &sd.presets else { return Vec::new() };
+    let types: BTreeMap<String, PTy> = sd.inputs.iter().filter_map(input_info).map(|x| (x.0, x.1)).collect();
+    list.children_named("sbspreset")
+        .map(|p| Preset {
+            label: preset_field(p, "label").unwrap_or_default(),
+            values: p
+                .children_named("presetinput")
+                .filter_map(|e| {
+                    let id = preset_field(e, "identifier")?;
+                    let v = preset_value(e, types.get(&id).copied())?;
+                    Some((id, v))
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// The `sbspreset` element number `index` of `g`.
+fn preset_elem(g: &mut Graph, index: usize) -> Result<&mut XElem, String> {
+    let list = g.sd.as_mut().ok_or("not an .sbs graph")?.presets.as_mut().ok_or("the graph has no presets")?;
+    list.elems_mut().filter(|e| e.name.eq_ignore_ascii_case("sbspreset")).nth(index).ok_or_else(|| format!("the graph has no preset {}", index + 1))
+}
+
+/// Keep the `count` the format writes on `sbspresets` right.
+fn preset_count(list: &mut XElem) {
+    let n = list.children_named("sbspreset").count();
+    list.set_attr("count", &n.to_string());
+}
+
+/// A new preset of graph `g` called `label` (made unique; empty: `Preset N`) holding the current default of every
+/// value input. Returns its index.
+pub fn add_preset(g: &mut Graph, label: &str) -> Result<usize, String> {
+    let sd = g.sd.as_mut().ok_or("not an .sbs graph")?;
+    let inputs: Vec<(String, String, PTy, String)> = sd.inputs.iter().filter_map(|p| input_info(p).map(|x| (x.0, p.v("uid").unwrap_or_default(), x.1, x.2))).collect();
+    if inputs.is_empty() {
+        return Err("the graph has no value parameters to keep in a preset".into());
+    }
+    let taken: BTreeSet<String> = sd.presets.as_ref().map(|l| l.children_named("sbspreset").filter_map(|p| preset_field(p, "label")).collect()).unwrap_or_default();
+    let base = if label.trim().is_empty() { format!("Preset {}", taken.len() + 1) } else { label.trim().to_string() };
+    let mut name = base.clone();
+    let mut k = 2;
+    while taken.contains(&name) {
+        name = format!("{base} {k}");
+        k += 1;
+    }
+    let mut p = XElem::new("sbspreset");
+    p.set_attr("label", &name);
+    p.set_attr("usertags", "");
+    for (id, uid, ty, def) in inputs {
+        let mut e = XElem::new("presetinput");
+        e.set_attr("identifier", &id);
+        e.set_attr("uid", &uid);
+        e.set_attr("type", &ty.type_code().to_string());
+        push(&mut e, v("value", &def));
+        push(&mut p, e);
+    }
+    let list = sd.presets.get_or_insert_with(|| XElem::new("sbspresets"));
+    push(list, p);
+    preset_count(list);
+    Ok(list.children_named("sbspreset").count() - 1)
+}
+
+/// Rename preset `index` of `g`.
+pub fn rename_preset(g: &mut Graph, index: usize, label: &str) -> Result<(), String> {
+    if label.trim().is_empty() {
+        return Err("a preset needs a name".into());
+    }
+    let p = preset_elem(g, index)?;
+    if p.attr("label").is_none() && p.child("label").is_some() {
+        p.set_v("label", label.trim(), &Indent::default(), 0);
+    } else {
+        p.set_attr("label", label.trim());
+    }
+    Ok(())
+}
+
+/// Remove preset `index` of `g` (the list goes with its last preset).
+pub fn remove_preset(g: &mut Graph, index: usize) -> Result<(), String> {
+    preset_elem(g, index)?;
+    let sd = g.sd.as_mut().ok_or("not an .sbs graph")?;
+    let Some(list) = sd.presets.as_mut() else { return Ok(()) };
+    let i = list.children.iter().enumerate().filter(|(_, c)| matches!(c, XNode::Elem(e) if e.name.eq_ignore_ascii_case("sbspreset"))).nth(index).map(|(i, _)| i);
+    if let Some(i) = i {
+        list.remove_at(i);
+    }
+    if list.elems().next().is_none() {
+        sd.presets = None;
+    } else {
+        preset_count(list);
+    }
+    Ok(())
+}
+
+/// Make the values of preset `index` the defaults of `g`'s inputs. Inputs the preset does not set, text inputs,
+/// entries for inputs the graph no longer has and values an input cannot take (a choice past its list) are left
+/// as they are. Returns how many defaults were set.
+pub fn apply_preset_defaults(g: &mut Graph, index: usize) -> Result<usize, String> {
+    let p = presets(g).into_iter().nth(index).ok_or_else(|| format!("the graph has no preset {}", index + 1))?;
+    let known: BTreeSet<String> = inputs_info(g).into_iter().map(|i| i.id).collect();
+    let mut n = 0;
+    for (id, val) in &p.values {
+        let nums = val.nums();
+        if !known.contains(id) || nums.is_empty() {
+            continue;
+        }
+        if set_input(g, id, Some(&nums), None, None).is_ok() {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+/// The presets of the graph a graph node `n` runs (none for other nodes).
+pub fn node_presets(n: &Node, lib: &BTreeMap<String, Graph>) -> Vec<Preset> {
+    if n.kind != "sbs:graph" {
+        return Vec::new();
+    }
+    n.strs.get("#graph").and_then(|g| lib.get(g)).map(presets).unwrap_or_default()
+}
+
+/// Set the values of graph node `n` to those of preset `index` of the graph it runs. Parameters the preset does
+/// not set keep their values, as do function-driven ones; entries for inputs the graph no longer has are skipped.
+/// Returns how many values were set.
+pub fn apply_preset(n: &mut Node, lib: &BTreeMap<String, Graph>, index: usize) -> Result<usize, String> {
+    let p = node_presets(n, lib).into_iter().nth(index).ok_or_else(|| format!("the node's graph has no preset {}", index + 1))?;
+    let known: BTreeSet<String> = n.strs.get("#graph").and_then(|g| lib.get(g)).map(|g| inputs_info(g).into_iter().map(|i| i.id).collect()).unwrap_or_default();
+    let vals = values(n);
+    let mut count = 0;
+    for (id, val) in p.values {
+        if !known.contains(&id) {
+            continue;
+        }
+        let PVal::Const { ty, raw, .. } = val else { continue };
+        let rel = match vals.get(&id) {
+            Some(PVal::Dyn { .. }) => continue,
+            Some(PVal::Const { rel, .. }) => rel.clone(),
+            None => Some("0".into()),
+        };
+        set_value(n, &id, Some(PVal::Const { ty, raw, rel }));
+        count += 1;
+    }
+    Ok(count)
 }

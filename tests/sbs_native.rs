@@ -308,3 +308,92 @@ fn the_graph_a_package_opens_on_can_be_deleted() {
     assert_eq!(back.meta.get("identifier").map(String::as_str), Some("second"));
     assert!(back.subgraphs.contains_key("third") && !back.subgraphs.contains_key("first"));
 }
+
+/// A graph with two parameters: `tint` (a colour) and `amount` (a float).
+fn graph_with_inputs() -> Graph {
+    let mut g = sbs_native::new_package("mat", 64);
+    let mut n = Node { kind: "sbs:uniform".into(), ..Default::default() };
+    n.strs.insert("outputcolor".into(), PVal::Const { ty: PTy::F(4), raw: "1 0 0 1".into(), rel: None }.enc());
+    g.nodes.insert(7, n);
+    g.nodes.insert(8, Node { kind: "sbs:blend".into(), ..Default::default() });
+    assert_eq!(sbs_native::expose(&mut g, 7, "outputcolor", "tint", "Tint", None).unwrap(), "tint");
+    assert_eq!(sbs_native::expose(&mut g, 8, "opacitymult", "amount", "Amount", None).unwrap(), "amount");
+    g
+}
+
+#[test]
+fn graph_presets_are_saved_and_read_back() {
+    assert!(sbs_native::add_preset(&mut sbs_native::new_package("bare", 64), "x").is_err(), "a graph without parameters has nothing to keep");
+    let mut g = graph_with_inputs();
+    assert_eq!(sbs_native::add_preset(&mut g, "Red").unwrap(), 0);
+    sbs_native::set_input(&mut g, "tint", Some(&[0.0, 0.0, 1.0, 1.0]), None, None).unwrap();
+    sbs_native::set_input(&mut g, "amount", Some(&[0.25]), None, None).unwrap();
+    assert_eq!(sbs_native::add_preset(&mut g, "").unwrap(), 1);
+    assert_eq!(sbs_native::add_preset(&mut g, "Red").unwrap(), 2);
+    let labels = |g: &Graph| sbs_native::presets(g).into_iter().map(|p| p.label).collect::<Vec<_>>();
+    assert_eq!(labels(&g), ["Red", "Preset 2", "Red 2"], "empty and taken names are made unique");
+    sbs_native::remove_preset(&mut g, 2).unwrap();
+    sbs_native::rename_preset(&mut g, 1, "Blue").unwrap();
+    assert!(sbs_native::rename_preset(&mut g, 1, " ").is_err());
+    assert!(sbs_native::remove_preset(&mut g, 5).is_err());
+    let red = &sbs_native::presets(&g)[0];
+    assert_eq!(red.values, vec![("tint".to_string(), PVal::Const { ty: PTy::F(4), raw: "1 0 0 1".into(), rel: None }), ("amount".to_string(), PVal::Const { ty: PTy::F(1), raw: "1".into(), rel: None })]);
+
+    // a copy of the graph (written as a new graph element) keeps them too
+    sbs_native::duplicate_graph(&mut g, None, Some("copy")).unwrap();
+    let text = sbs_native::save_text(&g).unwrap();
+    assert!(text.contains("<sbspresets count=\"2\">") && text.contains("<sbspreset label=\"Blue\" usertags=\"\">"), "{text}");
+    assert!(text.contains("<presetinput identifier=\"amount\""), "{text}");
+    let back = open(&text);
+    assert_eq!(sbs_native::presets(&back), sbs_native::presets(&g));
+    assert_eq!(sbs_native::presets(&back.subgraphs["copy"]), sbs_native::presets(&g));
+    assert_eq!(sbs_native::save_text(&back).unwrap(), text, "unchanged presets save to the same bytes");
+
+    // applied in the graph, a preset's values become the defaults
+    let mut back = back;
+    assert_eq!(sbs_native::apply_preset_defaults(&mut back, 0).unwrap(), 2);
+    let defaults: Vec<String> = sbs_native::inputs_info(&back).into_iter().map(|i| i.default).collect();
+    assert_eq!(defaults, ["1 0 0 1", "1"]);
+    // deleting the last one removes the list
+    sbs_native::remove_preset(&mut back, 0).unwrap();
+    sbs_native::remove_preset(&mut back, 0).unwrap();
+    let d = XDoc::parse(&sbs_native::save_text(&back).unwrap()).unwrap();
+    let graph = |id: &str| d.root.child("content").unwrap().children_named("graph").find(|e| e.v("identifier").as_deref() == Some(id)).cloned().unwrap();
+    assert!(graph("mat").child("sbspresets").is_none());
+    assert!(graph("copy").child("sbspresets").is_some(), "the copy keeps its own");
+}
+
+#[test]
+fn a_graph_node_applies_a_preset_of_its_graph() {
+    let mut g = graph_with_inputs();
+    sbs_native::add_preset(&mut g, "Red").unwrap();
+    let text = sbs_native::save_text(&g).unwrap();
+    // a preset as another tool may write it: only some parameters, one the graph no longer has, content
+    // MaterialCraft does not know
+    let half = "<sbspreset label=\"Half\" usertags=\"mine\"><presetinput identifier=\"amount\" uid=\"1\" type=\"256\"><value v=\"0.5\"/></presetinput><presetinput identifier=\"gone\" uid=\"2\" type=\"256\"><value v=\"1\"/></presetinput><unknown keep=\"1\"/></sbspreset>";
+    let text = text.replacen("<sbspresets count=\"1\">", "<sbspresets count=\"2\">", 1).replacen("</sbspresets>", &format!("{half}</sbspresets>"), 1);
+    let mat = open(&text);
+    assert_eq!(sbs_native::presets(&mat).len(), 2);
+    let lib: std::collections::BTreeMap<String, Graph> = [("mat".to_string(), mat.clone())].into();
+
+    let mut n = Node { kind: "sbs:graph".into(), ..Default::default() };
+    n.strs.insert("#graph".into(), "mat".into());
+    let green = PVal::Const { ty: PTy::F(4), raw: "0 1 0 1".into(), rel: Some("0".into()) };
+    n.strs.insert("tint".into(), green.enc());
+    assert_eq!(sbs_native::node_presets(&n, &lib).iter().map(|p| p.label.as_str()).collect::<Vec<_>>(), ["Red", "Half"]);
+    // parameters the preset does not set keep their values; the input it names that is gone is skipped
+    assert_eq!(sbs_native::apply_preset(&mut n, &lib, 1).unwrap(), 1);
+    assert_eq!(val(&n, "tint"), green);
+    assert_eq!(val(&n, "amount"), PVal::Const { ty: PTy::F(1), raw: "0.5".into(), rel: Some("0".into()) });
+    assert!(!n.strs.contains_key("gone"));
+    // a full preset sets everything it holds
+    assert_eq!(sbs_native::apply_preset(&mut n, &lib, 0).unwrap(), 2);
+    assert_eq!(val(&n, "tint"), PVal::Const { ty: PTy::F(4), raw: "1 0 0 1".into(), rel: Some("0".into()) });
+    assert!(sbs_native::apply_preset(&mut n, &lib, 9).is_err());
+
+    // what MaterialCraft does not know about a preset survives an edit of it
+    let mut mat = mat;
+    sbs_native::rename_preset(&mut mat, 1, "Halfway").unwrap();
+    let out = sbs_native::save_text(&mat).unwrap();
+    assert!(out.contains("label=\"Halfway\" usertags=\"mine\"") && out.contains("<unknown keep=\"1\"/>") && out.contains("identifier=\"gone\""), "{out}");
+}

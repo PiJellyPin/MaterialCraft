@@ -309,6 +309,7 @@ impl App {
         let mut usage: Option<String> = None;
         let mut expose: Option<(String, String)> = None;
         let mut unexpose: Option<String> = None;
+        let mut apply_preset: Option<usize> = None;
         let mut make_fx = false;
         // ---- name shown on the card
         ui.horizontal(|ui| {
@@ -323,6 +324,20 @@ impl App {
                 if self.g.subgraphs.contains_key(&g) && ui.button("Open graph").clicked() {
                     enter = Some(g);
                 }
+            }
+            // the presets of the graph it runs: one sets the values it holds, the others stay
+            let presets = native::node_presets(&node, &self.g.subgraphs);
+            if !presets.is_empty() {
+                ui.horizontal(|ui| {
+                    row_label(ui, "Preset");
+                    egui::ComboBox::from_id_salt(("sd_preset", id)).width(150.0).selected_text("Apply a preset...").show_ui(ui, |ui| {
+                        for (i, p) in presets.iter().enumerate() {
+                            if ui.selectable_label(false, &p.label).on_hover_text(format!("Sets {} parameter(s); the others keep their values", p.values.len())).clicked() {
+                                apply_preset = Some(i);
+                            }
+                        }
+                    });
+                });
             }
         }
         if node.kind == "sbs:fxmaps" {
@@ -726,6 +741,28 @@ impl App {
             }
             self.dirty = true;
         }
+        if let Some(i) = apply_preset {
+            self.snap();
+            let lib = &self.g.subgraphs;
+            let res = match self.g.nodes.get(&id) {
+                Some(n) => {
+                    let mut n = n.clone();
+                    native::apply_preset(&mut n, lib, i).map(|k| (n, k))
+                }
+                None => Err("no such node".into()),
+            };
+            match res {
+                Ok((n, k)) => {
+                    self.g.nodes.insert(id, n);
+                    self.status(format!("Preset applied: {k} value(s) set"), true);
+                    self.dirty = true;
+                }
+                Err(e) => {
+                    self.undo.pop();
+                    self.status(e, false);
+                }
+            }
+        }
         if let Some((param, cur)) = make_fn {
             self.snap();
             let owner = self.g.meta.get("identifier").cloned().unwrap_or_default();
@@ -962,6 +999,71 @@ impl App {
                     self.undo.pop();
                     self.status(e, false);
                 }
+            }
+        }
+        // presets: named sets of parameter values, offered on the nodes that run this graph
+        if is_graph && !inputs.is_empty() {
+            let presets = native::presets(&self.g);
+            let mut rename: Option<(usize, String)> = None;
+            let mut apply: Option<usize> = None;
+            let mut remove: Option<usize> = None;
+            let mut add = false;
+            egui::CollapsingHeader::new(egui::RichText::new("PRESETS").strong()).id_salt("sd_presets").default_open(!presets.is_empty()).show(ui, |ui| {
+                if presets.is_empty() {
+                    ui.small("A preset keeps the parameters' current defaults under a name; nodes that run this graph can apply it.");
+                }
+                for (i, p) in presets.iter().enumerate() {
+                    ui.push_id(("sd_preset_row", i), |ui| {
+                        ui.horizontal(|ui| {
+                            let mut l = p.label.clone();
+                            if ui.add(egui::TextEdit::singleline(&mut l).desired_width(120.0)).on_hover_text(format!("{} parameter value(s)", p.values.len())).changed() && !l.trim().is_empty() {
+                                rename = Some((i, l));
+                            }
+                            if ui.small_button("Apply").on_hover_text("Make this preset's values the parameters' defaults").clicked() {
+                                apply = Some(i);
+                            }
+                            if ui.small_button("x").on_hover_text("Delete this preset").clicked() {
+                                remove = Some(i);
+                            }
+                        });
+                    });
+                }
+                if ui.button("+ New preset").on_hover_text("A preset holding every parameter's current default").clicked() {
+                    add = true;
+                }
+            });
+            if let Some((i, l)) = rename {
+                if !self.edit_open {
+                    self.snap();
+                    self.edit_open = true;
+                }
+                match native::rename_preset(&mut self.g, i, &l) {
+                    Ok(()) => self.dirty = true,
+                    Err(e) => self.status(e, false),
+                }
+            }
+            let edit: Option<Result<String, String>> = if add {
+                self.snap();
+                Some(native::add_preset(&mut self.g, "").map(|i| format!("Added '{}'", native::presets(&self.g).get(i).map(|p| p.label.clone()).unwrap_or_default())))
+            } else if let Some(i) = apply {
+                self.snap();
+                Some(native::apply_preset_defaults(&mut self.g, i).map(|k| format!("Preset applied: {k} default(s) set")))
+            } else if let Some(i) = remove {
+                self.snap();
+                Some(native::remove_preset(&mut self.g, i).map(|()| "Preset deleted".to_string()))
+            } else {
+                None
+            };
+            match edit {
+                Some(Ok(msg)) => {
+                    self.status(msg, true);
+                    self.dirty = true;
+                }
+                Some(Err(e)) => {
+                    self.undo.pop();
+                    self.status(e, false);
+                }
+                None => {}
             }
         }
         egui::CollapsingHeader::new(egui::RichText::new("DETAILS").strong()).default_open(false).show(ui, |ui| {

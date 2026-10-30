@@ -38,6 +38,8 @@ For installation, see [README.md](../README.md); for automation, see
 | Reuse a graph from another package | Drag it from Explorer, or File > Package > Link package as node for a live link. |
 | Expose a parameter | Click P beside the parameter in Properties. Edit its label and range under PUBLISHED PARAMETERS. |
 | Drive a parameter with a function | Click fn beside the parameter and choose a function graph. |
+| Keep parameter values as a preset | With no node selected, Properties > PRESETS > + New preset stores every parameter's current default under a name. Rename it in its box, Apply makes its values the defaults, x deletes it. |
+| Apply a preset to a graph node | Select a node that runs a graph of the package, then pick from Properties > Preset. The preset's values are set; parameters it does not hold, and function-driven ones, keep theirs. Ctrl+Z undoes it. |
 | Edit a spline | Select a path node, then Properties > Edit spline. Edit points in 2D View and press Done. |
 | Manage imported files | Tools > Resources. |
 | Bake maps from meshes | Tools > Mesh map baker. |
@@ -290,6 +292,9 @@ and path-traced exports; Save turntable frames writes a sequence.
 - P exposes a parameter; fn assigns a function graph.
 - FUNCTIONS AND PATTERN PROGRAMS creates/opens those graphs.
 - PUBLISHED PARAMETERS lists exposed labels and ranges, with a remove control.
+- PRESETS (graph with parameters, no node selected) creates, renames, applies, and deletes named sets of
+  parameter values; they are saved in the graph's `sbspresets` element. A node that runs a graph with presets
+  shows a Preset dropdown.
 - Selecting a comment frame exposes its title, color, body, and delete control.
 
 Use [NODES.md](NODES.md) for node-specific controls and parameter descriptions.
