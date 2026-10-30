@@ -37,8 +37,8 @@ pattern_shape/shape Pattern = None|Dome|Disc|Paraboloid|Bell|Gaussian|Thorn|Pyra
 shape_base pattern = None|Dome|Disc|Paraboloid|Bell|Gaussian|Thorn|Pyramid|Brick|Gradation|Waves|Half Bell|Ridged Bell|Crescent|Capsule|Cone
 
 # triplanar projection
-triplanar* projection = All axes|X only|Y only|Z only
-triplanar* blending_mode = Linear|Advanced
+triplanar* projection = All axes (assumed)|X only (assumed)|Y only (assumed)|Z only (assumed)
+triplanar* blending_mode = Linear (assumed)|Advanced (assumed)
 triplanar_3 image_inputs = 1 input|3 inputs
 triplanar_grayscale_3 image_inputs = 1 input|3 inputs
 
