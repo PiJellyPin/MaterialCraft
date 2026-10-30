@@ -187,3 +187,213 @@ fn broken_packages_are_errors_not_panics() {
     let (_, warnings) = sbs_native::load(&odd, None).expect("damaged links should produce warnings");
     assert!(!warnings.is_empty(), "all_nodes.sbs: broken link was silently accepted");
 }
+
+#[test]
+fn a_renamed_output_keeps_its_users() {
+    let mut g = sbs_native::new_package("mat", 64);
+    let out = sbs_native::add_output(&mut g, "baseColor", Some("base"), [0.0, 0.0]);
+    sbs_native::add_output(&mut g, "normal", Some("nrm"), [0.0, 80.0]);
+    // a graph of the package that runs this one and reads the output by name
+    let mut user = sbs_native::new_package("user", 64);
+    user.nodes.insert(1, Node { kind: "sbs:graph".into(), strs: [("#graph".to_string(), "mat".to_string())].into(), ..Default::default() });
+    let mut reader = Node { kind: "sbs:blend".into(), ..Default::default() };
+    reader.ins.insert("source".into(), 1);
+    reader.in_out.insert("source".into(), "base".into());
+    user.nodes.insert(2, reader);
+
+    assert!(sbs_native::rename_output(&mut g, out, "nrm").is_err(), "two outputs cannot share a name");
+    assert!(sbs_native::rename_output(&mut g, out, "bad name").is_err());
+    assert_eq!(sbs_native::rename_output(&mut g, out, "albedo").unwrap(), ("base".to_string(), "albedo".to_string()));
+    sbs_native::retarget_output(&mut user, "mat", "base", "albedo");
+    assert_eq!(user.nodes[&2].in_out["source"], "albedo");
+    assert_eq!(sbs_native::label(&g.nodes[&out], &g), "albedo");
+    assert!(g.output_nodes().iter().any(|(usage, ident, id)| *id == out && usage == "basecolor" && ident == "albedo"));
+    let text = sbs_native::save_text(&g).unwrap();
+    assert!(text.contains("\"albedo\"") && !text.contains("\"base\""), "{text}");
+}
+
+#[test]
+fn pbr_base_material_inputs_follow_their_switches() {
+    let mut n = Node { kind: "sbs:lib:pbr_base_material/pbr_base_material".into(), ..Default::default() };
+    assert!(!sbs_native::input_switches(&n).is_empty());
+    assert!(!sbs_native::input_used(&n, "basecolor_input"), "every map input starts off");
+    n.strs.insert("user_basecolor".into(), PVal::Const { ty: PTy::B, raw: "1".into(), rel: Some("0".into()) }.enc());
+    assert!(sbs_native::input_used(&n, "basecolor_input"));
+    assert!(!sbs_native::input_used(&n, "normal_input"));
+    // inputs without a switch are always read
+    assert!(sbs_native::input_used(&Node { kind: "sbs:blend".into(), ..Default::default() }, "source"));
+}
+
+#[test]
+fn a_pass_through_reads_one_output_of_a_material_node() {
+    // the 3D view shows a material node through one pass-through per output
+    let mut g = sbs_native::new_package("m", 32);
+    let mut n = Node { kind: "sbs:lib:pbr_base_material/pbr_base_material".into(), ..Default::default() };
+    n.strs.insert("metallic".into(), PVal::Const { ty: PTy::F(1), raw: "0".into(), rel: None }.enc());
+    n.strs.insert("roughness".into(), PVal::Const { ty: PTy::F(1), raw: "0.3".into(), rel: None }.enc());
+    g.nodes.insert(5, n);
+    for (id, pin) in [(100, "diffuse"), (101, "roughness"), (102, "glossiness"), (103, "normal")] {
+        let mut t = Node { kind: "sbs:passthrough".into(), ..Default::default() };
+        t.ins.insert("input".into(), 5);
+        t.in_out.insert("input".into(), pin.into());
+        g.nodes.insert(id, t);
+    }
+    let keep = [100, 101, 102, 103];
+    let r = g.evaluate_all_cached_ex(32, &keep, &[], 0, &std::sync::Arc::new(materialcraft::graph::NodeCache::new(64)), None, false, &mut |_| {});
+    let px = |id: u32| r.kept.get(&id).unwrap_or_else(|| panic!("{id}: {:?}", r.errors.get(&id))).px[0];
+    assert!((px(100)[0] - 0.498).abs() < 0.01, "a dielectric's diffuse is its base colour");
+    assert!((px(101)[0] - 0.3).abs() < 1e-4);
+    assert!((px(102)[0] - 0.7).abs() < 1e-4, "glossiness follows roughness");
+    assert_eq!(px(103), [0.5, 0.5, 1.0, 1.0]);
+}
+
+#[test]
+fn a_graph_saved_as_template_starts_new_projects() {
+    use materialcraft::user_templates;
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("user_templates_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(user_templates::list(&dir).is_empty(), "no folder yet: no templates");
+    let mut g = sbs_native::new_package("brick_base", 64);
+    sbs_native::add_output(&mut g, "baseColor", Some("albedo"), [0.0, 0.0]);
+    sbs_native::add_output(&mut g, "roughness", None, [0.0, 80.0]);
+    let mut n = Node { kind: "sbs:uniform".into(), ..Default::default() };
+    n.strs.insert("outputcolor".into(), PVal::Const { ty: PTy::F(4), raw: "1 0 0 1".into(), rel: None }.enc());
+    g.nodes.insert(7, n);
+
+    assert!(user_templates::save(&dir, "  ", &g, "brick_base").is_err(), "a template needs a name");
+    let p = user_templates::save(&dir, "My Bricks/v2", &g, "brick_base").unwrap();
+    assert_eq!(p.file_name().unwrap(), "My Bricks_v2.sbs", "unsafe characters leave the file name");
+    let list = user_templates::list(&dir);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].name, "My Bricks_v2");
+    assert_eq!(user_templates::outputs(&list[0]).unwrap(), ["albedo", "roughness"]);
+
+    // a new project: a copy with the graph renamed, the nodes and outputs kept
+    let copy = user_templates::instantiate(&list[0], "Wall 01").unwrap();
+    assert_eq!(sbs_native::graph_name(&copy), "Wall_01");
+    assert_eq!(copy.nodes.values().filter(|n| n.kind == "sbs:uniform").count(), 1);
+    assert_eq!(copy.output_idents(), ["albedo", "roughness"]);
+    // or a graph added to a package that is open
+    let mut other = sbs_native::new_package("other", 64);
+    let (first, added, _) = sbs_native::add_package(&mut other, copy).unwrap();
+    assert_eq!((first.as_str(), added), ("Wall_01", 1));
+    assert!(other.subgraphs.contains_key("Wall_01"));
+
+    // saving under the same name replaces the template
+    user_templates::save(&dir, "My Bricks/v2", &g, "brick_base").unwrap();
+    assert_eq!(user_templates::list(&dir).len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_graph_a_package_opens_on_can_be_deleted() {
+    let mut g = sbs_native::new_package("first", 64);
+    sbs_native::add_output(&mut g, "baseColor", None, [0.0, 0.0]);
+    // the only graph stays
+    assert!(g.remove_graph("first").is_err(), "a package keeps at least one graph");
+    let second = sbs_native::duplicate_graph(&mut g, None, Some("second")).unwrap();
+    sbs_native::duplicate_graph(&mut g, None, Some("third")).unwrap();
+    // not while another graph uses it
+    let mut user = Node { kind: "sbs:graph".into(), ..Default::default() };
+    user.strs.insert("#graph".into(), "first".into());
+    g.subgraphs.get_mut("third").unwrap().nodes.insert(50, user);
+    assert!(g.remove_graph("first").is_err(), "'third' still uses it");
+    g.subgraphs.get_mut("third").unwrap().nodes.remove(&50);
+    g.remove_graph("first").unwrap();
+    // the next graph is the one the package opens on, with the rest of the package
+    assert_eq!(g.meta.get("identifier").map(String::as_str), Some(second.as_str()));
+    assert_eq!(g.subgraphs.keys().cloned().collect::<Vec<_>>(), vec!["third".to_string()]);
+    assert_eq!(g.output_idents().len(), 1);
+    let back = open(&sbs_native::save_text(&g).unwrap());
+    assert_eq!(back.meta.get("identifier").map(String::as_str), Some("second"));
+    assert!(back.subgraphs.contains_key("third") && !back.subgraphs.contains_key("first"));
+}
+
+/// A graph with two parameters: `tint` (a colour) and `amount` (a float).
+fn graph_with_inputs() -> Graph {
+    let mut g = sbs_native::new_package("mat", 64);
+    let mut n = Node { kind: "sbs:uniform".into(), ..Default::default() };
+    n.strs.insert("outputcolor".into(), PVal::Const { ty: PTy::F(4), raw: "1 0 0 1".into(), rel: None }.enc());
+    g.nodes.insert(7, n);
+    g.nodes.insert(8, Node { kind: "sbs:blend".into(), ..Default::default() });
+    assert_eq!(sbs_native::expose(&mut g, 7, "outputcolor", "tint", "Tint", None).unwrap(), "tint");
+    assert_eq!(sbs_native::expose(&mut g, 8, "opacitymult", "amount", "Amount", None).unwrap(), "amount");
+    g
+}
+
+#[test]
+fn graph_presets_are_saved_and_read_back() {
+    assert!(sbs_native::add_preset(&mut sbs_native::new_package("bare", 64), "x").is_err(), "a graph without parameters has nothing to keep");
+    let mut g = graph_with_inputs();
+    assert_eq!(sbs_native::add_preset(&mut g, "Red").unwrap(), 0);
+    sbs_native::set_input(&mut g, "tint", Some(&[0.0, 0.0, 1.0, 1.0]), None, None).unwrap();
+    sbs_native::set_input(&mut g, "amount", Some(&[0.25]), None, None).unwrap();
+    assert_eq!(sbs_native::add_preset(&mut g, "").unwrap(), 1);
+    assert_eq!(sbs_native::add_preset(&mut g, "Red").unwrap(), 2);
+    let labels = |g: &Graph| sbs_native::presets(g).into_iter().map(|p| p.label).collect::<Vec<_>>();
+    assert_eq!(labels(&g), ["Red", "Preset 2", "Red 2"], "empty and taken names are made unique");
+    sbs_native::remove_preset(&mut g, 2).unwrap();
+    sbs_native::rename_preset(&mut g, 1, "Blue").unwrap();
+    assert!(sbs_native::rename_preset(&mut g, 1, " ").is_err());
+    assert!(sbs_native::remove_preset(&mut g, 5).is_err());
+    let red = &sbs_native::presets(&g)[0];
+    assert_eq!(red.values, vec![("tint".to_string(), PVal::Const { ty: PTy::F(4), raw: "1 0 0 1".into(), rel: None }), ("amount".to_string(), PVal::Const { ty: PTy::F(1), raw: "1".into(), rel: None })]);
+
+    // a copy of the graph (written as a new graph element) keeps them too
+    sbs_native::duplicate_graph(&mut g, None, Some("copy")).unwrap();
+    let text = sbs_native::save_text(&g).unwrap();
+    assert!(text.contains("<sbspresets count=\"2\">") && text.contains("<sbspreset label=\"Blue\" usertags=\"\">"), "{text}");
+    assert!(text.contains("<presetinput identifier=\"amount\""), "{text}");
+    let back = open(&text);
+    assert_eq!(sbs_native::presets(&back), sbs_native::presets(&g));
+    assert_eq!(sbs_native::presets(&back.subgraphs["copy"]), sbs_native::presets(&g));
+    assert_eq!(sbs_native::save_text(&back).unwrap(), text, "unchanged presets save to the same bytes");
+
+    // applied in the graph, a preset's values become the defaults
+    let mut back = back;
+    assert_eq!(sbs_native::apply_preset_defaults(&mut back, 0).unwrap(), 2);
+    let defaults: Vec<String> = sbs_native::inputs_info(&back).into_iter().map(|i| i.default).collect();
+    assert_eq!(defaults, ["1 0 0 1", "1"]);
+    // deleting the last one removes the list
+    sbs_native::remove_preset(&mut back, 0).unwrap();
+    sbs_native::remove_preset(&mut back, 0).unwrap();
+    let d = XDoc::parse(&sbs_native::save_text(&back).unwrap()).unwrap();
+    let graph = |id: &str| d.root.child("content").unwrap().children_named("graph").find(|e| e.v("identifier").as_deref() == Some(id)).cloned().unwrap();
+    assert!(graph("mat").child("sbspresets").is_none());
+    assert!(graph("copy").child("sbspresets").is_some(), "the copy keeps its own");
+}
+
+#[test]
+fn a_graph_node_applies_a_preset_of_its_graph() {
+    let mut g = graph_with_inputs();
+    sbs_native::add_preset(&mut g, "Red").unwrap();
+    let text = sbs_native::save_text(&g).unwrap();
+    // a preset as another tool may write it: only some parameters, one the graph no longer has, content
+    // MaterialCraft does not know
+    let half = "<sbspreset label=\"Half\" usertags=\"mine\"><presetinput identifier=\"amount\" uid=\"1\" type=\"256\"><value v=\"0.5\"/></presetinput><presetinput identifier=\"gone\" uid=\"2\" type=\"256\"><value v=\"1\"/></presetinput><unknown keep=\"1\"/></sbspreset>";
+    let text = text.replacen("<sbspresets count=\"1\">", "<sbspresets count=\"2\">", 1).replacen("</sbspresets>", &format!("{half}</sbspresets>"), 1);
+    let mat = open(&text);
+    assert_eq!(sbs_native::presets(&mat).len(), 2);
+    let lib: std::collections::BTreeMap<String, Graph> = [("mat".to_string(), mat.clone())].into();
+
+    let mut n = Node { kind: "sbs:graph".into(), ..Default::default() };
+    n.strs.insert("#graph".into(), "mat".into());
+    let green = PVal::Const { ty: PTy::F(4), raw: "0 1 0 1".into(), rel: Some("0".into()) };
+    n.strs.insert("tint".into(), green.enc());
+    assert_eq!(sbs_native::node_presets(&n, &lib).iter().map(|p| p.label.as_str()).collect::<Vec<_>>(), ["Red", "Half"]);
+    // parameters the preset does not set keep their values; the input it names that is gone is skipped
+    assert_eq!(sbs_native::apply_preset(&mut n, &lib, 1).unwrap(), 1);
+    assert_eq!(val(&n, "tint"), green);
+    assert_eq!(val(&n, "amount"), PVal::Const { ty: PTy::F(1), raw: "0.5".into(), rel: Some("0".into()) });
+    assert!(!n.strs.contains_key("gone"));
+    // a full preset sets everything it holds
+    assert_eq!(sbs_native::apply_preset(&mut n, &lib, 0).unwrap(), 2);
+    assert_eq!(val(&n, "tint"), PVal::Const { ty: PTy::F(4), raw: "1 0 0 1".into(), rel: Some("0".into()) });
+    assert!(sbs_native::apply_preset(&mut n, &lib, 9).is_err());
+
+    // what MaterialCraft does not know about a preset survives an edit of it
+    let mut mat = mat;
+    sbs_native::rename_preset(&mut mat, 1, "Halfway").unwrap();
+    let out = sbs_native::save_text(&mat).unwrap();
+    assert!(out.contains("label=\"Halfway\" usertags=\"mine\"") && out.contains("<unknown keep=\"1\"/>") && out.contains("identifier=\"gone\""), "{out}");
+}

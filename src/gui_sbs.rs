@@ -22,7 +22,8 @@ fn intern(s: &str) -> &'static str {
 }
 
 fn sd_slots(n: &Node, lib: &BTreeMap<String, Graph>) -> Vec<(&'static str, bool)> {
-    native::slots(n, lib).iter().map(|s| (intern(s), false)).collect()
+    // an input the node is set not to use has no socket (unless a link still reaches it)
+    native::slots(n, lib).iter().filter(|s| n.ins.contains_key(*s) || native::input_used(n, s)).map(|s| (intern(s), false)).collect()
 }
 
 fn sd_outs(n: &Node, lib: &BTreeMap<String, Graph>) -> Vec<String> {
@@ -230,6 +231,32 @@ impl App {
     }
 
     /// The parameter panel of a native node.
+    /// Rename the graph output of output node `id`; the nodes of the other graphs that read it by name follow.
+    fn rename_output(&mut self, id: u32, new: &str) {
+        self.snap();
+        match native::rename_output(&mut self.g, id, new) {
+            Ok((old, new)) if old != new => {
+                // the other graphs of the package: the view's copies, and the graphs this one was opened from
+                let me = native::graph_name(&self.g);
+                for g in self.g.subgraphs.values_mut() {
+                    native::retarget_output(g, &me, &old, &new);
+                }
+                for (p, _) in self.parents.iter_mut() {
+                    native::retarget_output(p, &me, &old, &new);
+                }
+                self.status(format!("Output '{old}' renamed to '{new}'"), true);
+                self.dirty = true;
+            }
+            Ok(_) => {
+                self.undo.pop();
+            }
+            Err(e) => {
+                self.undo.pop();
+                self.status(e, false);
+            }
+        }
+    }
+
     fn sd_node_props(&mut self, ui: &mut egui::Ui, id: u32) {
         let node = self.g.nodes[&id].clone();
         let title = native::label(&node, &self.g);
@@ -282,6 +309,7 @@ impl App {
         let mut usage: Option<String> = None;
         let mut expose: Option<(String, String)> = None;
         let mut unexpose: Option<String> = None;
+        let mut apply_preset: Option<usize> = None;
         let mut make_fx = false;
         // ---- name shown on the card
         ui.horizontal(|ui| {
@@ -296,6 +324,20 @@ impl App {
                 if self.g.subgraphs.contains_key(&g) && ui.button("Open graph").clicked() {
                     enter = Some(g);
                 }
+            }
+            // the presets of the graph it runs: one sets the values it holds, the others stay
+            let presets = native::node_presets(&node, &self.g.subgraphs);
+            if !presets.is_empty() {
+                ui.horizontal(|ui| {
+                    row_label(ui, "Preset");
+                    egui::ComboBox::from_id_salt(("sd_preset", id)).width(150.0).selected_text("Apply a preset...").show_ui(ui, |ui| {
+                        for (i, p) in presets.iter().enumerate() {
+                            if ui.selectable_label(false, &p.label).on_hover_text(format!("Sets {} parameter(s); the others keep their values", p.values.len())).clicked() {
+                                apply_preset = Some(i);
+                            }
+                        }
+                    });
+                });
             }
         }
         if node.kind == "sbs:fxmaps" {
@@ -312,8 +354,27 @@ impl App {
                 }
             }
         }
+        let mut rename_out: Option<String> = None;
         if node.kind == "sbs:output" {
             let uid = node.strs.get("#output").cloned().unwrap_or_default();
+            // the output's identifier: its name on the card, in exported file names and for whoever uses the graph
+            let ident = self.g.sd.as_ref().and_then(|s| s.output_identifier(&uid)).unwrap_or_default();
+            ui.horizontal(|ui| {
+                row_label(ui, "Identifier");
+                // typed into a buffer and applied when the box loses focus, so half a name never renames anything
+                let buf = Id::new(("sd_out_ident", id));
+                let mut t = ui.ctx().data(|d| d.get_temp::<String>(buf)).unwrap_or_else(|| ident.clone());
+                let r = ui.add(egui::TextEdit::singleline(&mut t).desired_width(f32::INFINITY)).on_hover_text("Rename this output (letters, digits and _); Enter applies");
+                if r.lost_focus() {
+                    // Esc gives the edit up
+                    if t.trim() != ident && !ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        rename_out = Some(t.trim().to_string());
+                    }
+                    ui.ctx().data_mut(|d| d.remove::<String>(buf));
+                } else if r.has_focus() {
+                    ui.ctx().data_mut(|d| d.insert_temp(buf, t));
+                }
+            });
             let cur = self.g.sd.as_ref().and_then(|s| s.output_usage(&uid)).unwrap_or_default();
             ui.horizontal(|ui| {
                 row_label(ui, "Usage");
@@ -324,6 +385,21 @@ impl App {
                         }
                     }
                 });
+            });
+        }
+        // ---- which image inputs the node uses (each has its own switch): the others have no socket
+        let switches = native::input_switches(&node);
+        if !switches.is_empty() {
+            egui::CollapsingHeader::new(egui::RichText::new("IMAGE INPUTS").strong()).id_salt(("sd_used_ins", id)).default_open(true).show(ui, |ui| {
+                ui.small("Tick the maps this node should read; the others have no socket.");
+                for (slot, sw) in switches {
+                    let mut on = native::input_used(&node, slot);
+                    let r = ui.checkbox(&mut on, sdefs::label_of(slot.trim_end_matches("_input")));
+                    let r = if node.ins.contains_key(*slot) && !on { r.on_hover_text("Still linked, but not read until it is ticked again") } else { r };
+                    if r.changed() {
+                        sets.push((sw.to_string(), Some(PVal::Const { ty: PTy::B, raw: (on as i32).to_string(), rel: Some("0".into()) })));
+                    }
+                }
             });
         }
         // ---- inputs overview
@@ -477,7 +553,8 @@ impl App {
         let only_base = groups.iter().all(|g| g == "Base");
         let is_levels = node.kind == "sbs:levels";
         let mut draw_group = |ui: &mut egui::Ui, gname: &str| {
-                for p in params.iter().filter(|p| p.group == gname && !(is_levels && (p.id.starts_with("levelin") || p.id.starts_with("levelout") || p.id == "clampinterm"))) {
+                // the input switches are ticked under IMAGE INPUTS instead
+                for p in params.iter().filter(|p| p.group == gname && !(is_levels && (p.id.starts_with("levelin") || p.id.starts_with("levelout") || p.id == "clampinterm")) && !switches.iter().any(|(_, sw)| *sw == p.id)) {
                     // Designer's layout: the name on its own line with small tools at the right, the control full width below
                     ui.add_space(2.0);
                     ui.vertical(|ui| {
@@ -622,6 +699,9 @@ impl App {
             }
             self.dirty = true;
         }
+        if let Some(new) = rename_out {
+            self.rename_output(id, &new);
+        }
         if make_fx {
             self.snap();
             if let Some(f) = native::ensure_fx_graph(&mut self.g, id) {
@@ -660,6 +740,28 @@ impl App {
                 self.status(e, false);
             }
             self.dirty = true;
+        }
+        if let Some(i) = apply_preset {
+            self.snap();
+            let lib = &self.g.subgraphs;
+            let res = match self.g.nodes.get(&id) {
+                Some(n) => {
+                    let mut n = n.clone();
+                    native::apply_preset(&mut n, lib, i).map(|k| (n, k))
+                }
+                None => Err("no such node".into()),
+            };
+            match res {
+                Ok((n, k)) => {
+                    self.g.nodes.insert(id, n);
+                    self.status(format!("Preset applied: {k} value(s) set"), true);
+                    self.dirty = true;
+                }
+                Err(e) => {
+                    self.undo.pop();
+                    self.status(e, false);
+                }
+            }
         }
         if let Some((param, cur)) = make_fn {
             self.snap();
@@ -897,6 +999,71 @@ impl App {
                     self.undo.pop();
                     self.status(e, false);
                 }
+            }
+        }
+        // presets: named sets of parameter values, offered on the nodes that run this graph
+        if is_graph && !inputs.is_empty() {
+            let presets = native::presets(&self.g);
+            let mut rename: Option<(usize, String)> = None;
+            let mut apply: Option<usize> = None;
+            let mut remove: Option<usize> = None;
+            let mut add = false;
+            egui::CollapsingHeader::new(egui::RichText::new("PRESETS").strong()).id_salt("sd_presets").default_open(!presets.is_empty()).show(ui, |ui| {
+                if presets.is_empty() {
+                    ui.small("A preset keeps the parameters' current defaults under a name; nodes that run this graph can apply it.");
+                }
+                for (i, p) in presets.iter().enumerate() {
+                    ui.push_id(("sd_preset_row", i), |ui| {
+                        ui.horizontal(|ui| {
+                            let mut l = p.label.clone();
+                            if ui.add(egui::TextEdit::singleline(&mut l).desired_width(120.0)).on_hover_text(format!("{} parameter value(s)", p.values.len())).changed() && !l.trim().is_empty() {
+                                rename = Some((i, l));
+                            }
+                            if ui.small_button("Apply").on_hover_text("Make this preset's values the parameters' defaults").clicked() {
+                                apply = Some(i);
+                            }
+                            if ui.small_button("x").on_hover_text("Delete this preset").clicked() {
+                                remove = Some(i);
+                            }
+                        });
+                    });
+                }
+                if ui.button("+ New preset").on_hover_text("A preset holding every parameter's current default").clicked() {
+                    add = true;
+                }
+            });
+            if let Some((i, l)) = rename {
+                if !self.edit_open {
+                    self.snap();
+                    self.edit_open = true;
+                }
+                match native::rename_preset(&mut self.g, i, &l) {
+                    Ok(()) => self.dirty = true,
+                    Err(e) => self.status(e, false),
+                }
+            }
+            let edit: Option<Result<String, String>> = if add {
+                self.snap();
+                Some(native::add_preset(&mut self.g, "").map(|i| format!("Added '{}'", native::presets(&self.g).get(i).map(|p| p.label.clone()).unwrap_or_default())))
+            } else if let Some(i) = apply {
+                self.snap();
+                Some(native::apply_preset_defaults(&mut self.g, i).map(|k| format!("Preset applied: {k} default(s) set")))
+            } else if let Some(i) = remove {
+                self.snap();
+                Some(native::remove_preset(&mut self.g, i).map(|()| "Preset deleted".to_string()))
+            } else {
+                None
+            };
+            match edit {
+                Some(Ok(msg)) => {
+                    self.status(msg, true);
+                    self.dirty = true;
+                }
+                Some(Err(e)) => {
+                    self.undo.pop();
+                    self.status(e, false);
+                }
+                None => {}
             }
         }
         egui::CollapsingHeader::new(egui::RichText::new("DETAILS").strong()).default_open(false).show(ui, |ui| {
