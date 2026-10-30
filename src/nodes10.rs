@@ -286,7 +286,7 @@ fn table() -> &'static HashMap<&'static str, Info> {
             let label = match id {
                 // the graph with the material's nine channels has this name already
                 "moss_weahtering" => "Moss Weathering (Four Channels)",
-                _ => leak(title(id)),
+                _ => leak(title(id).replace("Bitmap2Material", "Bitmap To Material")),
             };
             let doc = leak(format!("MaterialCraft's own implementation of the library graph {pkg}/{id}; parameters keep the graph's names"));
             m.insert(kind, Info { kind, lib, spec: Spec { kind, req: &[], opt, doc }, outs, label });

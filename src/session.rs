@@ -1121,7 +1121,7 @@ fn c_graph_open(s: &mut Session, p: &Json) -> Result<Outcome, String> {
         s.reset_names();
         return Outcome::data(Json::obj().with("file", path.display().to_string()).with("format", "sbs").with("graphs", graphs).with("nodes", n).with("outputs", o).with("rendering", report).with("warnings", Json::Arr(warnings.into_iter().map(Json::from).collect::<Vec<_>>())));
     }
-    Err(format!("{}: only Substance packages (.sbs) can be opened", path.display()))
+    Err(format!("{}: only .sbs packages can be opened", path.display()))
 }
 
 fn c_graph_load_text(s: &mut Session, p: &Json) -> Result<Outcome, String> {

@@ -593,3 +593,11 @@ fn the_older_library_material_graphs_import_as_native_nodes() {
     assert!((px(102)[0] - 0.8).abs() < 2e-3, "no moss at no propagation: {:?}", px(102));
     assert!((px(103)[0] - 0.5).abs() < 2e-3, "the moss graph's own output name: {:?}", px(103));
 }
+
+#[test]
+fn no_library_node_is_labelled_with_a_registered_name() {
+    for (kind, _, _) in materialcraft::nodes10::LIBS {
+        let l = materialcraft::nodes10::label(kind).unwrap_or_default();
+        assert!(!l.contains("Substance") && !l.contains("Bitmap2Material"), "{kind}: {l}");
+    }
+}

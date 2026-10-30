@@ -1506,7 +1506,7 @@ impl App {
 
     // ------------------------------------------------------------ file operations
     fn open_file(&mut self) {
-        let Some(files) = rfd::FileDialog::new().add_filter("Substance package", &["sbs"]).pick_files() else { return };
+        let Some(files) = rfd::FileDialog::new().add_filter("SBS package", &["sbs"]).pick_files() else { return };
         for p in files {
             self.open_sbs(p);
         }
@@ -1535,7 +1535,7 @@ impl App {
             .and_then(|p| p.file_stem())
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| self.gname());
-        let mut dlg = rfd::FileDialog::new().add_filter("Substance package", &["sbs"]).set_file_name(format!("{stem}.sbs"));
+        let mut dlg = rfd::FileDialog::new().add_filter("SBS package", &["sbs"]).set_file_name(format!("{stem}.sbs"));
         if let Some(dir) = suggest.as_ref().or(self.file.as_ref()).and_then(|p| p.parent()) {
             dlg = dlg.set_directory(dir);
         }
@@ -1577,7 +1577,7 @@ impl App {
             Err(e) => return self.status(format!("Cannot save the graph: {e}"), false),
         };
         let stem = gname.rsplit('/').next().unwrap_or("graph").to_string();
-        let Some(p) = rfd::FileDialog::new().add_filter("Substance package", &["sbs"]).set_file_name(format!("{stem}.sbs")).save_file() else { return };
+        let Some(p) = rfd::FileDialog::new().add_filter("SBS package", &["sbs"]).set_file_name(format!("{stem}.sbs")).save_file() else { return };
         let p = if p.extension().is_none() { p.with_extension("sbs") } else { p };
         match materialcraft::safeio::write_file(&p, text.as_bytes()) {
             Ok(()) => self.status(format!("Saved graph '{gname}' as {} with the graphs it uses", p.display()), true),
@@ -1587,7 +1587,7 @@ impl App {
 
     /// Copy every graph and function of another `.sbs` package into package `i` (names that are taken get a number).
     fn add_graph_file(&mut self, i: usize) {
-        let Some(p) = rfd::FileDialog::new().add_filter("Substance package", &["sbs"]).pick_file() else { return };
+        let Some(p) = rfd::FileDialog::new().add_filter("SBS package", &["sbs"]).pick_file() else { return };
         let other = match materialcraft::sbs_native::open(&p) {
             Ok((g, _)) => g,
             Err(e) => return self.status(format!("Cannot read {}: {e}", p.display()), false),

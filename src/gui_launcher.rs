@@ -282,7 +282,7 @@ impl App {
         // ---- actions: one outlined strip divided into cells
         let actions: [(&str, &str, Ic, Option<char>); 3] = [
             ("New graph", "Start from an empty graph or a workflow template", Ic::New, Some('N')),
-            ("Open package", "Load a Substance package (.sbs)", Ic::Open, Some('O')),
+            ("Open package", "Load an .sbs package", Ic::Open, Some('O')),
             ("Mesh map baker", "Bake normal, AO and curvature maps from meshes", Ic::Sphere, None),
         ];
         let per_row = if col_w >= 640.0 { 3 } else { 1 };
