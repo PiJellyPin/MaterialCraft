@@ -781,16 +781,20 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
                 }),
             }
         }
-        "x_triplanar_3" | "x_triplanar_grayscale_3" => {
+        "x_triplanar" | "x_triplanar_2" | "x_triplanar_3" | "x_triplanar_grayscale" | "x_triplanar_grayscale_2" | "x_triplanar_grayscale_3" => {
             let pos = cx.img("position");
             let nrm = cx.img("ws_normal");
             let single = cx.i("image_inputs") == 0;
-            let (tx, ty, tz) = (inp(cx, "input_x"), cx.img("input_y"), cx.img("input_z"));
+            // the older graphs have one image input, `input`, and no per-axis images
+            let (tx, ty, tz) = (inp(cx, if cx.kind.ends_with("_3") { "input_x" } else { "input" }), cx.img("input_y"), cx.img("input_z"));
             let tiling = cx.f("texture_tiling").max(0.0);
             let contrast = cx.f("blending_contrast").clamp(0.001, 1.0);
             let rots = [cx.f("rotation_x"), cx.f("rotation_y"), cx.f("rotation_z")];
             let offs = [cx.v2("offset_x"), cx.v2("offset_y"), cx.v2("offset_z")];
             let fix = cx.b("fix_mirrored_projection");
+            // 0 all axes, 1..3 that axis alone
+            let only = cx.i("projection").clamp(0, 3) as usize;
+            let advanced = cx.i("blending_mode") == 1;
             Tex::from_fn(s, hs, |u, v| {
                 let p = pos.map(|t| {
                     let q = t.sample(u, v);
@@ -799,10 +803,14 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
                 let p = p.unwrap_or([u, 1.0 - v, 0.5]);
                 let n = nrm.map(|t| dec_n(t.sample(u, v), false)).unwrap_or([0.0, 0.0, 1.0]);
                 let pw = 1.0 + contrast * 15.0;
-                let w = [n[0].abs().powf(pw), n[1].abs().powf(pw), n[2].abs().powf(pw)];
+                let mut w = [n[0].abs().powf(pw), n[1].abs().powf(pw), n[2].abs().powf(pw)];
+                if only > 0 {
+                    w = [0.0; 3];
+                    w[only - 1] = 1.0;
+                }
                 let ws = (w[0] + w[1] + w[2]).max(1e-6);
                 let planes = [(p[2], p[1]), (p[0], p[2]), (p[0], p[1])];
-                let mut o = [0.0f32; 4];
+                let (mut samples, mut mix) = ([[0.0f32; 4]; 3], [0.0f32; 3]);
                 for axis in 0..3 {
                     if w[axis] <= 1e-6 {
                         continue;
@@ -822,9 +830,28 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
                             _ => tz.unwrap_or(&tx),
                         }
                     };
-                    let q = src.sample(a, 1.0 - b);
+                    samples[axis] = src.sample(a, 1.0 - b);
+                    mix[axis] = w[axis] / ws;
+                    if advanced {
+                        mix[axis] *= 1.0 + lum(samples[axis]).max(0.0);
+                    }
+                }
+                if advanced {
+                    // the axis with the strongest mix of facing and picture value wins; `band` is the width of the
+                    // transition around it, narrower with more contrast
+                    let top = mix[0].max(mix[1]).max(mix[2]);
+                    let band = 0.02 + 0.5 * (1.0 - contrast);
+                    let mut total = 0.0;
+                    for m in &mut mix {
+                        *m = if *m > 0.0 { (*m - top + band).max(0.0) } else { 0.0 };
+                        total += *m;
+                    }
+                    mix = mix.map(|m| m / f32::max(total, 1e-6));
+                }
+                let mut o = [0.0f32; 4];
+                for axis in 0..3 {
                     for c in 0..4 {
-                        o[c] += q[c] * w[axis] / ws;
+                        o[c] += samples[axis][c] * mix[axis];
                     }
                 }
                 o

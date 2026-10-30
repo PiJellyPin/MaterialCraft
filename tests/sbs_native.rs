@@ -248,6 +248,39 @@ fn a_pass_through_reads_one_output_of_a_material_node() {
 }
 
 #[test]
+fn legacy_triplanar_graphs_import_as_native_nodes() {
+    for graph in ["triplanar", "triplanar_2", "triplanar_grayscale", "triplanar_grayscale_2"] {
+        assert!(materialcraft::sbs_import::library_renders("triplanar", graph), "{graph} has a node of its own");
+        let render = |tiling: Option<&str>| {
+            let mut g = sbs_native::new_package("m", 32);
+            g.nodes.insert(1, Node { kind: "sbs:lib:gradient_linear_1/gradient_linear_1".into(), ..Default::default() });
+            let mut n = Node { kind: format!("sbs:lib:triplanar/{graph}"), ..Default::default() };
+            n.ins.insert("input".into(), 1);
+            if let Some(raw) = tiling {
+                n.strs.insert("texture_tiling".into(), PVal::Const { ty: PTy::F(1), raw: raw.into(), rel: None }.enc());
+            }
+            g.nodes.insert(5, n);
+            for (id, from) in [(100, 1), (101, 5)] {
+                let mut t = Node { kind: "sbs:passthrough".into(), ..Default::default() };
+                t.ins.insert("input".into(), from);
+                t.in_out.insert("input".into(), "output".into());
+                g.nodes.insert(id, t);
+            }
+            let r = g.evaluate_all_cached_ex(32, &[100, 101], &[], 0, &std::sync::Arc::new(materialcraft::graph::NodeCache::new(64)), None, false, &mut |_| {});
+            let px = |id: u32| r.kept.get(&id).unwrap_or_else(|| panic!("{graph} {id}: {:?}", r.errors.get(&id))).px.clone();
+            (px(100), px(101))
+        };
+        let diff = |a: &[[f32; 4]], b: &[[f32; 4]]| a.iter().zip(b).map(|(p, q)| (p[0] - q[0]).abs()).sum::<f32>() / a.len() as f32;
+        let (source, plain) = render(None);
+        assert!(diff(&source, &plain) < 1e-3, "{graph}: a flat surface shows the input, not a placeholder");
+        assert!(diff(&plain, &render(Some("2")).1) > 0.05, "{graph}: the file's tiling reaches the node");
+    }
+    // these two have no public description: they stay placeholders until one exists
+    assert!(!materialcraft::sbs_import::library_renders("normal_mapper", "normal_mapper"));
+    assert!(!materialcraft::sbs_import::library_renders("mesh_warper", "mesh_warper"));
+}
+
+#[test]
 fn a_graph_saved_as_template_starts_new_projects() {
     use materialcraft::user_templates;
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("user_templates_{}", std::process::id()));

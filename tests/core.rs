@@ -1478,3 +1478,36 @@ fn rgba_merge_takes_the_alpha_from_a_grey_map() {
     assert!(t.px.iter().all(|p| (p[3] - p[0]).abs() < 1e-5), "alpha follows the grey map");
     assert!(t.px.iter().any(|p| p[3] < 0.9));
 }
+
+#[test]
+fn legacy_triplanar_nodes_project_and_follow_their_settings() {
+    let mean_diff = |a: &materialcraft::tex::Tex, b: &materialcraft::tex::Tex| a.px.iter().zip(&b.px).map(|(p, q)| (0..3).map(|c| (p[c] - q[c]).abs()).sum::<f32>() / 3.0).sum::<f32>() / a.px.len() as f32;
+    // a bumpy picture, a position map and a normal that leans a different way in each corner
+    let source = "size 64\nnode 1 fbm scale=4 seed=5\nnode 2 pixel_processor expr=\"u\" expr_g=\"1-v\" expr_b=\"0.5*u+0.5*v\"\nnode 3 pixel_processor expr=\"u\" expr_g=\"v\" expr_b=\"0.75\"\n";
+    let render = |kind: &str, input: &str, wired: bool, settings: &str| {
+        let maps = if wired { " position=@2 ws_normal=@3" } else { "" };
+        let g = Graph::parse(&format!("{source}node 4 {kind} {input}=@1{maps} {settings}\noutput src 1\noutput out 4\n")).unwrap();
+        g.evaluate(None).unwrap()
+    };
+    for kind in ["x_triplanar", "x_triplanar_2", "x_triplanar_grayscale", "x_triplanar_grayscale_2"] {
+        // nothing to project on: a flat surface facing the camera shows the picture as it is
+        let flat = render(kind, "input", false, "");
+        assert!(mean_diff(&flat["src"], &flat["out"]) < 1e-3, "{kind}: a flat surface keeps the picture");
+        let base = render(kind, "input", true, "")["out"].clone();
+        assert!(mean_diff(&flat["src"], &base) > 0.01, "{kind}: the maps move the picture");
+        for s in ["projection=1", "projection=2", "projection=3", "blending_mode=1", "blending_contrast=1", "texture_tiling=3", "rotation_x=0.25", "rotation_y=0.25", "rotation_z=0.25", "offset_x_0=0.3", "offset_y_1=0.3", "offset_z_0=0.3"] {
+            let o = render(kind, "input", true, s);
+            assert!(mean_diff(&base, &o["out"]) > 1e-3, "{kind}: {s} changes the picture");
+        }
+    }
+    // one axis is a plain planar projection, whichever way the surface faces
+    let z = render("x_triplanar_2", "input", true, "projection=3");
+    let g = Graph::parse(&format!("{source}node 4 x_triplanar_2 input=@1 position=@2 projection=3\noutput out 4\n")).unwrap();
+    assert!(mean_diff(&z["out"], &g.evaluate(None).unwrap()["out"]) < 1e-5, "the Z axis alone ignores the normal");
+    // the older nodes project like the newest one with its mirror fix off
+    let old = render("x_triplanar_2", "input", true, "texture_tiling=2 rotation_y=0.1");
+    let new = render("x_triplanar_3", "input_x", true, "texture_tiling=2 rotation_y=0.1 fix_mirrored_projection=0");
+    assert!(mean_diff(&old["out"], &new["out"]) < 1e-5);
+    assert_eq!(materialcraft::nodes10::pin("x_triplanar_grayscale_2", None), Some(materialcraft::graph::Pin::Gray));
+    assert_eq!(materialcraft::nodes10::pin("x_triplanar_2", None), Some(materialcraft::graph::Pin::Color));
+}
