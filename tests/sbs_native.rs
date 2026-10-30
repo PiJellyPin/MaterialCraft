@@ -248,6 +248,34 @@ fn a_pass_through_reads_one_output_of_a_material_node() {
 }
 
 #[test]
+fn the_library_material_blend_wires_every_channel_to_its_own_input() {
+    let mut g = sbs_native::new_package("m", 16);
+    let colors: [(u32, &str); 5] = [(1, "0.2 0.2 0.2 1"), (2, "0.8 0.8 0.8 1"), (3, "0.3 0.3 0.3 1"), (4, "0.6 0.6 0.6 1"), (5, "0.5 0.5 0.5 1")];
+    for (id, raw) in colors {
+        let mut u = Node { kind: "sbs:uniform".into(), ..Default::default() };
+        u.strs.insert("outputcolor".into(), PVal::Const { ty: PTy::F(4), raw: raw.into(), rel: None }.enc());
+        g.nodes.insert(id, u);
+    }
+    let mut n = Node { kind: "sbs:lib:material_blend/material_blend".into(), ..Default::default() };
+    for (slot, id) in [("material1_basecolor", 1), ("material2_basecolor", 2), ("material1_roughness", 3), ("material2_roughness", 4), ("Input_21", 5)] {
+        n.ins.insert(slot.into(), id);
+    }
+    n.strs.insert("roughness_opacity".into(), PVal::Const { ty: PTy::F(1), raw: "0.5".into(), rel: None }.enc());
+    g.nodes.insert(6, n);
+    for (id, pin) in [(100, "basecolor"), (101, "roughness"), (102, "diffuse")] {
+        let mut t = Node { kind: "sbs:passthrough".into(), ..Default::default() };
+        t.ins.insert("input".into(), 6);
+        t.in_out.insert("input".into(), pin.into());
+        g.nodes.insert(id, t);
+    }
+    let r = g.evaluate_all_cached_ex(16, &[100, 101, 102], &[], 0, &std::sync::Arc::new(materialcraft::graph::NodeCache::new(64)), None, false, &mut |_| {});
+    let px = |id: u32| r.kept.get(&id).unwrap_or_else(|| panic!("{id}: {:?}", r.errors.get(&id))).px[0][0];
+    assert!((px(100) - 0.5).abs() < 2e-3, "base colour halfway: {}", px(100));
+    assert!((px(101) - 0.375).abs() < 2e-3, "roughness a quarter of the way: {}", px(101));
+    assert!((px(102) - 0.5).abs() < 2e-3, "an unconnected channel reads its default: {}", px(102));
+}
+
+#[test]
 fn a_graph_saved_as_template_starts_new_projects() {
     use materialcraft::user_templates;
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("user_templates_{}", std::process::id()));

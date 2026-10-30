@@ -138,6 +138,17 @@ fn channel_on(cx: &Cx, prefix: &str, ch: &str) -> bool {
     true
 }
 
+/// How much a pixel of a Color ID map counts as the picked colour.
+fn id_weight(p: [f32; 4], target: [f32; 4], fuzz: f32, pad: f32) -> f32 {
+    let d = ((p[0] - target[0]).powi(2) + (p[1] - target[1]).powi(2) + (p[2] - target[2]).powi(2)).sqrt();
+    1.0 - smooth(fuzz * (0.5 + pad), fuzz * (1.0 + pad), d)
+}
+
+/// The start of a channel's parameter names on the library's blend nodes.
+fn param_prefix(ch: &str) -> &str {
+    if ch == "ambientocclusion" { "ambient_occlusion" } else { ch }
+}
+
 fn blend_mode(a: [f32; 4], b: [f32; 4], mode: i32, k: f32) -> [f32; 4] {
     let mut o = [0.0f32; 4];
     for c in 0..3 {
@@ -146,7 +157,7 @@ fn blend_mode(a: [f32; 4], b: [f32; 4], mode: i32, k: f32) -> [f32; 4] {
             1 => x + y,
             2 => x - y,
             3 => x * y,
-            4 => x + y - 0.5,
+            4 => x + (y - 0.5) * 2.0,
             5 => x.max(y),
             6 => x.min(y),
             9 => {
@@ -213,6 +224,47 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
                 emit(cx, &mix, &|o| if o.eq_ignore_ascii_case("height_mask") { Some(w.clone()) } else { None })
             }
         }
+        "x_material_blend" => {
+            let m1 = read_named(cx, &names_with("material1_", "ambientocclusion", "specularlevel"));
+            let m2 = read_named(cx, &names_with("material2_", "ambientocclusion", "specularlevel"));
+            let (mask_in, id_map) = (cx.img("Input_21"), cx.img("Input_20").filter(|_| cx.b("ColorMask")));
+            let (fuzz, target, pad) = (cx.f("Fuzziness").max(0.01), cx.col("Color"), cx.f("Padding"));
+            // material 2 shows where the mask is white; a Color ID mask replaces the grayscale one
+            let mask = |u: f32, v: f32| match id_map {
+                Some(c) => id_weight(c.sample(u, v), target, fuzz, pad),
+                None => mask_in.map(|t| g(t, u, v)).unwrap_or(1.0),
+            };
+            let mix = |c: &'static str| -> Tex {
+                let (a, b) = (m1.get(c), m2.get(c));
+                if !channel_on(cx, "channel_", c) {
+                    return a;
+                }
+                let p = param_prefix(c);
+                let opacity = cx.f(&format!("{p}_opacity")).clamp(0.0, 1.0);
+                if c == "normal" {
+                    return Tex::from_fn(s, hs, |u, v| {
+                        let k = mask(u, v) * opacity;
+                        let (na, nb) = (dec_n(a.sample(u, v), false), dec_n(b.sample(u, v), false));
+                        enc_n([lerp(na[0], nb[0], k), lerp(na[1], nb[1], k), lerp(na[2], nb[2], k)], false)
+                    });
+                }
+                // Normal, Add, Subtract, Multiply, Add/Sub, Max, Min, Switch: our codes match but for the last
+                let mode = match cx.i(&format!("{p}_blending_mode")) {
+                    m @ 1..=6 => m,
+                    _ => 0,
+                };
+                Tex::from_fn(s, hs, |u, v| {
+                    let (x, y, k) = (a.sample(u, v), b.sample(u, v), mask(u, v) * opacity);
+                    let mut o = blend_mode(x, y, mode, k);
+                    for ch in 0..3 {
+                        o[ch] = o[ch].clamp(0.0, 1.0);
+                    }
+                    o[3] = lerp(x[3], y[3], k);
+                    o
+                })
+            };
+            emit(cx, &mix, &|_| None)
+        }
         "x_material_transform" => {
             let names = ["Input_12", "Input_14", "Input_11", "Input_15", "Input_20", "Input_18", "Input_13", "Input_16", "Input_21", "Input_10", "Input_19", "Input_17"];
             let m = Mat::read(cx, &names);
@@ -246,20 +298,13 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
                 let mut k = mask_in.map(|t| g(t, u, v)).unwrap_or(1.0);
                 if color_mask {
                     if let Some(c) = col_src {
-                        let p = c.sample(u, v);
-                        let d = ((p[0] - target[0]).powi(2) + (p[1] - target[1]).powi(2) + (p[2] - target[2]).powi(2)).sqrt();
-                        k *= 1.0 - smooth(fuzz * (0.5 + pad), fuzz * (1.0 + pad), d);
+                        k *= id_weight(c.sample(u, v), target, fuzz, pad);
                     }
                 }
                 grey(k.clamp(0.0, 1.0))
             });
             let adjust = cx.kind == "x_material_adjustment_blend";
-            let prefix = |c: &str| -> String {
-                match c {
-                    "ambientocclusion" => "ambient_occlusion".into(),
-                    o => o.to_string(),
-                }
-            };
+            let prefix = param_prefix;
             let f = |c: &'static str| -> Tex {
                 let t = m.get(c);
                 if !channel_on(cx, "channel_", c) {
