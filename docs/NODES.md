@@ -596,6 +596,8 @@ Spline, path and splatter data travel between these nodes as images in MaterialC
 | `x_season_filter` | Season Filter | `season_filter/season_filter` | Input, Input_0, Input_4, Input_3, Input_1, Input_5, Input_6, Input_7, Height, Input_12 | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, ambient_occlusion, height |
 | `x_season_filter_material` | Season Filter | `season_filter_material/season_filter` | Input, Input_4, Input_3, Input_1, Input_5, Input_6, Input_7, Height, Input_12 | diffuse, normal, specular, glossiness, roughness, metallic, ambient_occlusion, height |
 | `x_snow_cover` | Snow Cover | `me_snow_cover/snow_cover` | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion, mask | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
+| `x_tile_random` | Tile Random | `pattern_tile_random/tile_random` | pattern_input, background_input | output |
+| `x_tile_random_color` | Tile Random Color | `pattern_tile_random/tile_random_color` | pattern_input, background_input_1 | output |
 | `x_tiles_002` | Tiles 002 | `tiles_002/tiles_002` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
 | `x_tiles_008` | Tiles 008 | `tiles_008/tiles_008` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
 | `x_tiles_011` | Tiles 011 | `tiles_011/tiles_011` |  | diffuse, basecolor, normal, specular, glossiness, roughness, metallic, height, ambient_occlusion |
