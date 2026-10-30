@@ -39,6 +39,7 @@ pub const LIBS: &[(&str, &str, &str)] = &[
     ("x_atlas_scatter", "atlas_scatter", "atlas_scatter"),
     ("x_atlas_spliter", "atlas_spliter", "atlas_spliter"),
     ("x_basecolor_metallic_roughness_converter", "pbr_converter", "basecolor_metallic_roughness_converter"),
+    ("x_basecolor_metallic_roughness_to_diffuse_specular_glossiness", "pbr_converter", "basecolor_metallic_roughness_to_diffuse_specular_glossiness"),
     ("x_bitmap2material_2_light", "bitmaptomaterial_2_light", "Bitmap2Material_2_Light"),
     ("x_blackbody", "blackbody", "blackbody"),
     ("x_bricks_001", "bricks_001", "bricks_001"),
@@ -59,7 +60,12 @@ pub const LIBS: &[(&str, &str, &str)] = &[
     ("x_crop_grayscale", "crop", "crop_grayscale"),
     ("x_cube_3d", "pattern_cube_3d", "cube_3d"),
     ("x_cube_3d_gbuffers", "pattern_cube_3d", "cube_3d_gbuffers"),
+    ("x_diffuse_metallic_roughness_to_diffuse_specular_glossiness", "pbr_converter", "diffuse_metallic_roughness_to_diffuse_specular_glossiness"),
     ("x_directional_distance", "directional_distance", "directional_distance"),
+    ("x_directionnal_leaks", "ma_directionnal_leaks", "directionnal_leaks"),
+    ("x_edge_blur", "ma_edge_blur", "edge_blur"),
+    ("x_edge_dirt", "ma_edge_dirt", "edge_dirt"),
+    ("x_edge_spatter", "ma_edge_spatter", "edge_spatter"),
     ("x_exposure", "exposure", "exposure"),
     ("x_extend_shape_color", "extend_shape", "extend_shape_color"),
     ("x_extend_shape_grayscale", "extend_shape", "extend_shape_grayscale"),
@@ -90,12 +96,14 @@ pub const LIBS: &[(&str, &str, &str)] = &[
     ("x_material_adjustment_blend", "material_adjustment_blend", "material_adjustment_blend"),
     ("x_material_clone_patch", "clone_patch", "material_clone_patch"),
     ("x_material_color_blend", "material_color_blend", "material_color_blend"),
+    ("x_material_composite", "material_composite", "material_composite"),
     ("x_material_crop", "crop", "material_crop"),
     ("x_material_height_blend", "material_height_blend", "material_height_blend"),
     ("x_material_mesh_data_blender", "material_mesh_data_blender", "material_mesh_data_blender"),
     ("x_material_selector", "material_selector", "material_selector"),
     ("x_material_switch", "material_switch", "material_switch"),
     ("x_material_transform", "material_transform", "material_transform"),
+    ("x_material_transforms", "material_transforms", "material_transforms"),
     ("x_median_filter_color", "median_filter", "median_filter_color"),
     ("x_median_filter_grayscale", "median_filter", "median_filter_grayscale"),
     ("x_mesh_data_combiner", "mesh_data_combiner", "mesh_data_combiner"),
@@ -104,6 +112,7 @@ pub const LIBS: &[(&str, &str, &str)] = &[
     ("x_metal_006", "metal_006", "metal_006"),
     ("x_metal_plate_001", "metal_plate_001", "metal_plate_001"),
     ("x_metal_plate_004", "metal_plate_004", "metal_plate_004"),
+    ("x_metal_weathering", "metal_weathering", "metal_weathering"),
     ("x_mg_bottom_to_top", "mg_bottom_to_top", "mg_bottom_to_top"),
     ("x_mg_cloth_wear", "mg_cloth_wear", "mg_cloth_wear"),
     ("x_mg_dirt", "mg_dirt", "mg_dirt"),
@@ -131,6 +140,7 @@ pub const LIBS: &[(&str, &str, &str)] = &[
     ("x_mlv_color", "mean_of_least_variance", "mlv_color"),
     ("x_mlv_grayscale", "mean_of_least_variance", "mlv_grayscale"),
     ("x_modify_color_palette", "quantize_color", "modify_color_palette"),
+    ("x_moss_weahtering", "moss_weathering", "moss_weahtering"),
     ("x_moss_weathering", "moss_weathering_material", "moss_weathering"),
     ("x_multi_clone_patch", "clone_patch", "multi_clone_patch"),
     ("x_multi_clone_patch_grayscale", "clone_patch", "multi_clone_patch_grayscale"),
@@ -147,6 +157,8 @@ pub const LIBS: &[(&str, &str, &str)] = &[
     ("x_non_uniform_rotation_grayscale", "non_uniform_rotation", "non_uniform_rotation_grayscale"),
     ("x_normal_intensity", "normal_intensity", "normal_intensity"),
     ("x_normal_uncombine", "normal_uncombine", "normal_uncombine"),
+    ("x_occlusion", "ma_occlusion", "occlusion"),
+    ("x_occlusion_noise", "ma_occlusion_noise", "occlusion_noise"),
     ("x_old_painted_planks", "old_painted_planks", "old_painted_planks"),
     ("x_painted_metal_weathering", "painted_metal_weathering_material", "painted_metal_weathering"),
     ("x_panorama_3d_position", "panorama_position", "panorama_3d_position"),
@@ -176,6 +188,7 @@ pub const LIBS: &[(&str, &str, &str)] = &[
     ("x_pbr_render_mapping_grayscale", "pbr_render2", "PBR_render_mapping_grayscale"),
     ("x_point_list", "spline_tools", "point_list"),
     ("x_quad_transform_path", "paths_tools", "quad_transform_path"),
+    ("x_random_dirt", "ma_random_dirt", "random_dirt"),
     ("x_rock_weathering", "rock_weathering_material", "rock_weathering"),
     ("x_rough_concrete_with_lines", "rough_concrete_with_lines", "rough_concrete_with_lines"),
     ("x_rt_irradiance", "rt_irradiance", "rt_irradiance"),
@@ -186,6 +199,7 @@ pub const LIBS: &[(&str, &str, &str)] = &[
     ("x_scatter_splines_on_splines", "spline_tools", "scatter_splines_on_splines"),
     ("x_scratches_generator_normal", "pattern_scratches_generator", "scratches_generator_normal"),
     ("x_select_path", "paths_tools", "select_path"),
+    ("x_selective_dirt", "ma_selective_dirt", "selective_dirt"),
     ("x_shadows", "shadows", "shadows"),
     ("x_shape_splatter", "shape_splatter", "shape_splatter"),
     ("x_shape_splatter_blend", "shape_splatter", "shape_splatter_blend"),
@@ -215,6 +229,7 @@ pub const LIBS: &[(&str, &str, &str)] = &[
     ("x_spline_select", "spline_tools", "spline_select"),
     ("x_spline_warp", "spline_tools", "spline_warp"),
     ("x_srgb_to_acescg", "color_space_conversion", "srgb_to_acescg"),
+    ("x_sun_bleach", "ma_sun_bleach", "sun_bleach"),
     ("x_tiles_002", "tiles_002", "tiles_002"),
     ("x_tiles_008", "tiles_008", "tiles_008"),
     ("x_tiles_011", "tiles_011", "tiles_011"),
@@ -227,6 +242,7 @@ pub const LIBS: &[(&str, &str, &str)] = &[
     ("x_vertex_processor_simple", "paths_tools", "vertex_processor_simple"),
     ("x_water_level", "me_water_level", "water_level"),
     ("x_wood_american_cherry", "wood_american_cherry", "wood_american_cherry"),
+    ("x_wood_weathering", "wood_weathering", "wood_weathering"),
 ];
 
 /// Everything the rest of MaterialCraft needs to know about one of these nodes, built once from the library facts.
@@ -252,7 +268,11 @@ fn table() -> &'static HashMap<&'static str, Info> {
             let imgs: Vec<&'static str> = lib.images().map(|i| i.id).collect();
             let opt: &'static [&'static str] = Box::leak(imgs.into_boxed_slice());
             let outs: &'static [&'static str] = if lib.outputs.len() > 1 { Box::leak(lib.outputs.clone().into_boxed_slice()) } else { &[] };
-            let label = leak(title(id));
+            let label = match id {
+                // the graph with the material's nine channels has this name already
+                "moss_weahtering" => "Moss Weathering (Four Channels)",
+                _ => leak(title(id)),
+            };
             let doc = leak(format!("MaterialCraft's own implementation of the library graph {pkg}/{id}; parameters keep the graph's names"));
             m.insert(kind, Info { kind, lib, spec: Spec { kind, req: &[], opt, doc }, outs, label });
         }
@@ -276,6 +296,9 @@ fn title(id: &str) -> String {
             "mlv" => "MLV".to_string(),
             "2d" | "2dtransform" => w.to_ascii_uppercase().replace("TRANSFORM", " Transform"),
             "3d" => "3D".to_string(),
+            "directionnal" => "Directional".to_string(),
+            // a brand name in the identifier: what such a setting acts on is the detail the graph adds
+            "substance" => "Detail".to_string(),
             _ => {
                 let mut c = w.chars();
                 c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
@@ -311,13 +334,18 @@ pub fn label(kind: &str) -> Option<String> {
 
 pub fn category(kind: &str) -> &'static str {
     let k = kind.strip_prefix("x_").unwrap_or(kind);
-    if k.starts_with("mg_") || k.starts_with("material_") || k.ends_with("_weathering") || k.starts_with("pbr_") || k.starts_with("snow") || k.starts_with("water") || k == "mesh_data_combiner" || k == "multi_material_blend" || preset_material(kind) {
+    if k.starts_with("mg_") || k.starts_with("material_") || k.ends_with("_weathering") || k.starts_with("pbr_") || k.starts_with("snow") || k.starts_with("water") || k == "mesh_data_combiner" || k == "multi_material_blend" || k == "moss_weahtering" || k.ends_with("_to_diffuse_specular_glossiness") || older_adjustment(kind) || preset_material(kind) {
         "Material"
     } else if k.starts_with("spline") || k.contains("path") || k.starts_with("scatter_") || k == "point_list" || k.starts_with("shape_splatter") || k.starts_with("panorama") || k == "blackbody" || k.starts_with("cube_3d") || k == "3d_texture_position" || k == "scratches_generator_normal" {
         "Generators"
     } else {
         "Filters"
     }
+}
+
+/// The older mesh-based adjustments, which name most of their inputs only `Input_N`.
+fn older_adjustment(kind: &str) -> bool {
+    matches!(kind, "x_directionnal_leaks" | "x_edge_blur" | "x_edge_dirt" | "x_edge_spatter" | "x_occlusion" | "x_occlusion_noise" | "x_random_dirt" | "x_selective_dirt" | "x_sun_bleach")
 }
 
 /// The library's material presets (whole materials with no inputs).
@@ -441,7 +469,8 @@ fn note(kind: &str) -> Option<&'static str> {
         k if k.contains("path") || k.starts_with("x_vertex_processor") => "path data travels in MaterialCraft's own encoding: these nodes work together, not with other programs' path images",
         k if k.starts_with("x_shape_splatter") => "splatter data travels in MaterialCraft's own encoding: these nodes work together, not with other programs' splatter images",
         k if k.starts_with("x_3d_texture") => "3D textures are slice atlases in MaterialCraft's own layout (grid of slices, first slice top left)",
-        k if k.ends_with("_weathering") => "the weathering is MaterialCraft's own (masks from curvature, occlusion and noise)",
+        k if k.ends_with("_weathering") || k == "x_moss_weahtering" => "the weathering is MaterialCraft's own (masks from curvature, occlusion and noise)",
+        k if older_adjustment(k) => "the adjustment is MaterialCraft's own; the graph does not say which baked map each input is, so the wiring is assumed (see docs/NODES.md)",
         "x_pbr_render" => "the render is MaterialCraft's own image-based shading of the material on the chosen shape",
         "x_rt_irradiance" => "irradiance is estimated from the height, emissive and an analytic sky",
         "x_get_size_color" | "x_get_size_grayscale" => "the size is written as pixel counts in the red and green channels",
@@ -558,6 +587,7 @@ pub fn compute(kind: &str, _id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, 
     let want = n.nums.get("_want").copied().unwrap_or(0.0).max(0.0) as u32 | (1u32 << out.min(31));
     let cx = Cx { kind, n, lib: info.lib, ins, s: s.max(1), hs: hs.max(1), seed, out, want, outs: info.outs };
     let t = crate::nodes10_img::compute(&cx)
+        .or_else(|| crate::nodes10_ma::compute(&cx))
         .or_else(|| crate::nodes10_mat::compute(&cx))
         .or_else(|| crate::nodes10_spl::compute(&cx))
         .or_else(|| crate::nodes10_pano::compute(&cx));

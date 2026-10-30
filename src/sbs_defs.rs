@@ -281,6 +281,8 @@ pub fn label_of(id: &str) -> String {
         "renderroi" => "Render Region",
         "resizemethod" => "Resize Method",
         "shadowcolor" => "Shadow Color",
+        "Substance_AO_Intensity" => "Detail AO Intensity",
+        "Substance_Normal_Intensity" => "Detail Normal Intensity",
         "tilingroi" => "Tiling Region",
         "uvselector" => "Coordinate Axis",
         "vectorresourcepath" => "SVG",

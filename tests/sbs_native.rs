@@ -248,6 +248,65 @@ fn a_pass_through_reads_one_output_of_a_material_node() {
 }
 
 #[test]
+fn the_older_library_material_graphs_import_as_native_nodes() {
+    use materialcraft::{nodes10, sbs_defs, sbs_import};
+    let graphs = [
+        ("ma_directionnal_leaks", "directionnal_leaks"), ("ma_edge_blur", "edge_blur"), ("ma_edge_dirt", "edge_dirt"), ("ma_edge_spatter", "edge_spatter"), ("ma_occlusion", "occlusion"), ("ma_occlusion_noise", "occlusion_noise"),
+        ("ma_random_dirt", "random_dirt"), ("ma_selective_dirt", "selective_dirt"), ("ma_sun_bleach", "sun_bleach"), ("metal_weathering", "metal_weathering"), ("moss_weathering", "moss_weahtering"), ("wood_weathering", "wood_weathering"),
+        ("material_composite", "material_composite"), ("material_transforms", "material_transforms"), ("pbr_converter", "basecolor_metallic_roughness_to_diffuse_specular_glossiness"), ("pbr_converter", "diffuse_metallic_roughness_to_diffuse_specular_glossiness"),
+    ];
+    for (p, id) in graphs {
+        assert!(sbs_import::library_renders(p, id), "{p}/{id}");
+        assert_eq!(nodes10::kind_for(p, id), Some(format!("x_{id}").as_str()).map(|k| nodes10::info(k).unwrap().kind), "{p}/{id}");
+    }
+    // the two moss graphs stay apart
+    assert_eq!(nodes10::kind_for("moss_weathering_material", "moss_weathering"), Some("x_moss_weathering"));
+    // registered names stay out of the labels, the identifiers do not change
+    for id in ["Substance_Normal_Intensity", "Substance_AO_Intensity"] {
+        assert!(!sbs_defs::label_of(id).contains("Substance"));
+        for k in ["x_metal_weathering", "x_wood_weathering"] {
+            let p = nodes10::pdefs(k).into_iter().find(|p| p.name == id).unwrap();
+            assert!(!p.label.contains("Substance"), "{k}: {}", p.label);
+        }
+    }
+
+    let mut g = sbs_native::new_package("m", 16);
+    for (id, raw) in [(1, "0.8 0.4 0.2 1"), (2, "0.25 0.25 0.25 1"), (3, "0.5 0.5 0.5 1")] {
+        let mut u = Node { kind: "sbs:uniform".into(), ..Default::default() };
+        u.strs.insert("outputcolor".into(), PVal::Const { ty: PTy::F(4), raw: raw.into(), rel: None }.enc());
+        g.nodes.insert(id, u);
+    }
+    let mut occ = Node { kind: "sbs:lib:ma_occlusion/occlusion".into(), ..Default::default() };
+    occ.ins.insert("Input_2".into(), 1);
+    occ.ins.insert("Input_1".into(), 2);
+    occ.strs.insert("opacity".into(), PVal::Const { ty: PTy::F(1), raw: "0.5".into(), rel: None }.enc());
+    g.nodes.insert(4, occ);
+    let mut pbr = Node { kind: "sbs:lib:pbr_converter/basecolor_metallic_roughness_to_diffuse_specular_glossiness".into(), ..Default::default() };
+    pbr.ins.insert("basecolor".into(), 1);
+    pbr.ins.insert("roughness".into(), 2);
+    pbr.ins.insert("metallic".into(), 3);
+    g.nodes.insert(5, pbr);
+    let mut moss = Node { kind: "sbs:lib:moss_weathering/moss_weahtering".into(), ..Default::default() };
+    moss.ins.insert("Input_2".into(), 1);
+    moss.strs.insert("moss_propagation".into(), PVal::Const { ty: PTy::F(1), raw: "0".into(), rel: None }.enc());
+    g.nodes.insert(6, moss);
+    for (id, src, pin) in [(100, 5, "glossiness"), (101, 5, "diffuse"), (102, 6, "Diffuse"), (103, 6, "Glossiness_Roughness")] {
+        let mut t = Node { kind: "sbs:passthrough".into(), ..Default::default() };
+        t.ins.insert("input".into(), src);
+        t.in_out.insert("input".into(), pin.into());
+        g.nodes.insert(id, t);
+    }
+    let r = g.evaluate_all_cached_ex(16, &[4, 100, 101, 102, 103], &[], 0, &std::sync::Arc::new(materialcraft::graph::NodeCache::new(64)), None, false, &mut |_| {});
+    let px = |id: u32| r.kept.get(&id).unwrap_or_else(|| panic!("{id}: {:?}", r.errors.get(&id))).px[0];
+    let k = 0.84375 * 0.5;
+    assert!((px(4)[0] - 0.8 * (1.0 - k)).abs() < 2e-3, "occlusion through its opacity: {:?}", px(4));
+    assert!((px(100)[0] - 0.75).abs() < 2e-3, "glossiness is the inverse roughness: {:?}", px(100));
+    assert!((px(101)[0] - 0.4).abs() < 2e-3, "half a metal keeps half its colour as diffuse: {:?}", px(101));
+    assert!((px(102)[0] - 0.8).abs() < 2e-3, "no moss at no propagation: {:?}", px(102));
+    assert!((px(103)[0] - 0.5).abs() < 2e-3, "the moss graph's own output name: {:?}", px(103));
+}
+
+#[test]
 fn a_graph_saved_as_template_starts_new_projects() {
     use materialcraft::user_templates;
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("user_templates_{}", std::process::id()));

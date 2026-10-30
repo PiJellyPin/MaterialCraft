@@ -55,3 +55,22 @@ multi_directional_warp* directions = 1:1 direction|2:2 directions|4:4 directions
 normal_combine blend_quality = Whiteout|Channel mixer|Detail oriented
 threshold mode = Greater|Greater or equal|Lower|Lower or equal
 slope_blur* mode = 5:Max (assumed)|6:Min (assumed)|7:Blur
+
+# older material graphs (nodes10_ma.rs); the library does not say what their numbers mean
+directionnal_leaks dirt_map_input = Color|Image (assumed)
+edge_blur image_input = Color|Image (assumed)
+edge_dirt image_input = Color|Image (assumed)
+edge_spatter image_input = Color|Image (assumed)
+selective_dirt image_input = Color|Image (assumed)
+random_dirt image_input = Generated Noise|Input Pattern (assumed)
+metal_weathering/metal_weathering Rust_Verdigris = Rust|Verdigris (assumed)
+moss_weathering/moss_weahtering use_mask = Off|On (assumed)
+moss_weathering/moss_weahtering roughness_type = Glossiness|Roughness (assumed)
+moss_weathering/moss_weahtering reflectance_type = Specular|Metallic (assumed)
+material_composite/material_composite Ambient_Blending_Mode = Copy|Add|Subtract|Multiply|Add / Sub|Max|Min (assumed)
+material_composite/material_composite Diffuse_Blending_Mode = Copy|Add|Subtract|Multiply|Add / Sub|Max|Min (assumed)
+material_composite/material_composite Specular_Blending_Mode = Copy|Add|Subtract|Multiply|Add / Sub|Max|Min (assumed)
+material_composite/material_composite Height_Blending_Mode = Copy|Add|Subtract|Multiply|Add / Sub|Max|Min (assumed)
+material_composite/material_composite Opacity_Blending_Mode = Copy|Add|Subtract|Multiply|Add / Sub|Max|Min (assumed)
+material_composite/material_composite Emissive_Blending_Mode = Copy|Add|Subtract|Multiply|Add / Sub|Max|Min (assumed)
+material_composite/material_composite Normal_Method = Replace|Add Detail (assumed)

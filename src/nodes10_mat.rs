@@ -102,7 +102,7 @@ fn read_named(cx: &Cx, names: &[String; 12]) -> Mat {
 }
 
 /// The library's outputs, filled from a material (other outputs come from `extra`).
-fn emit(cx: &Cx, f: &dyn Fn(&'static str) -> Tex, extra: &dyn Fn(&str) -> Option<Tex>) -> Tex {
+pub(crate) fn emit(cx: &Cx, f: &dyn Fn(&'static str) -> Tex, extra: &dyn Fn(&str) -> Option<Tex>) -> Tex {
     let outs: Vec<&'static str> = if cx.outs.is_empty() { cx.lib.outputs.clone() } else { cx.outs.to_vec() };
     let all: Vec<Option<Tex>> = outs
         .iter()
