@@ -255,3 +255,27 @@ fn non_square_size_round_trips_through_the_file_format() {
     let t = &g.evaluate(Some(128)).unwrap()["o"];
     assert_eq!((t.w, t.h), (128, 64));
 }
+
+/// Every output of the Season Filter with all its layers on, also with reflections and flow at angles that do not
+/// line up with the texture.
+#[test]
+fn season_filter_outputs_are_seamless() {
+    let pre = "size 128\nnode 1 fbm scale=5 octaves=4 seed=9\nnode 2 fbm scale=3 octaves=4 seed=2\nnode 3 normal in=@2 strength=3\nnode 4 color r=0.5 g=0.5 b=0.5\n";
+    let cases = [
+        "water_level=0.5 water_details=1 ice=0.4 snow=0.5 moss=0.5",
+        "water_level=0.6 water_details=1 ice=0 reflection=1 reflection_angle=0.13 flow_direction=0.13 refraction=1",
+        "water_level=0.4 snow=0.7 moss=0.4 moss_scale=1 effect_from_height_normal=1 light_intensity=1",
+    ];
+    let mut bad = Vec::new();
+    for c in cases {
+        for pin in ["diffuse", "normal", "roughness", "height", "ambient_occlusion"] {
+            let g = Graph::parse(&format!("{pre}node 6 x_season_filter Input=@1 Input_4=@3 Input_5=@4 Input_7=@4 Height=@2 {c}\noutput o 6.{pin}\n")).unwrap();
+            let t = g.evaluate(None).unwrap();
+            let (s, i) = seam(&t["o"]);
+            if s > i * 1.5 + 0.01 {
+                bad.push(format!("{pin} ({c}): seam {s:.4} inner {i:.4}"));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{bad:?}");
+}

@@ -248,6 +248,44 @@ fn a_pass_through_reads_one_output_of_a_material_node() {
 }
 
 #[test]
+fn the_library_season_filters_read_their_inputs_and_parameters() {
+    let cases: [(&str, &[(u32, &str)]); 2] = [
+        ("sbs:lib:season_filter/season_filter", &[(100, "diffuse"), (101, "basecolor"), (102, "roughness"), (103, "height")]),
+        ("sbs:lib:season_filter_material/season_filter", &[(100, "diffuse"), (102, "roughness"), (103, "height")]),
+    ];
+    for (kind, pins) in cases {
+        let mut g = sbs_native::new_package("m", 16);
+        for (id, raw) in [(1, "0.2 0.4 0.6 1"), (2, "0.8 0.8 0.8 1"), (3, "0.3 0.3 0.3 1")] {
+            let mut u = Node { kind: "sbs:uniform".into(), ..Default::default() };
+            u.strs.insert("outputcolor".into(), PVal::Const { ty: PTy::F(4), raw: raw.into(), rel: None }.enc());
+            g.nodes.insert(id, u);
+        }
+        let mut n = Node { kind: kind.into(), ..Default::default() };
+        for (slot, id) in [("Input", 1), ("Input_0", 1), ("Input_5", 2), ("Height", 3)] {
+            n.ins.insert(slot.into(), id);
+        }
+        // the whole picture is under the water and frozen: the graph's own parameter names reach the node
+        n.strs.insert("water_level".into(), PVal::Const { ty: PTy::F(1), raw: "0.9".into(), rel: None }.enc());
+        n.strs.insert("ice".into(), PVal::Const { ty: PTy::F(1), raw: "1".into(), rel: None }.enc());
+        n.strs.insert("ice_details".into(), PVal::Const { ty: PTy::F(1), raw: "0".into(), rel: None }.enc());
+        n.strs.insert("height_intensity".into(), PVal::Const { ty: PTy::F(1), raw: "0.5".into(), rel: None }.enc());
+        g.nodes.insert(6, n);
+        for (id, pin) in pins {
+            let mut t = Node { kind: "sbs:passthrough".into(), ..Default::default() };
+            t.ins.insert("input".into(), 6);
+            t.in_out.insert("input".into(), (*pin).into());
+            g.nodes.insert(*id, t);
+        }
+        let keep: Vec<u32> = pins.iter().map(|p| p.0).collect();
+        let r = g.evaluate_all_cached_ex(16, &keep, &[], 0, &std::sync::Arc::new(materialcraft::graph::NodeCache::new(64)), None, false, &mut |_| {});
+        let px = |id: u32| r.kept.get(&id).unwrap_or_else(|| panic!("{kind} {id}: {:?}", r.errors.get(&id))).px[0][0];
+        assert!(px(100) > 0.5, "{kind}: the diffuse is iced over: {}", px(100));
+        assert!((px(102) - 0.25).abs() < 2e-3, "{kind}: roughness of plain ice: {}", px(102));
+        assert!((px(103) - 0.6135).abs() < 2e-3, "{kind}: the height rises halfway to the ice: {}", px(103));
+    }
+}
+
+#[test]
 fn a_graph_saved_as_template_starts_new_projects() {
     use materialcraft::user_templates;
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("user_templates_{}", std::process::id()));
