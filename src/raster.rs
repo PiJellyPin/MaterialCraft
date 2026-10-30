@@ -124,6 +124,40 @@ fn parallax(hm: &Tex, s: &PSurf, vt: V, depth: f32, level: f32) -> ([f32; 2], f3
     (at(depth).1, 1.0)
 }
 
+/// Does the material carry an opacity (an opacity map, or a base colour with some alpha below one)?
+pub(crate) fn has_opacity(m: &Maps) -> bool {
+    m.opacity.is_some() || m.base.px.iter().any(|p| p[3] < 0.999)
+}
+
+/// Opacity of the material at a point of a triangle: the opacity map, else the base colour's alpha (fixed materials
+/// are opaque).
+pub(crate) fn opacity(m: &Maps, sm: &SceneMesh, tri: usize, b1: f32, b2: f32) -> f32 {
+    if !matches!(sm.objects[sm.mesh.object_of(tri)].material, Material::Graph) {
+        return 1.0;
+    }
+    let t = sm.mesh.tris[tri];
+    let (i0, i1, i2) = (t[0] as usize, t[1] as usize, t[2] as usize);
+    let b0 = 1.0 - b1 - b2;
+    let uv = &sm.mesh.uv;
+    let (u, v) = (b0 * uv[i0][0] + b1 * uv[i1][0] + b2 * uv[i2][0], b0 * uv[i0][1] + b1 * uv[i1][1] + b2 * uv[i2][1]);
+    let a = match m.opacity {
+        Some(o) => lum(o.sample(u, v)),
+        None => m.base.sample(u, v)[3],
+    };
+    if a.is_nan() {
+        1.0
+    } else {
+        a.clamp(0.0, 1.0)
+    }
+}
+
+/// Ordered dither threshold of pixel (x, y) (4 x 4 Bayer, as the GPU viewer): partial opacity becomes a screen-door
+/// pattern.
+pub(crate) fn bayer(x: usize, y: usize) -> f32 {
+    const M: [f32; 16] = [0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0];
+    (M[(y % 4) * 4 + x % 4] + 0.5) / 16.0
+}
+
 /// Sample the material at a point of a triangle. `vv` points from the surface towards the viewer.
 pub(crate) fn surface(m: &Maps, v: &View, sm: &SceneMesh, tri: usize, b1: f32, b2: f32, vv: V, use_parallax: bool) -> Surface {
     let mesh = &sm.mesh;
@@ -385,7 +419,9 @@ pub fn render_frame(m: &Maps, v: &View, w: usize, h: usize) -> (Frame, SceneMesh
     let cam = camera(v, w, h);
     let cb = v.cam();
     let sm = objects::build_scene(v, if v.relief == RELIEF_DISPLACE { m.height } else { None });
-    let frags = rasterize(&sm.mesh, &cam);
+    // transparent texels are not drawn (see `opacity`)
+    let cut = |tri: u32, b1: f32, b2: f32, x: usize, y: usize| opacity(m, &sm, tri as usize, b1, b2) >= bayer(x, y);
+    let frags = rasterize(&sm.mesh, &cam, if has_opacity(m) { Some(&cut) } else { None });
     let env_arc;
     let env: &Env = match m.env {
         Some(e) => e,

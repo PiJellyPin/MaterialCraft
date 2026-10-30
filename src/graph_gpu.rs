@@ -823,7 +823,7 @@ pub(super) fn run(n: &Node, ins: &Ins, sz: (usize, usize), ctx: &Ctx, out_idx: u
             callb(opb::SYMMETRY, &[(f("axis", 0.0) as u32) as f32, f("offset", 0.0), sg, f("transfer", 0.0).round().max(0.0)], &[&dev("in")?])
         }
         "skew" => {
-            let (kx, ky) = (f("skew_x", 1.0).round().clamp(-32.0, 32.0), f("skew_y", 0.0).round().clamp(-32.0, 32.0));
+            let (kx, ky) = (f("skew_x", 1.0).clamp(-32.0, 32.0), f("skew_y", 0.0).clamp(-32.0, 32.0));
             let o = match f("align", 1.0).round() as u32 {
                 0 => 0.5,
                 2 => 1.0,
@@ -1004,7 +1004,8 @@ pub(super) fn run(n: &Node, ins: &Ins, sz: (usize, usize), ctx: &Ctx, out_idx: u
         }
         "make_it_tile_photo" => {
             let w = f("width", 0.6);
-            callc(opc::TILE_PHOTO, &[w, f("width_v", w)], &[&dev("in")?])
+            let p = [w, f("width_v", w), f("sharp", 0.0), f("sharp_v", 0.0), f("warp", 0.0), f("warp_v", 0.0)];
+            callc_n(opc::TILE_PHOTO, seed, &p, &[&dev("in")?])
         }
         "edge_wear" | "dirt" | "dust" => {
             let base = dev("in")?;

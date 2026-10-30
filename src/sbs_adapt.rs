@@ -853,8 +853,19 @@ fn tile_generator_new(ad: &mut Ad) {
     ad.vec("global_offset", &["global_offset_x", "global_offset_y"]);
     ad.same("rotation", "rotation");
     ad.same("rotation_random", "rotation_random");
-    ad.same("pattern_color", "color");
-    ad.same("luminance_random", "color_random");
+    if ad.lanes_of("pattern_color") >= 3 {
+        // the colour graph on our grayscale node: the colour by its luminance; of its random hue, saturation and
+        // value amounts only the value one has a counterpart
+        let c: Vec<f32> = (0..3).map(|i| ad.take_lane("pattern_color", i)).collect();
+        ad.set("color", 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]);
+        ad.lin("pattern_color_random", 2, "color_random", 1.0, 0.0);
+        if ad.take_lane("pattern_color_random", 0) > 0.0 || ad.take_lane("pattern_color_random", 1) > 0.0 {
+            ad.note("random hue and saturation are not reproduced on our grayscale node");
+        }
+    } else {
+        ad.same("pattern_color", "color");
+        ad.same("luminance_random", "color_random");
+    }
     ad.same("luminance_by_number", "lum_by_number");
     ad.same("luminance_by_scale", "lum_by_scale");
     ad.same("checker_mask", "mask_checker");
@@ -904,6 +915,17 @@ fn tile_generator_old(ad: &mut Ad) {
     ad.vec("Global_Offset", &["global_offset_x", "global_offset_y"]);
     ad.same("LuminanceByNumber", "lum_by_number");
     ad.lin("Luminance_Variation-Contrast", 0, "color_random", 1.0, 0.0);
+    if ad.decl("Color") {
+        // the colour graph on our grayscale node: the colour by its luminance, its variation as luminance variation
+        let c: Vec<f32> = (0..3).map(|i| ad.take_lane("Color", i)).collect();
+        ad.set("color", 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]);
+        let var = ad.take("Color_Variation");
+        let cur = ad.c.node.nums.get("color_random").copied().unwrap_or(0.0);
+        if var > cur {
+            ad.set("color_random", var);
+            ad.note("the colour variation is drawn as a luminance variation");
+        }
+    }
     ad.lin("Free_Rotation", 0, "rotation", 1.0 / 360.0, 0.0);
     ad.lin("Free_Rotation_Random", 0, "rotation_random", 1.0 / 360.0, 0.0);
     ad.same("Fixed_Rotation", "pattern_rotation");
@@ -941,7 +963,9 @@ fn tile_sampler(ad: &mut Ad) {
     ad.same("y_amount", "y_amount");
     let p = scatter_pattern(ad, "pattern");
     scatter_specific(ad, "pattern_specific", p);
-    ad.same("pattern_specific_random", "pattern_specific_random");
+    // the older colour graph spells some inputs differently
+    let pick = |ad: &Ad, a: &'static str, b: &'static str| if ad.decl(a) { a } else { b };
+    ad.same(pick(ad, "pattern_specific_random", "pattern_specific_variation"), "pattern_specific_random");
     if ad.decl("pattern_input_distribution") {
         ad.same("pattern_input_distribution", "pattern_distribution");
     }
@@ -972,11 +996,15 @@ fn tile_sampler(ad: &mut Ad) {
     ad.same("scale", "scale");
     ad.same("scale_random", "scale_random");
     ad.same("scale_map_multiplier", "scale_map_multiplier");
-    if ad.take("scale_vector_map_multiplier") > 0.0 || ad.take("vector_map_displacement") > 0.0 || ad.take("rotation_vector_map_multiplier") > 0.0 {
+    let vd = pick(ad, "vector_map_displacement", "vectormap_displacement");
+    if ad.take("scale_vector_map_multiplier") > 0.0 || ad.take(vd) > 0.0 || ad.take("rotation_vector_map_multiplier") > 0.0 {
         ad.note("the vector map settings are not reproduced");
     }
-    ad.ignore(&["scale_parametrization_affect", "mask_map_sampling_technique", "color_parametrization_mode"]);
-    let pr = ad.take("position_random");
+    ad.ignore(&["scale_parametrization_affect", "scale_parametrisation_affect", "mask_map_sampling_technique", "color_parametrization_mode"]);
+    if ad.decl("color_parametrization_affect") && ad.take_i("color_parametrization_affect") != 0 {
+        ad.note("the colour map always drives the luminance here");
+    }
+    let pr = ad.take(pick(ad, "position_random", "position_variation"));
     ad.set("position_random", pr);
     ad.set("position_random_x", 1.0);
     ad.set("position_random_y", 1.0);
@@ -1070,15 +1098,32 @@ fn splatter_circular_new(ad: &mut Ad) {
     ad.same("ring_rotation_random", "ring_rotation_random");
     // the first pattern sits at the top of the ring
     ad.lin("ring_rotation_offset", 0, "ring_rotation_offset", 1.0, 0.75);
-    ad.same("pattern_color", "color");
-    ad.same("luminance_random", "luminance_random");
+    if ad.lanes_of("pattern_color") >= 3 {
+        // the colour graph on our grayscale node: colours by their luminance; of the random hue, saturation and
+        // value amounts only the value one has a counterpart
+        let lum = |ad: &mut Ad, sd: &str| {
+            let c: Vec<f32> = (0..3).map(|i| ad.take_lane(sd, i)).collect();
+            0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+        };
+        let (c, b) = (lum(ad, "pattern_color"), lum(ad, "background_color"));
+        ad.set("color", c);
+        ad.set("background", b);
+        ad.lin("pattern_color_random", 2, "luminance_random", 1.0, 0.0);
+        if ad.take_lane("pattern_color_random", 0) > 0.0 || ad.take_lane("pattern_color_random", 1) > 0.0 {
+            ad.note("random hue and saturation are not reproduced on our grayscale node");
+        }
+    } else {
+        ad.same("pattern_color", "color");
+        ad.same("luminance_random", "luminance_random");
+        ad.same("background_color", "background");
+    }
     ad.same("luminance_by_pattern_number", "lum_by_number");
     ad.same("luminance_by_ring_number", "lum_by_ring");
-    if ad.take("luminance_by_scale") > 0.0 || ad.take_b("luminance_by_pattern_number_invert") || ad.take_b("luminance_by_ring_number_invert") {
+    let ring_invert = if ad.decl("invert_ring_number") { "invert_ring_number" } else { "luminance_by_ring_number_invert" };
+    if ad.take("luminance_by_scale") > 0.0 || ad.take_b("luminance_by_pattern_number_invert") || ad.take_b(ring_invert) {
         ad.note("some luminance settings are not reproduced");
     }
     ad.same("random_mask", "mask_random");
-    ad.same("background_color", "background");
     scatter_blend(ad, "blending_mode", 1);
     ad.same("global_opacity", "opacity");
     for (i, mc) in ["pattern", "pattern2", "pattern3", "pattern4", "pattern5", "pattern6"].iter().enumerate() {
@@ -1095,22 +1140,46 @@ fn splatter_circular_old(ad: &mut Ad) {
     ad.same("Radius_Random", "radius_random");
     let p = scatter_pattern(ad, "Pattern");
     scatter_specific(ad, "Pattern_Specific", p);
+    // the colour graph spells several inputs differently
+    let pick = |ad: &Ad, a: &'static str, b: &'static str| if ad.decl(a) { a } else { b };
     let sc = ad.take("pattern_scale");
-    let (sx, sy) = (ad.take_lane("PatternSize", 0), ad.take_lane("PatternSize", 1));
+    let ps = pick(ad, "PatternSize", "pattern_size");
+    let (sx, sy) = (ad.take_lane(ps, 0), ad.take_lane(ps, 1));
     ad.set("size", sx * sc);
     if (sx - sy).abs() > 1e-4 {
         ad.note("non-square pattern sizes are drawn square");
     }
-    let r = ad.take("PatternSize_Random").max(ad.take("pattern_scale_random"));
+    let r = ad.take(pick(ad, "PatternSize_Random", "pattern_size_Random")).max(ad.take("pattern_scale_random"));
     ad.set("size_random", r);
     ad.same("Position_Random", "position_random");
-    ad.same("RandomMask", "mask_random");
+    ad.same(pick(ad, "RandomMask", "random_mask"), "mask_random");
     ad.same("Rotation", "rotation");
     ad.same("Rotation_Random", "rotation_random");
-    ad.same("CenterOrientation", "center_orientation");
+    ad.same(pick(ad, "CenterOrientation", "center_orientation"), "center_orientation");
     ad.set("ring_rotation_offset", 0.75);
-    scatter_blend(ad, "BlendingMode", 0);
+    if ad.decl("blending_mode") {
+        let d = ad.def("blending_mode", 0) as i32;
+        scatter_blend(ad, "blending_mode", d);
+    } else {
+        scatter_blend(ad, "BlendingMode", 0);
+    }
     ad.same("Luminance_Random", "luminance_random");
+    if ad.decl("pattern_color") {
+        // the colour graph on our grayscale node: colours by their luminance, of the random hue, saturation and
+        // lightness only the lightness has a counterpart
+        let lum = |ad: &mut Ad, sd: &str| {
+            let c: Vec<f32> = (0..3).map(|i| ad.take_lane(sd, i)).collect();
+            0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+        };
+        let c = lum(ad, "pattern_color");
+        ad.set("color", c);
+        let b = lum(ad, "background_color");
+        ad.set("background", b);
+        ad.lin("hsl_random", 2, "luminance_random", 1.0, 0.0);
+        if ad.take_lane("hsl_random", 0) > 0.0 || ad.take_lane("hsl_random", 1) > 0.0 {
+            ad.note("random hue and saturation are not reproduced on our grayscale node");
+        }
+    }
     ad.ignore(&["image_input_filtering", "pattern_pivot", "Luminance_By_Scale"]);
     ad.slot("Source", "pattern");
     ad.slot("background", "");
@@ -1319,6 +1388,139 @@ fn waveform_1(ad: &mut Ad) {
     if p != 6 {
         ad.note(format!("bar pattern {p} is drawn as soft bars"));
     }
+}
+
+// ------------------------------------------------------------------------------------------------ tiling
+
+/// Make It Tile Photo: reach and smoothness of the two transitions as they are; warping on a -100..100 scale.
+fn make_it_tile_photo(ad: &mut Ad) {
+    ad.same("Mask_Size_H", "width");
+    ad.same("Mask_Size_V", "width_v");
+    ad.same("Mask_Precision_H", "sharp");
+    ad.same("Mask_Precision_V", "sharp_v");
+    ad.lin("Mask_Warping_H", 0, "warp", 0.01, 0.0);
+    ad.lin("Mask_Warping_V", 0, "warp_v", 0.01, 0.0);
+}
+
+/// Make It Tile Patch: our stamped patches. Pattern sizes are percentages of a grid cell, angles degrees, the
+/// size variation and warping percentages.
+fn make_it_tile_patch(ad: &mut Ad) {
+    ad.set("mode", 1.0);
+    ad.same("Octave", "octave");
+    ad.same("Mask_Size", "mask_size");
+    ad.same("Mask_Precision", "mask_precision");
+    ad.lin("Mask_Warping", 0, "mask_warp", 0.01, 0.0);
+    ad.lin("Pattern_size_width", 0, "size_x", 0.01, 0.0);
+    ad.lin("Pattern_size_height", 0, "size_y", 0.01, 0.0);
+    ad.same("Disorder", "disorder");
+    ad.lin("Size_Variation", 0, "size_var", 0.01, 0.0);
+    ad.lin("Rotation", 0, "rotation", 1.0 / 360.0, 0.0);
+    ad.lin("Rotation_Variation", 0, "rotation_var", 1.0 / 360.0, 0.0);
+    if ad.lanes_of("Background_Color") >= 4 {
+        ad.vec("Background_Color", &["bg_r", "bg_g", "bg_b", "bg_a"]);
+    } else {
+        // the grayscale graph: a gray, opaque background
+        for mc in ["bg_r", "bg_g", "bg_b"] {
+            ad.lin("Background_Color", 0, mc, 1.0, 0.0);
+        }
+        ad.set("bg_a", 1.0);
+    }
+    if ad.decl("Color_Variation") {
+        ad.same("Color_Variation", "color_var");
+    }
+    if ad.decl("Luminosity_Variation") {
+        ad.same("Luminosity_Variation", "lum_var");
+    }
+    ad.note("the patches are laid out, masked and varied by our own stamping; not yet checked against a reference render");
+}
+
+/// Skew: the amount is how far the image is shifted over its whole height (or width), in tiles.
+fn skew(ad: &mut Ad) {
+    let (on, off) = if ad.take_i("Axis") == 1 { ("skew_y", "skew_x") } else { ("skew_x", "skew_y") };
+    ad.same("Amount", on);
+    ad.set(off, 0.0);
+    ad.same("Align", "align");
+    let a = ad.v("Amount", 0);
+    if (a - a.round()).abs() > 1e-4 {
+        ad.note("a skew by a fraction of the tile does not tile");
+    }
+}
+
+/// Symmetry: the library's mode list in our terms; the transfer modes are in the same order.
+fn symmetry(ad: &mut Ad) {
+    let m = ad.take_i("Symmetry_Mode");
+    let axis = match m {
+        0 => 1.0,
+        1 => 0.0,
+        2 => 3.0,
+        3 => 4.0,
+        4 | 5 => 2.0,
+        6 | 7 => 6.0,
+        _ => 5.0,
+    };
+    ad.set("axis", axis);
+    if m == 5 || m == 7 {
+        ad.note(format!("symmetry mode {m} is drawn like mode {}", m - 1));
+    }
+    ad.same("Transfer_Mode", "transfer");
+}
+
+/// Splatter (both versions): a jittered grid of the pattern input. Sizes are percentages of a grid cell, angles
+/// degrees, disorder, pan and size variation percentages.
+fn splatter(ad: &mut Ad) {
+    let g = ad.take_i("Grid_Number").max(1);
+    ad.set("grid_number", g as f32);
+    let (w, h) = (ad.take("Pattern_size_width"), ad.take("Pattern_size_height"));
+    ad.set("scale", (w * 0.01 / g as f32).max(0.001));
+    ad.set("aspect", if w > 1e-3 { h / w } else { 1.0 });
+    ad.lin("Rotation", 0, "rotation", 1.0 / 360.0, 0.0);
+    ad.lin("Rotation_Var", 0, "rot_var", 1.0 / 360.0, 0.0);
+    ad.lin("Size_Var", 0, "scale_var", 0.01, 0.0);
+    ad.lin("Disorder", 0, "disorder", 0.01, 0.0);
+    if ad.v("Disorder", 0) > 0.0 && !ad.take_b("Disorder_Random") {
+        ad.note("the patterns are shifted in random directions; the disorder angle is not reproduced");
+    }
+    ad.ignore(&["Disorder_Angle", "Disorder_Random"]);
+    ad.lin("Pan_X", 0, "pan_x", 0.01, 0.0);
+    ad.lin("Pan_Y", 0, "pan_y", 0.01, 0.0);
+    if (ad.take("Zoom") - 100.0).abs() > 1e-3 {
+        ad.note("the zoom (which breaks tiling) is not reproduced");
+    }
+    ad.same("Gain", "gain");
+    ad.same("Output_Min", "output_min");
+    ad.same("Output_Max", "output_max");
+    // the colour graph on our grayscale node: the background by its luminance, the colour variation as luminance
+    for bg in ["Background_color", "Background_Color"] {
+        if ad.lanes_of(bg) >= 3 && ad.decl(bg) {
+            let c: Vec<f32> = (0..3).map(|i| ad.take_lane(bg, i)).collect();
+            ad.set("background", 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]);
+        } else if ad.decl(bg) {
+            ad.same(bg, "background");
+        }
+    }
+    for lv in ["Lum_Var", "Color_Var"] {
+        if ad.decl(lv) {
+            ad.same(lv, "lum_var");
+        }
+    }
+    // the size of the pattern's internal image (a power of two) and its filtering only change sharpness
+    ad.ignore(&["PatternSize", "image_input_filtering"]);
+    ad.slot("Source", "pattern");
+}
+
+/// Curvature Smooth: only the normal format to translate.
+fn curvature_smooth(ad: &mut Ad) {
+    normal_format(ad, "normal_format");
+}
+
+/// Shape Stroke and Shape Glow: same-named settings carry over, the colour goes to our three lanes.
+fn shape_stroke(ad: &mut Ad) {
+    generic(ad);
+    ad.vec("outline_color", &["color_r", "color_g", "color_b"]);
+}
+fn shape_glow(ad: &mut Ad) {
+    generic(ad);
+    ad.vec("glow_color", &["color_r", "color_g", "color_b"]);
 }
 
 // ------------------------------------------------------------------------------------------------ filters
@@ -2295,6 +2497,14 @@ pub(crate) const ADAPTERS: &[Adapter] = &[
     Adapter { ids: &["curvature_sobel/curvature_sobel"], kind: "normal_sobel", f: curvature_sobel },
     Adapter { ids: &["blur_hq/blur_hq", "blur_hq/blur_hq_grayscale"], kind: "blur_hq", f: blur_hq },
     Adapter { ids: &["curvature_smooth_v2/curvature_smooth_v2"], kind: "curvature_smooth", f: curvature_smooth_v2 },
+    Adapter { ids: &["curvature_smooth/curvature_smooth"], kind: "curvature_smooth", f: curvature_smooth },
+    Adapter { ids: &["make_it_tile_photo/make_it_tile_photo", "make_it_tile_photo_grayscale/make_it_tile_photo_grayscale"], kind: "make_it_tile_photo", f: make_it_tile_photo },
+    Adapter { ids: &["make_it_tile_patch/make_it_tile_patch", "make_it_tile_patch_grayscale/make_it_tile_patch_grayscale"], kind: "make_it_tile_patch", f: make_it_tile_patch },
+    Adapter { ids: &["skew/skew", "skew/skew_grayscale"], kind: "skew", f: skew },
+    Adapter { ids: &["symmetry/symmetry"], kind: "symmetry", f: symmetry },
+    Adapter { ids: &["splatter/splatter", "splatter_color/splatter_color"], kind: "splatter", f: splatter },
+    Adapter { ids: &["shape_stroke/shape_stroke_color", "shape_stroke/shape_stroke_grayscale"], kind: "shape_stroke", f: shape_stroke },
+    Adapter { ids: &["shape_glow/shape_glow_color", "shape_glow/shape_glow_grayscale"], kind: "shape_glow", f: shape_glow },
     Adapter { ids: &["facing_normal/facing_normal"], kind: "normal_facing", f: facing_normal },
     Adapter { ids: &["flood_fill_2/flood_fill_to_color"], kind: "flood_fill_color", f: flood_to_color },
     Adapter { ids: &["flood_fill_2/flood_fill_to_grayscale"], kind: "flood_fill_random", f: flood_to_gray },
@@ -2539,6 +2749,103 @@ mod tests {
                 assert!(crate::sbs_lib::find(p, g).is_some(), "adapter for unknown library graph {id}");
             }
         }
+    }
+
+    /// Runs the adapter of `package/id` on the given constant parameters and returns our node's numbers.
+    fn adapt(package: &str, id: &str, params: &[(&str, Val)]) -> std::collections::HashMap<String, f32> {
+        let a = adapter(package, id).unwrap_or_else(|| panic!("no adapter for {package}/{id}"));
+        let ps: Vec<Param> = params.iter().map(|(n, v)| Param { name: n.to_string(), relative_to: None, value: PValue::Const(v.clone()) }).collect();
+        let mut ad = Ad::new(a.kind, id, crate::sbs_lib::find(Some(package), id), &ps);
+        (a.f)(&mut ad);
+        ad.finish().0.node.nums.into_iter().collect()
+    }
+
+    fn close(n: &std::collections::HashMap<String, f32>, k: &str, v: f32) {
+        let x = n.get(k).copied().unwrap_or_else(|| panic!("{k} not set: {n:?}"));
+        assert!((x - v).abs() < 1e-4, "{k} = {x}, expected {v}");
+    }
+
+    #[test]
+    fn make_it_tile_patch_settings_are_translated() {
+        let n = adapt(
+            "make_it_tile_patch",
+            "make_it_tile_patch",
+            &[
+                ("Octave", Val::I(vec![2])),
+                ("Mask_Size", Val::F(vec![0.6])),
+                ("Mask_Precision", Val::F(vec![0.9])),
+                ("Mask_Warping", Val::F(vec![-40.0])),
+                ("Pattern_size_width", Val::F(vec![300.0])),
+                ("Pattern_size_height", Val::F(vec![150.0])),
+                ("Disorder", Val::F(vec![0.3])),
+                ("Size_Variation", Val::F(vec![25.0])),
+                ("Rotation", Val::F(vec![90.0])),
+                ("Rotation_Variation", Val::F(vec![180.0])),
+                ("Background_Color", Val::F(vec![0.2, 0.4, 0.6, 1.0])),
+                ("Color_Variation", Val::F(vec![0.5])),
+            ],
+        );
+        for (k, v) in [
+            ("mode", 1.0),
+            ("octave", 2.0),
+            ("mask_size", 0.6),
+            ("mask_precision", 0.9),
+            ("mask_warp", -0.4),
+            ("size_x", 3.0),
+            ("size_y", 1.5),
+            ("disorder", 0.3),
+            ("size_var", 0.25),
+            ("rotation", 0.25),
+            ("rotation_var", 0.5),
+            ("bg_r", 0.2),
+            ("bg_g", 0.4),
+            ("bg_b", 0.6),
+            ("bg_a", 1.0),
+            ("color_var", 0.5),
+        ] {
+            close(&n, k, v);
+        }
+        // the grayscale graph: one gray background, opaque, and a luminosity variation
+        let g = adapt("make_it_tile_patch_grayscale", "make_it_tile_patch_grayscale", &[("Background_Color", Val::F(vec![0.7])), ("Luminosity_Variation", Val::F(vec![0.3]))]);
+        for (k, v) in [("bg_r", 0.7), ("bg_g", 0.7), ("bg_b", 0.7), ("bg_a", 1.0), ("lum_var", 0.3), ("octave", 3.0), ("size_x", 2.0)] {
+            close(&g, k, v);
+        }
+    }
+
+    #[test]
+    fn make_it_tile_photo_settings_are_translated() {
+        let n = adapt("make_it_tile_photo", "make_it_tile_photo", &[("Mask_Size_H", Val::F(vec![0.25])), ("Mask_Precision_V", Val::F(vec![0.8])), ("Mask_Warping_H", Val::F(vec![50.0]))]);
+        // the library defaults for the rest: reach 0.1, precision 0.5, no warping
+        for (k, v) in [("width", 0.25), ("width_v", 0.1), ("sharp", 0.5), ("sharp_v", 0.8), ("warp", 0.5), ("warp_v", 0.0)] {
+            close(&n, k, v);
+        }
+    }
+
+    #[test]
+    fn skew_symmetry_and_splatter_settings_are_translated() {
+        let s = adapt("skew", "skew", &[("Axis", Val::I(vec![1])), ("Amount", Val::F(vec![0.5])), ("Align", Val::I(vec![0]))]);
+        for (k, v) in [("skew_x", 0.0), ("skew_y", 0.5), ("align", 0.0)] {
+            close(&s, k, v);
+        }
+        // the library default is the eight-fold symmetry
+        close(&adapt("symmetry", "symmetry", &[]), "axis", 5.0);
+        let m = adapt("symmetry", "symmetry", &[("Symmetry_Mode", Val::I(vec![0])), ("Transfer_Mode", Val::I(vec![3]))]);
+        close(&m, "axis", 1.0);
+        close(&m, "transfer", 3.0);
+        close(&adapt("symmetry", "symmetry", &[("Symmetry_Mode", Val::I(vec![6]))]), "axis", 6.0);
+        let p = adapt(
+            "splatter",
+            "splatter",
+            &[("Pattern_size_width", Val::F(vec![50.0])), ("Pattern_size_height", Val::F(vec![100.0])), ("Disorder", Val::F(vec![50.0])), ("Pan_X", Val::F(vec![-20.0])), ("Rotation_Var", Val::F(vec![180.0])), ("Size_Var", Val::F(vec![40.0]))],
+        );
+        for (k, v) in [("grid_number", 4.0), ("scale", 0.125), ("aspect", 2.0), ("disorder", 0.5), ("pan_x", -0.2), ("rot_var", 0.5), ("scale_var", 0.4)] {
+            close(&p, k, v);
+        }
+        let st = adapt("shape_stroke", "shape_stroke_color", &[("outline_color", Val::F(vec![1.0, 0.25, 0.0]))]);
+        for (k, v) in [("color_r", 1.0), ("color_g", 0.25), ("color_b", 0.0)] {
+            close(&st, k, v);
+        }
+        close(&adapt("curvature_smooth", "curvature_smooth", &[("normal_format", Val::I(vec![1]))]), "directx", 0.0);
     }
 }
 

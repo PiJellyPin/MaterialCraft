@@ -216,7 +216,7 @@ fn displacement_renders_every_shape_and_camera_without_panics() {
     use materialcraft::tex::Tex;
     let hm = Tex::gray_fn(32, 32, |u, v| (u * 6.0).sin() * 0.5 + 0.5 + v * 0.0);
     let (b, n, r, m, a) = (Tex::solid(4, 4, [0.8, 0.2, 0.2, 1.0]), Tex::solid(4, 4, [0.5, 0.5, 1.0, 1.0]), Tex::solid(4, 4, [0.4; 4]), Tex::solid(4, 4, [0.0, 0.0, 0.0, 1.0]), Tex::solid(4, 4, [1.0; 4]));
-    let maps = Maps { base: &b, normal: &n, rough: &r, metal: &m, ao: &a, emissive: None, height: Some(&hm), env: None };
+    let maps = Maps { base: &b, normal: &n, rough: &r, metal: &m, ao: &a, emissive: None, height: Some(&hm), opacity: None, env: None };
     for shape in 0..3 {
         let plain = render(&maps, &View { shape, relief: RELIEF_NONE, ..View::default() }, 64, 64);
         let center = plain.px[32 * 64 + 32];
@@ -1468,3 +1468,59 @@ fn colorspace_conversion_roundtrips_and_keeps_alpha() {
     assert!(colorspace::is_color_output("basecolor") && !colorspace::is_color_output("normal"));
 }
 
+
+#[test]
+fn rgba_merge_takes_the_alpha_from_a_grey_map() {
+    // a grey map's own alpha is 1: the alpha slot reads its grey value
+    let g = Graph::parse("size 32\nnode 1 fbm scale=4 seed=5\nnode 2 merge r=@1 g=@1 b=@1 a=@1\noutput basecolor 2\n").unwrap();
+    let out = g.evaluate(None).unwrap();
+    let t = &out["basecolor"];
+    assert!(t.px.iter().all(|p| (p[3] - p[0]).abs() < 1e-5), "alpha follows the grey map");
+    assert!(t.px.iter().any(|p| p[3] < 0.9));
+}
+
+/// Mean absolute difference of two renders.
+fn mean_diff(a: &materialcraft::tex::Tex, b: &materialcraft::tex::Tex) -> f32 {
+    a.px.iter().zip(&b.px).map(|(p, q)| (0..4).map(|c| (p[c] - q[c]).abs()).sum::<f32>()).sum::<f32>() / (a.px.len() * 4) as f32
+}
+
+#[test]
+fn make_it_tile_settings_change_the_result() {
+    // a picture that does not tile: a gradient with some noise on it
+    let pre = "size 64\nnode 1 fbm scale=3 seed=4\nnode 2 gradient\nnode 3 blend fg=@1 bg=@2 opacity=0.5\n";
+    let render = |line: &str| Graph::parse(&format!("{pre}node 4 {line} in=@3\noutput o 4\n")).unwrap().evaluate(None).unwrap()["o"].clone();
+    let photo = render("make_it_tile_photo width=0.3 width_v=0.3");
+    for v in ["width=0.1 width_v=0.3", "width=0.3 width_v=0.6", "width=0.3 width_v=0.3 sharp=1", "width=0.3 width_v=0.3 sharp_v=0.8", "width=0.3 width_v=0.3 warp=0.8", "width=0.3 width_v=0.3 warp_v=-0.8"] {
+        let d = mean_diff(&photo, &render(&format!("make_it_tile_photo {v}")));
+        assert!(d > 1e-3, "make_it_tile_photo {v}: no visible change ({d})");
+    }
+    let base = "make_it_tile_patch mode=1 mask_size=0.8 seed=2";
+    let patch = render(base);
+    assert!(mean_diff(&patch, &render("make_it_tile_patch mode=0 seed=2")) > 1e-3, "the stamped patches look like the cells");
+    for v in [
+        "octave=2", "mask_size=0.5", "mask_precision=1", "mask_warp=0.6", "size_x=3", "size_y=1", "disorder=0.6", "size_var=0.7", "rotation=0.25", "rotation_var=0.5",
+        "bg_r=1 bg_a=1 mask_size=0.4", "color_var=0.6", "lum_var=0.6", "seed=7 rotation_var=0.5",
+    ] {
+        let d = mean_diff(&patch, &render(&format!("{base} {v}")));
+        assert!(d > 1e-3, "make_it_tile_patch {v}: no visible change ({d})");
+    }
+    // where no patch reaches, the background shows
+    let gaps = render("make_it_tile_patch mode=1 mask_size=0.3 bg_r=1 bg_g=0 bg_b=0 bg_a=1");
+    assert!(gaps.px.iter().any(|p| p[0] > 0.99 && p[1] < 0.01 && p[2] < 0.01));
+}
+
+#[test]
+fn skew_by_a_fraction_and_both_diagonals_symmetry() {
+    let pre = "size 64\nnode 1 fbm scale=3 seed=4\n";
+    let render = |line: &str| Graph::parse(&format!("{pre}node 2 {line} in=@1\noutput o 2\n")).unwrap().evaluate(None).unwrap()["o"].clone();
+    // a fractional skew lies between no skew and a whole one
+    let (none, half, whole) = (render("skew skew_x=0"), render("skew skew_x=0.5"), render("skew skew_x=1"));
+    assert!(mean_diff(&none, &half) > 1e-3 && mean_diff(&half, &whole) > 1e-3);
+    // both diagonals: symmetric across u = v and across u + v = 1
+    let s = render("symmetry axis=6");
+    let at = |x: usize, y: usize| s.px[y * s.w + x][0];
+    for (x, y) in [(5, 20), (40, 7), (13, 50)] {
+        assert!((at(x, y) - at(y, x)).abs() < 0.03, "diagonal at {x},{y}");
+        assert!((at(x, y) - at(63 - y, 63 - x)).abs() < 0.03, "anti-diagonal at {x},{y}");
+    }
+}

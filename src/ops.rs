@@ -1802,10 +1802,40 @@ pub fn make_tile_photo(t: &Tex, width: f32) -> Tex {
 
 /// Separate horizontal and vertical transition reach (Mask Size H / V).
 pub fn make_tile_photo_ex(t: &Tex, width_h: f32, width_v: f32) -> Tex {
-    let (wh, wv) = (width_h.clamp(0.1, 1.0), width_v.clamp(0.1, 1.0));
-    let a = |x: f32, w: f32| sm(0.0, w, 1.0 - (2.0 * x - 1.0).abs());
+    make_tile_photo_full(t, TilePhoto { width: [width_h, width_v], ..TilePhoto::default() })
+}
+
+/// Make It Tile Photo settings, horizontal then vertical: transition reach (part of the half tile, from the seam),
+/// sharpness (0 ramps over the whole reach, 1 is a hard edge at its end) and warp (-1..1: the reach wobbles with a
+/// tileable noise by up to that fraction).
+#[derive(Clone, Copy)]
+pub struct TilePhoto {
+    pub width: [f32; 2],
+    pub sharp: [f32; 2],
+    pub warp: [f32; 2],
+    pub seed: u32,
+}
+
+impl Default for TilePhoto {
+    fn default() -> TilePhoto {
+        TilePhoto { width: [0.6, 0.6], sharp: [0.0, 0.0], warp: [0.0, 0.0], seed: 0 }
+    }
+}
+
+/// Blend of the picture with itself shifted by half a tile: the shifted copy covers the seams, the original
+/// the middle. The transition never reaches the seam itself, so the result tiles whatever the settings.
+pub fn make_tile_photo_full(t: &Tex, p: TilePhoto) -> Tex {
+    let w = [p.width[0].clamp(0.01, 1.0), p.width[1].clamp(0.01, 1.0)];
+    let sh = [p.sharp[0].clamp(0.0, 1.0), p.sharp[1].clamp(0.0, 1.0)];
+    let wp = [p.warp[0].clamp(-1.0, 1.0), p.warp[1].clamp(-1.0, 1.0)];
+    let a = |x: f32, k: usize, n: f32| {
+        let reach = w[k] * (1.0 + wp[k] * (2.0 * n - 1.0)).clamp(0.05, 2.0);
+        sm(reach * sh[k], reach, 1.0 - (2.0 * x - 1.0).abs())
+    };
+    let warped = wp[0] != 0.0 || wp[1] != 0.0;
     Tex::from_fn(t.w, t.h, |u, v| {
-        let (au, av) = (a(u, wh), a(v, wv));
+        let (nh, nv) = if warped { (crate::noise::perlin(u, v, 4, 4, p.seed), crate::noise::perlin(u, v, 4, 4, p.seed.wrapping_add(1))) } else { (0.5, 0.5) };
+        let (au, av) = (a(u, 0, nh), a(v, 1, nv));
         let s = |du: f32, dv: f32| t.sample((u + du).rem_euclid(1.0), (v + dv).rem_euclid(1.0));
         let (c00, c10, c01, c11) = (s(0.0, 0.0), s(0.5, 0.0), s(0.0, 0.5), s(0.5, 0.5));
         let (w00, w10, w01, w11) = (au * av, (1.0 - au) * av, au * (1.0 - av), (1.0 - au) * (1.0 - av));
@@ -1829,6 +1859,139 @@ pub fn make_tile_patch(t: &Tex, patches: f32, softness: f32, seed: u32) -> Tex {
         let mut o = [0.0; 4];
         for c in 0..4 {
             o[c] = s2[c] + (s1[c] - s2[c]) * k;
+        }
+        o
+    })
+}
+
+/// Make It Tile Patch by stamping: the middle of the picture, cut out with a round mask, stamped once per cell of a
+/// `2^octave` grid. Sizes are in cells, angles in turns, variations 0..1.
+#[derive(Clone, Copy)]
+pub struct TilePatch {
+    pub octave: i32,
+    /// radius of the round mask, as a part of the patch's half size
+    pub mask_size: f32,
+    /// 0 fades over the whole radius, 1 is a hard edge
+    pub mask_precision: f32,
+    /// -1..1: the mask's edge wobbles with a noise by up to that part of its radius
+    pub mask_warp: f32,
+    pub size: [f32; 2],
+    /// random shift of the patch centres, in cells
+    pub disorder: f32,
+    /// random shrink of each patch
+    pub size_var: f32,
+    pub rotation: f32,
+    pub rotation_var: f32,
+    pub background: [f32; 4],
+    /// random offset per patch and channel
+    pub color_var: f32,
+    /// random offset per patch, the same on every channel
+    pub lum_var: f32,
+    pub seed: u32,
+}
+
+impl Default for TilePatch {
+    fn default() -> TilePatch {
+        TilePatch {
+            octave: 3,
+            mask_size: 1.0,
+            mask_precision: 0.5,
+            mask_warp: 0.0,
+            size: [2.0, 2.0],
+            disorder: 0.0,
+            size_var: 0.0,
+            rotation: 0.0,
+            rotation_var: 0.0,
+            background: [0.0; 4],
+            color_var: 0.0,
+            lum_var: 0.0,
+            seed: 0,
+        }
+    }
+}
+
+pub fn make_tile_patch_stamped(t: &Tex, p: &TilePatch) -> Tex {
+    let n = 1i32 << p.octave.clamp(0, 6);
+    let cell = 1.0 / n as f32;
+    let msize = p.mask_size.clamp(0.01, 1.0);
+    let lo = p.mask_precision.clamp(0.0, 1.0);
+    let warp = p.mask_warp.clamp(-1.0, 1.0);
+    let (sx, sy) = (p.size[0].clamp(0.0, 10.0), p.size[1].clamp(0.0, 10.0));
+    let disorder = p.disorder.clamp(0.0, 1.0);
+    // cells around a pixel that a patch can reach: its largest radius plus the shift of its centre
+    let reach = 0.5 * sx.max(sy) * msize * (1.0 + warp.abs()) + 0.5 * disorder + 0.5;
+    let k = (reach.ceil() as i32).clamp(1, 6);
+    struct St {
+        cx: f32,
+        cy: f32,
+        hx: f32,
+        hy: f32,
+        sn: f32,
+        cs: f32,
+        order: f32,
+        id: i32,
+        off: [f32; 4],
+    }
+    // one stamp per cell, in the order they are drawn (a random order, so no row is always on top)
+    let mut stamps: Vec<St> = (0..n * n)
+        .map(|id| {
+            let r = |k: i32| rnd(id, k, p.seed);
+            let (i, j) = ((id % n) as f32, (id / n) as f32);
+            let s = (1.0 - p.size_var.clamp(0.0, 1.0) * r(3)).max(1e-3);
+            let a = (p.rotation + p.rotation_var * r(4)) * TAU;
+            let (sn, cs) = a.sin_cos();
+            let l = (r(9) - 0.5) * p.lum_var;
+            let off = [l + (r(10) - 0.5) * p.color_var, l + (r(11) - 0.5) * p.color_var, l + (r(12) - 0.5) * p.color_var, 0.0];
+            St { cx: (i + 0.5 + (r(1) - 0.5) * disorder) * cell, cy: (j + 0.5 + (r(2) - 0.5) * disorder) * cell, hx: 0.5 * sx * s * cell, hy: 0.5 * sy * s * cell, sn, cs, order: r(5), id, off }
+        })
+        .collect();
+    stamps.sort_by(|a, b| a.order.total_cmp(&b.order));
+    let rank: Vec<usize> = {
+        let mut r = vec![0; stamps.len()];
+        for (k, s) in stamps.iter().enumerate() {
+            r[s.id as usize] = k;
+        }
+        r
+    };
+    Tex::from_fn(t.w, t.h, |u, v| {
+        let (ci, cj) = ((u * n as f32).floor() as i32, (v * n as f32).floor() as i32);
+        // the stamps that may cover this pixel, with the cell shift that brings them next to it
+        let mut near: Vec<(usize, f32, f32)> = Vec::with_capacity(((2 * k + 1) * (2 * k + 1)) as usize);
+        for dj in -k..=k {
+            for di in -k..=k {
+                let (gi, gj) = (ci + di, cj + dj);
+                let id = gi.rem_euclid(n) + gj.rem_euclid(n) * n;
+                near.push((rank[id as usize], (gi - gi.rem_euclid(n)) as f32 * cell, (gj - gj.rem_euclid(n)) as f32 * cell));
+            }
+        }
+        near.sort_by_key(|x| x.0);
+        let mut o = p.background;
+        for (r, ox, oy) in near {
+            let st = &stamps[r];
+            let (dx, dy) = (u - st.cx - ox, v - st.cy - oy);
+            // into the patch's frame: turned back, then measured in half sizes
+            let (lx, ly) = (st.cs * dx + st.sn * dy, -st.sn * dx + st.cs * dy);
+            if st.hx < 1e-6 || st.hy < 1e-6 {
+                continue;
+            }
+            let (nx, ny) = (lx / st.hx, ly / st.hy);
+            let mut d = (nx * nx + ny * ny).sqrt() / msize;
+            if d > 1.0 + warp.abs() {
+                continue;
+            }
+            if warp != 0.0 {
+                let w = crate::noise::perlin(0.5 + nx * 0.25, 0.5 + ny * 0.25, 4, 4, p.seed.wrapping_add(st.id as u32 * 7 + 3));
+                d /= (1.0 + warp * (2.0 * w - 1.0)).max(0.05);
+            }
+            let m = 1.0 - sm(lo.min(0.999), 1.0, d);
+            if m <= 0.0 {
+                continue;
+            }
+            let c = t.sample(0.5 + lx, 0.5 + ly);
+            for ch in 0..4 {
+                let x = (c[ch] + st.off[ch]).clamp(0.0, 1.0);
+                o[ch] += (x - o[ch]) * m;
+            }
         }
         o
     })
