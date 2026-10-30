@@ -22,7 +22,8 @@ fn intern(s: &str) -> &'static str {
 }
 
 fn sd_slots(n: &Node, lib: &BTreeMap<String, Graph>) -> Vec<(&'static str, bool)> {
-    native::slots(n, lib).iter().map(|s| (intern(s), false)).collect()
+    // an input the node is set not to use has no socket (unless a link still reaches it)
+    native::slots(n, lib).iter().filter(|s| n.ins.contains_key(*s) || native::input_used(n, s)).map(|s| (intern(s), false)).collect()
 }
 
 fn sd_outs(n: &Node, lib: &BTreeMap<String, Graph>) -> Vec<String> {
@@ -121,6 +122,14 @@ impl App {
                 nums: vec![],
             })
             .collect();
+        // a function graph also calls the library functions (MaterialCraft's own implementations, saved as calls
+        // to the library package, as the files it reads have them)
+        if fam == Fam::Function {
+            for f in materialcraft::libfuncs::palette() {
+                let ins = f.inputs.iter().map(|(id, _)| *id).collect::<Vec<_>>().join(", ");
+                v.push(Entry { label: f.label.to_string(), kind: "sbs:fn:instance".into(), sub: Some(f.path.clone()), cat: f.category, doc: format!("library function {} ({ins})", f.path), nums: vec![] });
+            }
+        }
         v.push(Entry { label: "Comment".into(), kind: "comment".into(), sub: None, cat: "Utility", doc: "small note placed at the cursor".into(), nums: vec![] });
         v.push(Entry { label: "Frame".into(), kind: "frame".into(), sub: None, cat: "Utility", doc: "frame around the selected nodes".into(), nums: vec![] });
         if fam != Fam::Texture {
@@ -230,6 +239,32 @@ impl App {
     }
 
     /// The parameter panel of a native node.
+    /// Rename the graph output of output node `id`; the nodes of the other graphs that read it by name follow.
+    fn rename_output(&mut self, id: u32, new: &str) {
+        self.snap();
+        match native::rename_output(&mut self.g, id, new) {
+            Ok((old, new)) if old != new => {
+                // the other graphs of the package: the view's copies, and the graphs this one was opened from
+                let me = native::graph_name(&self.g);
+                for g in self.g.subgraphs.values_mut() {
+                    native::retarget_output(g, &me, &old, &new);
+                }
+                for (p, _) in self.parents.iter_mut() {
+                    native::retarget_output(p, &me, &old, &new);
+                }
+                self.status(format!("Output '{old}' renamed to '{new}'"), true);
+                self.dirty = true;
+            }
+            Ok(_) => {
+                self.undo.pop();
+            }
+            Err(e) => {
+                self.undo.pop();
+                self.status(e, false);
+            }
+        }
+    }
+
     fn sd_node_props(&mut self, ui: &mut egui::Ui, id: u32) {
         let node = self.g.nodes[&id].clone();
         let title = native::label(&node, &self.g);
@@ -312,8 +347,27 @@ impl App {
                 }
             }
         }
+        let mut rename_out: Option<String> = None;
         if node.kind == "sbs:output" {
             let uid = node.strs.get("#output").cloned().unwrap_or_default();
+            // the output's identifier: its name on the card, in exported file names and for whoever uses the graph
+            let ident = self.g.sd.as_ref().and_then(|s| s.output_identifier(&uid)).unwrap_or_default();
+            ui.horizontal(|ui| {
+                row_label(ui, "Identifier");
+                // typed into a buffer and applied when the box loses focus, so half a name never renames anything
+                let buf = Id::new(("sd_out_ident", id));
+                let mut t = ui.ctx().data(|d| d.get_temp::<String>(buf)).unwrap_or_else(|| ident.clone());
+                let r = ui.add(egui::TextEdit::singleline(&mut t).desired_width(f32::INFINITY)).on_hover_text("Rename this output (letters, digits and _); Enter applies");
+                if r.lost_focus() {
+                    // Esc gives the edit up
+                    if t.trim() != ident && !ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        rename_out = Some(t.trim().to_string());
+                    }
+                    ui.ctx().data_mut(|d| d.remove::<String>(buf));
+                } else if r.has_focus() {
+                    ui.ctx().data_mut(|d| d.insert_temp(buf, t));
+                }
+            });
             let cur = self.g.sd.as_ref().and_then(|s| s.output_usage(&uid)).unwrap_or_default();
             ui.horizontal(|ui| {
                 row_label(ui, "Usage");
@@ -324,6 +378,21 @@ impl App {
                         }
                     }
                 });
+            });
+        }
+        // ---- which image inputs the node uses (each has its own switch): the others have no socket
+        let switches = native::input_switches(&node);
+        if !switches.is_empty() {
+            egui::CollapsingHeader::new(egui::RichText::new("IMAGE INPUTS").strong()).id_salt(("sd_used_ins", id)).default_open(true).show(ui, |ui| {
+                ui.small("Tick the maps this node should read; the others have no socket.");
+                for (slot, sw) in switches {
+                    let mut on = native::input_used(&node, slot);
+                    let r = ui.checkbox(&mut on, sdefs::label_of(slot.trim_end_matches("_input")));
+                    let r = if node.ins.contains_key(*slot) && !on { r.on_hover_text("Still linked, but not read until it is ticked again") } else { r };
+                    if r.changed() {
+                        sets.push((sw.to_string(), Some(PVal::Const { ty: PTy::B, raw: (on as i32).to_string(), rel: Some("0".into()) })));
+                    }
+                }
             });
         }
         // ---- inputs overview
@@ -477,7 +546,8 @@ impl App {
         let only_base = groups.iter().all(|g| g == "Base");
         let is_levels = node.kind == "sbs:levels";
         let mut draw_group = |ui: &mut egui::Ui, gname: &str| {
-                for p in params.iter().filter(|p| p.group == gname && !(is_levels && (p.id.starts_with("levelin") || p.id.starts_with("levelout") || p.id == "clampinterm"))) {
+                // the input switches are ticked under IMAGE INPUTS instead
+                for p in params.iter().filter(|p| p.group == gname && !(is_levels && (p.id.starts_with("levelin") || p.id.starts_with("levelout") || p.id == "clampinterm")) && !switches.iter().any(|(_, sw)| *sw == p.id)) {
                     // Designer's layout: the name on its own line with small tools at the right, the control full width below
                     ui.add_space(2.0);
                     ui.vertical(|ui| {
@@ -621,6 +691,9 @@ impl App {
                 self.status(e, false);
             }
             self.dirty = true;
+        }
+        if let Some(new) = rename_out {
+            self.rename_output(id, &new);
         }
         if make_fx {
             self.snap();

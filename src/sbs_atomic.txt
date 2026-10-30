@@ -302,6 +302,9 @@
 @get_string function Get String
 > s
 - get_string s
+@isdefined function Is Defined
+> b
+- isdefined s
 @set function Set
 > t
 < value t

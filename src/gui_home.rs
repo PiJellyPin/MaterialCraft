@@ -9,7 +9,10 @@ enum Screen {
 
 struct NewDlg {
     open: bool,
+    /// a built-in template (index into `TEMPLATES`), or past them one of `user`
     sel: usize,
+    /// the user's own templates (see `user_templates`) and the outputs of each, read when the dialog opens
+    user: Vec<(UserTemplate, Vec<String>)>,
     name: String,
     size: usize,
     /// 0 = linked to the width (square), otherwise the separate height
@@ -65,6 +68,11 @@ fn config_dir() -> PathBuf {
         return if cfg!(target_os = "macos") { base.join("Library/Application Support/MaterialCraft") } else { base.join(".config/materialcraft") };
     }
     std::env::temp_dir().join("materialcraft")
+}
+
+/// Where the user's own templates are kept (one `.sbs` package each).
+fn templates_dir() -> PathBuf {
+    config_dir().join("templates")
 }
 
 fn read_lines(name: &str) -> Vec<String> {
@@ -180,6 +188,27 @@ enum Ic {
     Input,
     Package,
     GraphIcon,
+}
+
+/// Transparency checkerboard over `r` (only its part inside `clip`); the squares are fixed on screen size and start at
+/// the picture's corner, so they move with it.
+fn checker(p: &egui::Painter, r: Rect, clip: Rect) {
+    let vis = r.intersect(clip);
+    if !vis.is_positive() {
+        return;
+    }
+    const S: f32 = 10.0;
+    p.rect_filled(vis, 0.0, Color32::from_gray(62));
+    let (i0, i1) = (((vis.min.x - r.min.x) / S).floor() as i64, ((vis.max.x - r.min.x) / S).ceil() as i64);
+    let (j0, j1) = (((vis.min.y - r.min.y) / S).floor() as i64, ((vis.max.y - r.min.y) / S).ceil() as i64);
+    for j in j0..j1 {
+        for i in i0..i1 {
+            if (i + j) % 2 == 0 {
+                let c = Rect::from_min_size(pos2(r.min.x + i as f32 * S, r.min.y + j as f32 * S), vec2(S, S)).intersect(vis);
+                p.rect_filled(c, 0.0, Color32::from_gray(98));
+            }
+        }
+    }
 }
 
 fn draw_icon(p: &egui::Painter, c: Pos2, ic: Ic, col: Color32) {
@@ -610,6 +639,7 @@ const LIB_TREE: &[(&str, &[&str])] = &[
     ("Core nodes", &[]),
     ("Pattern builders", &[]),
     ("Logic nodes", &[]),
+    ("Function library", materialcraft::libfuncs::CATEGORIES),
     ("Generators", &["Noises", "Patterns", "Shapes"]),
     ("Filters", &["Adjustments", "Blur and warp", "Transform", "Effects", "Masks and regions"]),
     ("Material tools", &[]),
@@ -686,17 +716,84 @@ impl App {
         self.ws_init();
         self.new_dlg.dest = if self.screen == Screen::Editor { dest } else { None };
         self.new_dlg.name = if self.new_dlg.dest.is_some() { "Material_Graph".into() } else { "Graph".into() };
+        self.new_dlg.user = user_templates::list(&templates_dir())
+            .into_iter()
+            .map(|t| {
+                let outs = user_templates::outputs(&t).unwrap_or_default();
+                (t, outs)
+            })
+            .collect();
+        if self.new_dlg.sel >= TEMPLATES.len() + self.new_dlg.user.len() {
+            self.new_dlg.sel = 1;
+        }
         self.new_dlg.open = true;
     }
 
+    /// Save graph `name` of package `i` (None: its main graph) as a template of the New dialog, under `tname`.
+    fn save_as_template(&mut self, i: usize, name: Option<String>, tname: &str) {
+        let Some(root) = self.package_root(i) else { return };
+        let gname = name.unwrap_or_else(|| materialcraft::sbs_native::graph_name(&root));
+        match user_templates::save(&templates_dir(), tname, &root, &gname) {
+            Ok(p) => self.status(format!("Saved graph '{gname}' as template '{}' ({})", user_templates::clean_name(tname), p.display()), true),
+            Err(e) => self.status(format!("Cannot save the template: {e}"), false),
+        }
+    }
+
+    /// The "Save as template" box: the template's name, and a warning when one of that name exists.
+    fn save_template_ui(&mut self, ctx: &egui::Context) {
+        let Some((i, graph, mut tname)) = self.save_tmpl.take() else { return };
+        let (mut ok, mut cancel) = (false, false);
+        egui::Window::new("Save as template").collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
+            ui.label("The graph (with the graphs and functions it uses) becomes a template of File > New.");
+            ui.horizontal(|ui| {
+                ui.label("Template name");
+                let r = ui.add(egui::TextEdit::singleline(&mut tname).desired_width(240.0));
+                r.request_focus();
+                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    ok = true;
+                }
+            });
+            let clean = user_templates::clean_name(&tname);
+            if !clean.is_empty() && user_templates::path_for(&templates_dir(), &clean).exists() {
+                ui.colored_label(Color32::from_rgb(255, 190, 90), format!("A template called '{clean}' exists: saving replaces it."));
+            }
+            ui.small(format!("Folder: {}", templates_dir().display()));
+            ui.horizontal(|ui| {
+                ok |= ui.add_enabled(!clean.is_empty(), egui::Button::new("Save")).clicked();
+                cancel = ui.button("Cancel").clicked();
+            });
+        });
+        if ok && !user_templates::clean_name(&tname).is_empty() {
+            self.save_as_template(i, graph, &tname);
+        } else if !cancel {
+            self.save_tmpl = Some((i, graph, tname));
+        }
+    }
+
+    /// Delete the user's template `k` of the New dialog (its file).
+    fn delete_user_template(&mut self, k: usize) {
+        let Some((t, _)) = self.new_dlg.user.get(k).cloned() else { return };
+        match std::fs::remove_file(&t.path) {
+            Ok(()) => {
+                self.new_dlg.user.remove(k);
+                self.new_dlg.sel = 1;
+                self.status(format!("Deleted template '{}'", t.name), true);
+            }
+            Err(e) => self.status(format!("Cannot delete {}: {e}", t.path.display()), false),
+        }
+    }
+
     fn create_from_dialog(&mut self) {
-        let t = &TEMPLATES[self.new_dlg.sel.min(TEMPLATES.len() - 1)];
         let mut name: String = self.new_dlg.name.trim().replace(' ', "_");
         if name.is_empty() {
             name = if self.new_dlg.dest.is_some() { "Material_Graph".into() } else { "Graph".into() };
         }
         self.new_dlg.open = false;
         let dest = self.new_dlg.dest.filter(|_| self.screen == Screen::Editor);
+        if let Some((ut, _)) = self.new_dlg.sel.checked_sub(TEMPLATES.len()).and_then(|k| self.new_dlg.user.get(k)).cloned() {
+            return self.create_from_user_template(&ut, &name, dest);
+        }
+        let t = &TEMPLATES[self.new_dlg.sel.min(TEMPLATES.len() - 1)];
         let size = self.new_dlg.size;
         match dest {
             Some(d) => {
@@ -740,6 +837,56 @@ impl App {
                 self.status(format!("Created package with '{ident}' from template '{}'", t.name), true);
             }
         }
+    }
+
+    /// A copy of the user's template `t`, its graph called `name`: a new package, or a graph added to package `dest`.
+    fn create_from_user_template(&mut self, t: &UserTemplate, name: &str, dest: Option<usize>) {
+        let g = match user_templates::instantiate(t, name) {
+            Ok(g) => g,
+            Err(e) => return self.status(format!("Template '{}' failed to load: {e}", t.name), false),
+        };
+        match dest {
+            Some(d) => {
+                self.switch_pkg(d);
+                self.goto_root();
+                self.snap();
+                match materialcraft::sbs_native::add_package(&mut self.g, g) {
+                    Ok((first, _, warnings)) => {
+                        self.modified = true;
+                        self.dirty = true;
+                        self.enter_sub(&first);
+                        let more = if warnings.is_empty() { String::new() } else { format!(" ({})", warnings.join("; ")) };
+                        self.status(format!("Created graph '{first}' from template '{}'{more}", t.name), warnings.is_empty());
+                    }
+                    Err(e) => {
+                        self.undo.pop();
+                        self.status(format!("Cannot add template '{}': {e}", t.name), false);
+                    }
+                }
+            }
+            None => {
+                let ident = materialcraft::sbs_native::graph_name(&g);
+                let unsaved = if self.screen == Screen::Editor { self.unique_unsaved_name() } else { "Unsaved Package".to_string() };
+                let pkg = Pkg { path: None, name: unsaved, g, modified: true, tabs: Vec::new() };
+                if self.pkgs.is_empty() && self.file.is_none() && self.g.nodes.is_empty() {
+                    self.ws_fresh();
+                    self.load_active(pkg);
+                } else {
+                    self.add_pkg_active(pkg);
+                }
+                self.screen = Screen::Editor;
+                self.need_fit = true;
+                self.status(format!("Created package with '{ident}' from template '{}'", t.name), true);
+            }
+        }
+    }
+
+    /// A new package from the user's template at `path`, with the New dialog's other settings at their defaults.
+    fn new_from_user_template(&mut self, path: PathBuf) {
+        let Some(t) = user_templates::list(&templates_dir()).into_iter().find(|t| t.path == path) else {
+            return self.status(format!("Template {} no longer exists", path.display()), false);
+        };
+        self.create_from_user_template(&t, &t.name.replace([' ', '-'], "_"), None);
     }
 
     /// An editable copy of shipped material template `i`.
@@ -805,6 +952,42 @@ impl App {
                                     self.new_dlg.sel = i;
                                 }
                             }
+                            // the user's own templates (File > Save graph as template...)
+                            ui.add_space(6.0);
+                            ui.label(egui::RichText::new("MY TEMPLATES").size(11.0).color(Color32::from_gray(170)));
+                            if self.new_dlg.user.is_empty() {
+                                ui.small("None yet: File > Save graph as template... makes one from the graph on screen.");
+                            }
+                            let mut delete = None;
+                            for (k, (t, _)) in self.new_dlg.user.iter().enumerate() {
+                                let i = TEMPLATES.len() + k;
+                                let sel = self.new_dlg.sel == i;
+                                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 21.0), Sense::click());
+                                if sel {
+                                    ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(40, 62, 100));
+                                    ui.painter().rect_stroke(rect, 0.0, Stroke::new(1.0_f32, Color32::from_rgb(60, 120, 230)), egui::StrokeKind::Inside);
+                                } else if resp.hovered() {
+                                    ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(44, 44, 44));
+                                }
+                                draw_icon(ui.painter(), rect.left_center() + vec2(14.0, 0.0), Ic::GraphIcon, Color32::from_gray(190));
+                                ui.painter().text(rect.left_center() + vec2(30.0, 0.0), Align2::LEFT_CENTER, &t.name, FontId::proportional(12.5), Color32::from_gray(225));
+                                if resp.clicked() {
+                                    self.new_dlg.sel = i;
+                                }
+                                if resp.double_clicked() {
+                                    self.new_dlg.sel = i;
+                                    create = true;
+                                }
+                                resp.context_menu(|ui| {
+                                    if ui.button("Delete template").on_hover_text(format!("Delete {}", t.path.display())).clicked() {
+                                        delete = Some(k);
+                                        ui.close();
+                                    }
+                                });
+                            }
+                            if let Some(k) = delete {
+                                self.delete_user_template(k);
+                            }
                         });
                     });
                 });
@@ -864,11 +1047,23 @@ impl App {
                     });
                     ui.add_space(12.0);
                     egui::CollapsingHeader::new(egui::RichText::new("Template details").strong()).default_open(true).show(ui, |ui| {
-                        let t = &TEMPLATES[self.new_dlg.sel.min(TEMPLATES.len() - 1)];
-                        ui.label(t.desc);
-                        if !t.outs.is_empty() {
-                            ui.add_space(4.0);
-                            ui.small(format!("Outputs: {}", t.outs.iter().map(|o| o.0).collect::<Vec<_>>().join(", ")));
+                        match self.new_dlg.sel.checked_sub(TEMPLATES.len()).and_then(|k| self.new_dlg.user.get(k)) {
+                            Some((t, outs)) => {
+                                ui.label(format!("Your template '{}': a copy of the graph it was saved from, with its nodes, settings and the graphs it uses. It keeps its own resolution.", t.name));
+                                if !outs.is_empty() {
+                                    ui.add_space(4.0);
+                                    ui.small(format!("Outputs: {}", outs.join(", ")));
+                                }
+                                ui.small(t.path.display().to_string());
+                            }
+                            None => {
+                                let t = &TEMPLATES[self.new_dlg.sel.min(TEMPLATES.len() - 1)];
+                                ui.label(t.desc);
+                                if !t.outs.is_empty() {
+                                    ui.add_space(4.0);
+                                    ui.small(format!("Outputs: {}", t.outs.iter().map(|o| o.0).collect::<Vec<_>>().join(", ")));
+                                }
+                            }
                         }
                     });
                 });
@@ -1090,6 +1285,10 @@ impl App {
                                     self.acts.push(Act::ExportGraphFile(i, sub.clone()));
                                     ui.close();
                                 }
+                                if ui.button("Save as template...").on_hover_text("Make this graph a template of File > New, for new projects").clicked() {
+                                    self.acts.push(Act::SaveAsTemplate(i, sub.clone()));
+                                    ui.close();
+                                }
                                 ui.separator();
                                 if ui.button("Duplicate").clicked() {
                                     self.acts.push(Act::DuplicateGraph(i, sub.clone()));
@@ -1105,10 +1304,15 @@ impl App {
                                         self.acts.push(Act::RenameGraph(i, s.clone()));
                                         ui.close();
                                     }
-                                    if ui.button("Delete").on_hover_text("Only when no other graph uses it").clicked() {
-                                        self.acts.push(Act::DeleteGraph(i, s.clone()));
-                                        ui.close();
-                                    }
+                                }
+                                let tip = if sub.is_some() {
+                                    "Only when no other graph uses it (Ctrl+Z brings it back)"
+                                } else {
+                                    "The package then opens on its next graph. Only when no other graph uses it (Ctrl+Z brings it back)"
+                                };
+                                if ui.button("Delete").on_hover_text(tip).clicked() {
+                                    self.acts.push(Act::DeleteGraph(i, name.clone()));
+                                    ui.close();
                                 }
                             });
                         }
@@ -1138,9 +1342,15 @@ impl App {
             return all.into_iter().filter(|e| e.label.to_lowercase().contains(&s) || e.doc.to_lowercase().contains(&s)).collect();
         }
         let cat = self.lib_cat.clone();
-        // a function or pattern graph takes only its own family of nodes: all of them, whatever the folder
+        // a library function: a call node with the function's path
+        let lib_fn = |e: &Entry| e.kind == "sbs:fn:instance" && e.sub.is_some();
+        if let Some(sub) = cat.strip_prefix("Function library/") {
+            return all.into_iter().filter(|e| lib_fn(e) && e.cat == sub).collect();
+        }
+        // a function or pattern graph takes only its own family of nodes: all of its atomic ones, whatever the
+        // folder (the library functions have their own folders)
         if matches!(self.g.graph_kind(), "function" | "fxmap") && cat != "Favorites" {
-            return all;
+            return all.into_iter().filter(|e| !lib_fn(e)).collect();
         }
         // the format's atomic nodes, the library graphs by what they make, function and FX-Map nodes
         all.into_iter()
@@ -1216,6 +1426,7 @@ impl App {
                         ui.add_space(10.0);
                         ui.label(egui::RichText::new(match self.lib_cat.as_str() {
                             "Logic nodes" => "Function nodes: open a function graph (a value's fn button, or Explorer > New > Function) to add them.",
+                            c if c.starts_with("Function library") => "Library functions: open a function graph (a value's fn button, or Explorer > New > Function) to add them.",
                             "Pattern builders" => "FX-Map nodes: open an FX-Map's pattern graph to add them.",
                             "Favorites" => "Right-click a node to add it to favorites.",
                             _ => "Nothing here.",
@@ -1230,13 +1441,16 @@ impl App {
                                 p.rect_filled(rect, 3.0, Color32::from_rgb(58, 58, 58));
                             }
                             let tr = Rect::from_min_size(rect.min + vec2(2.0, 2.0), vec2(64.0, 64.0));
-                            match self.lib_thumbs.get(&e.kind) {
-                                Some(t) => {
-                                    p.image(t.id(), tr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-                                }
-                                _ => {
-                                    p.rect_filled(tr, 3.0, kind_color(&e.kind).gamma_multiply(0.55));
-                                    draw_icon(p, tr.center(), entry_icon(&e.kind), Color32::WHITE);
+                            // core nodes show their icon, the others a picture of what they make
+                            if !core_icon(p, tr, &e.kind) {
+                                match self.lib_thumbs.get(&e.kind) {
+                                    Some(t) => {
+                                        p.image(t.id(), tr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                                    }
+                                    _ => {
+                                        p.rect_filled(tr, 3.0, kind_color(&e.kind).gamma_multiply(0.55));
+                                        draw_icon(p, tr.center(), entry_icon(&e.kind), Color32::WHITE);
+                                    }
                                 }
                             }
                             if self.favorites.contains(&e.label) {
@@ -1306,12 +1520,21 @@ impl App {
         let aspect = if self.tex2d_size.0 > 0 && self.tex2d_size.1 > 0 { self.tex2d_size.1 as f32 / self.tex2d_size.0 as f32 } else { 1.0 };
         let img_size = if aspect <= 1.0 { vec2(side, side * aspect) } else { vec2(side / aspect, side) };
         let img = Rect::from_center_size(rect.center() + self.pan2d, img_size);
-        if let Some(t) = &self.tex2d {
+        // with the Alpha toggle off a picture with alpha is shown opaque; on, over a checkerboard
+        let alpha = self.alpha2d && self.tex2d_opaque.is_some();
+        let shown = if alpha { self.tex2d.as_ref() } else { self.tex2d_opaque.as_ref().or(self.tex2d.as_ref()) };
+        if let Some(t) = shown {
             let uv = if self.tile_preview { Rect::from_min_max(pos2(-0.5, -0.5), pos2(1.5, 1.5)) } else { Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)) };
             if self.tile_preview {
                 let big = Rect::from_center_size(img.center(), img.size() * 2.0);
+                if alpha {
+                    checker(&painter, big, rect);
+                }
                 painter.image(t.id(), big, Rect::from_min_max(pos2(0.0, 0.0), pos2(2.0, 2.0)), Color32::WHITE);
             } else {
+                if alpha {
+                    checker(&painter, img, rect);
+                }
                 painter.image(t.id(), img, uv, Color32::WHITE);
             }
             painter.rect_stroke(img, 0.0, Stroke::new(1.0_f32, Color32::from_gray(70)), egui::StrokeKind::Inside);
@@ -1339,6 +1562,14 @@ impl App {
                 let before = self.tile_preview;
                 if icon_btn(ui, Ic::Grid, "Tile 2x2 preview", true).clicked() {
                     self.tile_preview = !before;
+                }
+                if self.tex2d_opaque.is_some()
+                    && ui
+                        .selectable_label(self.alpha2d, egui::RichText::new("Alpha").small())
+                        .on_hover_text("This result has an alpha channel. On: transparent pixels show a checkerboard. Off: the colours are shown fully opaque.")
+                        .clicked()
+                {
+                    self.alpha2d = !self.alpha2d;
                 }
                 let shown = if self.prev_size == 0 { format!("{}px (graph)", self.preview_full()) } else { format!("{}px", self.prev_size) };
                 egui::ComboBox::from_id_salt("psize").width(110.0).selected_text(shown).show_ui(ui, |ui| {
@@ -1422,6 +1653,7 @@ impl App {
                 }
             });
             self.view3d_menus(ui, &mut ch);
+            self.view3d_source(ui, &mut ch);
             ui.menu_button("Renderer", |ui| {
                 if ui.checkbox(&mut self.gpu_on, "GPU rendering (wgpu)").changed() {
                     self.gpu_maps_dirty = true;
@@ -1622,7 +1854,22 @@ impl App {
                                 ui.close();
                             }
                         }
+                        let mine = user_templates::list(&templates_dir());
+                        if !mine.is_empty() {
+                            ui.separator();
+                            ui.label(egui::RichText::new("My templates").small().color(Color32::from_gray(160)));
+                            for t in mine {
+                                if ui.button(&t.name).on_hover_text(t.path.display().to_string()).clicked() {
+                                    acts.push(Act::NewFromUserTemplate(t.path.clone()));
+                                    ui.close();
+                                }
+                            }
+                        }
                     });
+                    if ui.button("Save graph as template...").on_hover_text("Make the graph on screen a template of File > New, for new projects").clicked() {
+                        acts.push(Act::SaveAsTemplate(self.pkg_active, self.parents.last().map(|(_, n)| n.clone())));
+                        ui.close();
+                    }
                     ui.menu_button("Package", |ui| {
                         let (pi, cur) = (self.pkg_active, self.parents.last().map(|(_, n)| n.clone()));
                         let items: Vec<(&str, Act)> = vec![
@@ -2174,7 +2421,8 @@ impl eframe::App for App {
                 let del = i.consume_key(Modifiers::NONE, Key::Delete);
                 let frame = i.consume_key(Modifiers::NONE, Key::F);
                 let com = i.consume_key(Modifiers::NONE, Key::C);
-                (redo, undo, copy, cut, paste, dup, all, save, open, del, frame, com, newg, pasted, dup_nl, paste_nl, disable, relink, clear_th)
+                let swap = i.consume_key(Modifiers::NONE, Key::X);
+                (redo, undo, copy, cut, paste, dup, all, save, open, del, frame, com, newg, pasted, dup_nl, paste_nl, disable, relink, clear_th, swap)
             });
             let w = pointer.map(|p| self.screen_to_world(p));
             if let Some(text) = &k.13 {
@@ -2204,6 +2452,7 @@ impl eframe::App for App {
                 (k.16, Act::ToggleDisable),
                 (k.17, Act::DeleteRelink),
                 (k.18, Act::ClearThumbs),
+                (k.19, Act::SwapLinks),
             ] {
                 if on {
                     self.acts.push(a);
@@ -2216,6 +2465,7 @@ impl eframe::App for App {
         self.new_dialog(ctx);
         self.confirm_close_ui(ctx);
         self.rename_graph_ui(ctx);
+        self.save_template_ui(ctx);
         if let Some(t) = self.copy_out.take() {
             ctx.copy_text(t);
         }

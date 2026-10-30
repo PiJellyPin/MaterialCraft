@@ -827,6 +827,29 @@ impl Cx {
                         }
                     }
                 }
+                "isdefined" => {
+                    // whether a variable exists here: what is known while importing is answered now (the
+                    // function's own inputs, the graph's inputs, the system variables MaterialCraft provides),
+                    // the rest when the function runs (a Set before it, a variable a pattern program sets)
+                    let var = data(f).map(|v| v.text()).unwrap_or_default();
+                    let known = match var.as_str() {
+                        "$pos" | "$size" | "$sizelog2" | "$number" | "$randomseed" | "$seed" => Some(true),
+                        "$depth" | "$depthpow2" | "$time" => None,
+                        v if v.starts_with('$') => Some(false),
+                        v if fin.contains_key(v) || fc.graph_inputs.iter().any(|p| p.identifier == v) => Some(true),
+                        _ => None,
+                    };
+                    match known {
+                        Some(b) => {
+                            n.kind = "f_bool".into();
+                            n.nums.insert("v".into(), b as i32 as f32);
+                        }
+                        None => {
+                            n.kind = "f_defined".into();
+                            n.strs.insert("name".into(), var);
+                        }
+                    }
+                }
                 "set" => {
                     n.kind = "f_set".into();
                     n.strs.insert("name".into(), data("set").map(|v| v.text()).unwrap_or_default());

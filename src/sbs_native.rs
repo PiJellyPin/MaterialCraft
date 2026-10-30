@@ -886,10 +886,11 @@ impl<'a> Writer<'a> {
                 let mut fds = Vec::new();
                 for (k, val) in &vals {
                     let PVal::Const { ty, raw, .. } = val else { continue };
+                    let raw = if n.kind == "sbs:fn:instance" && k == "instance" { self.function_path(raw) } else { raw.clone() };
                     let mut fd = XElem::new("funcData");
                     push(&mut fd, v("name", k));
                     let mut cv = XElem::new("constantValue");
-                    push(&mut cv, const_elem(*ty, raw));
+                    push(&mut cv, const_elem(*ty, &raw));
                     push(&mut fd, cv);
                     fds.push(fd);
                 }
@@ -1105,6 +1106,17 @@ impl<'a> Writer<'a> {
                 f
             }
         }
+    }
+
+    /// The path a function call writes: as it is, except a call to a library function added in the editor
+    /// (`pkg:///Functions/Math/clamp`, no dependency yet), which names the library package as its dependency.
+    fn function_path(&mut self, raw: &str) -> String {
+        let (path, dep) = crate::sbs::split_path(raw);
+        if dep.is_some() || crate::libfuncs::entry(&path).is_none() {
+            return raw.to_string();
+        }
+        let dep = self.dependency("sbs://functions.sbs");
+        format!("pkg:///{}?dependency={dep}", path.trim_start_matches('/'))
     }
 
     /// The path an instance node writes: what the file had while the node still points at the same graph.
@@ -2187,6 +2199,16 @@ pub fn slots(n: &Node, lib: &BTreeMap<String, Graph>) -> Vec<String> {
     match n.kind.as_str() {
         "sbs:output" => vec!["inputNodeOutput".into()],
         "sbs:input" => Vec::new(),
+        // a call to a library function: its inputs (the links of a call to anything else are all it shows)
+        "sbs:fn:instance" => {
+            let mut v: Vec<String> = library_call(n).map(|e| e.inputs.iter().map(|(id, _)| id.to_string()).collect()).unwrap_or_default();
+            for k in n.ins.keys() {
+                if !v.contains(k) {
+                    v.push(k.clone());
+                }
+            }
+            v
+        }
         "sbs:graph" => {
             let Some(sd) = n.strs.get("#graph").and_then(|g| lib.get(g)).and_then(|g| g.sd.as_ref()) else {
                 return n.ins.keys().cloned().collect();
@@ -2257,6 +2279,7 @@ pub fn label(n: &Node, g: &Graph) -> String {
             g.sd.as_ref().and_then(|s| s.input_identifier(&uid)).unwrap_or_else(|| "Input".into())
         }
         "sbs:graph" => n.strs.get("#graph").map(|p| p.rsplit('/').next().unwrap_or(p).to_string()).unwrap_or_else(|| "Graph".into()),
+        "sbs:fn:instance" if library_call(n).is_some() => library_call(n).map(|e| e.label.to_string()).unwrap_or_default(),
         k => match node_def(n) {
             Some(d) => d.label.to_string(),
             None => k.rsplit([':', '/']).next().map(sbs_defs::label_of).unwrap_or_default(),
@@ -2264,11 +2287,25 @@ pub fn label(n: &Node, g: &Graph) -> String {
     }
 }
 
-/// A new node of a native kind. `graph` is a graph of the package for `sbs:graph` (an instance of it).
+/// The library function a function call node (`sbs:fn:instance`) calls, when it is one MaterialCraft has built in.
+pub fn library_call(n: &Node) -> Option<&'static crate::libfuncs::Entry> {
+    match values(n).get("instance") {
+        Some(PVal::Const { raw, .. }) => crate::libfuncs::entry(&crate::sbs::split_path(raw).0),
+        _ => None,
+    }
+}
+
+/// A new node of a native kind. `graph` is a graph of the package for `sbs:graph` (an instance of it), or the
+/// path of a library function for `sbs:fn:instance` (`Functions/Math/clamp`: a call to it; saving names the
+/// library package as its dependency).
 pub fn new_node(kind: &str, graph: Option<&str>, pos: [f32; 2]) -> Node {
     let mut n = Node { kind: kind.to_string(), pos, ..Default::default() };
-    if kind == "sbs:graph" {
-        n.strs.insert("#graph".into(), graph.unwrap_or_default().to_string());
+    match (kind, graph) {
+        ("sbs:graph", _) => {
+            n.strs.insert("#graph".into(), graph.unwrap_or_default().to_string());
+        }
+        ("sbs:fn:instance", Some(path)) => set_value(&mut n, "instance", Some(PVal::Const { ty: PTy::S, raw: format!("pkg:///{path}"), rel: None })),
+        _ => {}
     }
     n
 }
@@ -2377,6 +2414,90 @@ pub fn set_output_usage(g: &mut Graph, node: u32, usage: &str) -> Result<(), Str
         None => push(o, ul),
     }
     Ok(())
+}
+
+/// Rename the graph output an output node writes (its identifier, and the label that follows it). Returns the old and
+/// the new identifier; the nodes of other graphs that read it by name follow with [`retarget_output`].
+pub fn rename_output(g: &mut Graph, node: u32, new: &str) -> Result<(String, String), String> {
+    let new = new.trim();
+    if new.is_empty() || !new.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || new.starts_with(|c: char| c.is_ascii_digit()) {
+        return Err(format!("'{new}' is not a valid output name (letters, digits and _, not starting with a digit)"));
+    }
+    let uid = g.nodes.get(&node).and_then(|n| n.strs.get("#output")).cloned().ok_or("not an output node")?;
+    let sd = g.sd.as_mut().ok_or("not an .sbs graph")?;
+    if sd.outputs.iter().any(|o| o.v("uid").as_deref() != Some(uid.as_str()) && o.v("identifier").as_deref() == Some(new)) {
+        return Err(format!("the graph already has an output called '{new}'"));
+    }
+    let o = sd.outputs.iter_mut().find(|o| o.v("uid").as_deref() == Some(uid.as_str())).ok_or("the graph does not declare this output")?;
+    let old = o.v("identifier").unwrap_or_default();
+    if old == new {
+        return Ok((old, new.to_string()));
+    }
+    match o.child_mut("identifier") {
+        Some(e) => e.set_attr("v", new),
+        None => push(o, v("identifier", new)),
+    }
+    if let Some(l) = o.child_mut("attributes").and_then(|a| a.child_mut("label")) {
+        l.set_attr("v", &sbs_defs::label_of(new));
+    }
+    Ok((old, new.to_string()))
+}
+
+/// The nodes of `g` that run graph `graph` and read its output `old` by name read `new` instead.
+pub fn retarget_output(g: &mut Graph, graph: &str, old: &str, new: &str) {
+    let users: BTreeSet<u32> = g.nodes.iter().filter(|(_, n)| n.kind == "sbs:graph" && n.strs.get("#graph").map(String::as_str) == Some(graph)).map(|(id, _)| *id).collect();
+    if users.is_empty() {
+        return;
+    }
+    for (id, n) in g.nodes.iter_mut() {
+        if users.contains(id) {
+            if let Some(mut b) = n.strs.get("#bridgings").and_then(|x| XDoc::parse(x).ok()).map(|d| d.root) {
+                for e in b.elems_mut() {
+                    if e.v("identifier").as_deref() == Some(old) {
+                        if let Some(i) = e.child_mut("identifier") {
+                            i.set_attr("v", new);
+                        }
+                    }
+                }
+                n.strs.insert("#bridgings".into(), b.to_xml());
+            }
+        }
+        let slots: Vec<String> = n.in_out.iter().filter(|(slot, o)| o.as_str() == old && n.ins.get(*slot).map(|s| users.contains(s)).unwrap_or(false)).map(|(k, _)| k.clone()).collect();
+        for slot in slots {
+            n.in_out.insert(slot, new.to_string());
+        }
+    }
+}
+
+/// Image inputs a node only reads while a switch of its own is on: `(input, switch)`. The editor shows the socket
+/// of such an input only while its switch is on (or a link still reaches it).
+pub fn input_switches(n: &Node) -> &'static [(&'static str, &'static str)] {
+    match n.kind.strip_prefix("sbs:lib:").map(|k| k.rsplit('/').next().unwrap_or(k)) {
+        Some("pbr_base_material") => &[
+            ("basecolor_input", "user_basecolor"),
+            ("diffuse_input", "user_diffuse"),
+            ("normal_input", "user_normal"),
+            ("specular_input", "user_specular"),
+            ("glossiness_input", "user_glossiness"),
+            ("roughness_input", "user_roughness"),
+            ("metallic_input", "user_metallic"),
+            ("height_input", "user_height"),
+            ("ambientOcclusion_input", "user_ao"),
+            ("grunge_input", "grunge_custom_input"),
+        ],
+        _ => &[],
+    }
+}
+
+/// Is image input `slot` of `n` read (always, unless a switch of [`input_switches`] turns it off)?
+pub fn input_used(n: &Node, slot: &str) -> bool {
+    let Some((_, sw)) = input_switches(n).iter().find(|(i, _)| *i == slot) else { return true };
+    match values(n).get(*sw) {
+        Some(v @ PVal::Const { .. }) => v.nums().first().map(|x| *x != 0.0).unwrap_or(false),
+        // computed by a function: it may be on
+        Some(_) => true,
+        None => false,
+    }
 }
 
 /// Add an image input (grey or colour) to a graph and the node that reads it. Returns the node id.
@@ -3084,7 +3205,25 @@ pub fn remove_graph(root: &mut Graph, name: &str) -> Result<(), String> {
         return Err(format!("'{name}' is still used by {}", users.join(", ")));
     }
     if root.meta.get("identifier").map(|m| m == name).unwrap_or(false) {
-        return Err("the graph the package opens on cannot be deleted; open another graph first".into());
+        // the graph the package opens on: the next compositing graph takes its place (and the package's other graphs,
+        // resources and settings with it)
+        let next = root
+            .subgraphs
+            .iter()
+            .find(|(_, g)| matches!(g.sd.as_ref().map(|s| &s.role), Some(Role::Graph)))
+            .map(|(k, _)| k.clone())
+            .ok_or("a package needs at least one graph: add another graph before deleting this one")?;
+        let mut new = root.subgraphs.remove(&next).unwrap_or_default();
+        new.subgraphs = std::mem::take(&mut root.subgraphs);
+        new.resources = std::mem::take(&mut root.resources);
+        for (k, v) in std::mem::take(&mut root.meta) {
+            if k != "identifier" && k != "kind" {
+                new.meta.entry(k).or_insert(v);
+            }
+        }
+        new.meta.insert("identifier".into(), next);
+        *root = new;
+        return Ok(());
     }
     root.subgraphs.remove(name).map(|_| ()).ok_or_else(|| format!("the package has no graph '{name}'"))
 }
