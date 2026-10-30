@@ -520,7 +520,10 @@ impl App {
             }
         }
         // ---- parameters, by group
-        let params = native::params_of(&node, &self.g.subgraphs);
+        let all = native::params_of(&node, &self.g.subgraphs);
+        // a graph input whose "visible if" condition is false for the node's values is not shown (a group left
+        // empty goes with it)
+        let params: Vec<&native::ParamInfo> = all.iter().filter(|p| p.visible(&all)).collect();
         let gray_node = matches!(native::values(&node).get("colorswitch"), Some(PVal::Const { raw, .. }) if raw.trim() == "0");
         let mut groups: Vec<String> = Vec::new();
         for p in &params {

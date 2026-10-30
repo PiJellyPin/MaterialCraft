@@ -308,3 +308,55 @@ fn the_graph_a_package_opens_on_can_be_deleted() {
     assert_eq!(back.meta.get("identifier").map(String::as_str), Some("second"));
     assert!(back.subgraphs.contains_key("third") && !back.subgraphs.contains_key("first"));
 }
+
+#[test]
+fn visible_if_conditions_are_kept_and_follow_the_instance_values() {
+    let mut g = sbs_native::new_package("main", 64);
+    sbs_native::duplicate_graph(&mut g, None, Some("sub")).unwrap();
+    // inputs as a package writes them; the conditions are escaped as XML attribute values
+    let input = |id: &str, ty: PTy, def: &str, cond: Option<&str>| {
+        let cond = cond.map(|c| format!("<visibleIf v=\"{}\"/>", materialcraft::xmldoc::escape_attr(c))).unwrap_or_default();
+        let xml = format!(
+            "<paraminput><identifier v=\"{id}\"/><uid v=\"{}\"/><attributes><label v=\"{id}\"/></attributes><type v=\"{}\"/><defaultValue><{el} v=\"{def}\"/></defaultValue>{cond}</paraminput>",
+            1_200_000_000 + id.len(),
+            ty.type_code(),
+            el = ty.element()
+        );
+        XDoc::parse(&xml).unwrap().root
+    };
+    let sub = g.subgraphs.get_mut("sub").unwrap().sd.as_mut().unwrap();
+    sub.inputs.push(input("use_mask", PTy::B, "0", None));
+    sub.inputs.push(input("mode", PTy::I(1), "1", None));
+    sub.inputs.push(input("offset", PTy::F(2), "0.25 0.75", None));
+    sub.inputs.push(input("mask_strength", PTy::F(1), "0.5", Some("input[\"use_mask\"]")));
+    sub.inputs.push(input("detail", PTy::F(1), "0.5", Some("input.mode == 2 && input.offset.y > 0.5")));
+    sub.inputs.push(input("broken", PTy::F(1), "0.5", Some("input.nowhere ==")));
+    let mut user = Node { kind: "sbs:graph".into(), ..Default::default() };
+    user.strs.insert("#graph".into(), "sub".into());
+    g.nodes.insert(40, user);
+
+    let text = sbs_native::save_text(&g).unwrap();
+    assert!(text.contains("<visibleIf v=\"input.mode == 2 &amp;&amp; input.offset.y &gt; 0.5\"/>"), "the condition is written back: {text}");
+    let pkg = materialcraft::sbs::Package::parse(&text).expect("valid");
+    let read = pkg.graphs.iter().find(|g| g.identifier == "sub").and_then(|g| g.inputs.iter().find(|i| i.identifier == "mask_strength")).and_then(|i| i.visible_if.clone());
+    assert_eq!(read.as_deref(), Some("input[\"use_mask\"]"));
+    let mut back = open(&text);
+    let shown = |g: &Graph| {
+        let all = sbs_native::params_of(&g.nodes[&40], &g.subgraphs);
+        assert_eq!(all.iter().find(|p| p.id == "detail").and_then(|p| p.visible_if.as_deref()), Some("input.mode == 2 && input.offset.y > 0.5"));
+        all.iter().filter(|p| p.visible(&all)).map(|p| p.id.clone()).collect::<Vec<_>>()
+    };
+    // the defaults: no mask, mode 1; an invalid condition hides nothing
+    let ids = shown(&back);
+    assert!(ids.iter().any(|i| i == "use_mask") && ids.iter().any(|i| i == "broken"), "{ids:?}");
+    assert!(!ids.iter().any(|i| i == "mask_strength" || i == "detail"), "{ids:?}");
+    // the node's own values
+    let n = back.nodes.get_mut(&40).unwrap();
+    n.strs.insert("use_mask".into(), PVal::Const { ty: PTy::B, raw: "1".into(), rel: None }.enc());
+    n.strs.insert("mode".into(), PVal::Const { ty: PTy::I(1), raw: "2".into(), rel: None }.enc());
+    let ids = shown(&back);
+    assert!(ids.iter().any(|i| i == "mask_strength") && ids.iter().any(|i| i == "detail"), "{ids:?}");
+    // and they survive a save
+    let again = open(&sbs_native::save_text(&back).unwrap());
+    assert_eq!(shown(&again), ids);
+}

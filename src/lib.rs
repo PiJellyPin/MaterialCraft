@@ -81,5 +81,6 @@ pub mod pool;
 pub mod tex;
 pub mod v3;
 pub mod vector;
+pub mod visible_if;
 pub mod xml;
 pub mod xmldoc;
