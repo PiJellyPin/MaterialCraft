@@ -97,7 +97,8 @@ fn variants_are_seamless() {
         "transform offset_x=0.3 offset_y=0.2 scale_x=1.7 scale_y=1.3 rotation=0.123", "transform rotation=0.125", "transform scale_x=0.5 scale_y=0.5", "mirror axis=0", "mirror axis=1", "mirror axis=2",
         "warp in=@100 warp=@100 intensity=0.2", "directional_warp warp=@100 angle=0.2 intensity=0.3", "vector_warp vector=@107 intensity=0.1", "slope_blur slope=@100 intensity=0.2",
         "normal strength=4", "ao radius=8", "curvature radius=4", "edge_detect", "emboss angle=0.1", "bevel distance=0.05", "distance distance=0.1", "histogram_range position=0.5",
-        "make_it_tile_photo width=0.2", "make_it_tile_patch patches=5", "edge_wear amount=0.5", "curvature_smooth",
+        "make_it_tile_photo width=0.2", "make_it_tile_photo width=0.15 sharp=0.7 warp=0.9 warp_v=-0.6", "make_it_tile_patch patches=5",
+        "make_it_tile_patch mode=1 octave=2 disorder=0.6 size_var=0.4 rotation_var=0.3 mask_warp=0.5 color_var=0.3", "edge_wear amount=0.5", "curvature_smooth",
         "flood_fill", "flood_fill_random", "flood_fill_color", "flood_fill_gradient",
     ];
     for c in filters {

@@ -552,11 +552,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             if (P(3u) > 0.5) { o = grey(k); } else { o = grey(b + (g - b) * k); }
         }
         case 10u: {
-            // make_it_tile_photo: width_h, width_v
-            let wh = clamp(P(0u), 0.1, 1.0);
-            let wv = clamp(P(1u), 0.1, 1.0);
-            let au = smoothc(0.0, wh, 1.0 - abs(2.0 * uu - 1.0));
-            let av = smoothc(0.0, wv, 1.0 - abs(2.0 * vv - 1.0));
+            // make_it_tile_photo: width_h, width_v, sharp_h, sharp_v, warp_h, warp_v; seed in n
+            var wh = clamp(P(0u), 0.01, 1.0);
+            var wv = clamp(P(1u), 0.01, 1.0);
+            let ph = clamp(P(4u), -1.0, 1.0);
+            let pv = clamp(P(5u), -1.0, 1.0);
+            if (ph != 0.0 || pv != 0.0) {
+                wh = wh * clamp(1.0 + ph * (2.0 * perlin(uu, vv, 4, 4, u.n) - 1.0), 0.05, 2.0);
+                wv = wv * clamp(1.0 + pv * (2.0 * perlin(uu, vv, 4, 4, u.n + 1u) - 1.0), 0.05, 2.0);
+            }
+            let au = smoothc(wh * clamp(P(2u), 0.0, 1.0), wh, 1.0 - abs(2.0 * uu - 1.0));
+            let av = smoothc(wv * clamp(P(3u), 0.0, 1.0), wv, 1.0 - abs(2.0 * vv - 1.0));
             let c00 = spA(rem1(uu), rem1(vv));
             let c10 = spA(rem1(uu + 0.5), rem1(vv));
             let c01 = spA(rem1(uu), rem1(vv + 0.5));

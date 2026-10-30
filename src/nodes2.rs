@@ -218,17 +218,23 @@ pub fn compute(kind: &str, id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, s
                 let x = x.abs() * sg;
                 ((y + x) * 0.5, (y - x) * 0.5)
             };
+            let anti = move |u: f32, v: f32| {
+                // mirror across the line u + v = 0 (mod 1)
+                let (x, y) = (ops::wrapd(u + v), u - v);
+                let x = x.abs() * sg;
+                ((y + x) * 0.5, (x - y) * 0.5)
+            };
             Tex::from_fn(t.w, t.h, |u, v| {
                 let (a, b) = match axis {
                     0 => (fold(u), v),
                     1 => (u, fold(v)),
                     2 => (fold(u), fold(v)),
                     3 => diag(u, v),
-                    4 => {
-                        // anti-diagonal: mirror across the line u + v = 0 (mod 1)
-                        let (x, y) = (ops::wrapd(u + v), u - v);
-                        let x = x.abs() * sg;
-                        ((y + x) * 0.5, (x - y) * 0.5)
+                    4 => anti(u, v),
+                    6 => {
+                        // both diagonals
+                        let (a, b) = diag(u, v);
+                        anti(a, b)
                     }
                     _ => diag(fold(u), fold(v)), // 8-fold: both axes plus the diagonal
                 };
@@ -254,8 +260,8 @@ pub fn compute(kind: &str, id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, s
         }
         "skew" => {
             let t = need("in")?;
-            // whole numbers keep the lattice periodic: the skewed texture still tiles
-            let (kx, ky) = (f("skew_x", 1.0).round().clamp(-32.0, 32.0), f("skew_y", 0.0).round().clamp(-32.0, 32.0));
+            // whole numbers keep the lattice periodic: the skewed texture still tiles (an imported fraction does not)
+            let (kx, ky) = (f("skew_x", 1.0).clamp(-32.0, 32.0), f("skew_y", 0.0).clamp(-32.0, 32.0));
             // align = the line the shear pivots around: 0 centre, 1 top left (default), 2 bottom right
             let o = match f("align", 1.0).round() as u32 { 0 => 0.5, 2 => 1.0, _ => 0.0 };
             Tex::from_fn(t.w, t.h, |u, v| t.sample_cubic(u + kx * (v - o), v + ky * (u - o)))

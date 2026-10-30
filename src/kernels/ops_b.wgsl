@@ -461,6 +461,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let xx = abs(wrapd(uu + vv)) * sg;
                 let yy = uu - vv;
                 ab = vec2<f32>((yy + xx) * 0.5, (xx - yy) * 0.5);
+            } else if (axis == 6u) {
+                // both diagonals: the diagonal fold, then the anti-diagonal one
+                let d = diag_f(uu, vv, sg);
+                let xx = abs(wrapd(d.x + d.y)) * sg;
+                let yy = d.x - d.y;
+                ab = vec2<f32>((yy + xx) * 0.5, (xx - yy) * 0.5);
             } else { ab = diag_f(fu, fv, sg); }
             let m = spA(ab.x, ab.y);
             if (tm == 0u) {
