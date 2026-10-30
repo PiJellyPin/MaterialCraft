@@ -11,6 +11,12 @@
 //! The editor offers them in a function graph's Library panel ([`palette`]): a tile adds a call to the function
 //! (`sbs:fn:instance` naming `Functions/.../<identifier>`), saved with the library package as its dependency the way
 //! files made elsewhere call them. The Hash functions are MaterialCraft's own hash, not Designer's.
+//!
+//! The SDF functions (`Functions/SDF/...`) are written the same way, from the public node reference and the standard
+//! maths of signed distances. Two things set them apart. A primitive measures from `P`, which is the space its caller
+//! is evaluating when nothing is connected to it. And an input of type `sdf` is a shape, not a number: the function
+//! evaluates it where it needs it with `sdf(input, position)`, which is how a transform moves a shape that comes from
+//! the nodes before it, and how a material reaches the operators (see `func::Prog::run_sdf`).
 
 use crate::fexpr::{parse, E};
 use crate::graph::{Graph, Node};
@@ -18,14 +24,15 @@ use std::collections::BTreeMap;
 use std::f32::consts::{PI, TAU};
 use std::sync::OnceLock;
 
-/// Input of a library function: its identifier and type (`f1`..`f4`, `i1`..`i4`, `b`).
+/// Input of a library function: its identifier and type (`f1`..`f4`, `i1`..`i4`, `b`, `sdf`), with its default
+/// after `=` when it has one (`f3=0,0,0.5`).
 type In = (&'static str, &'static str);
 
 /// A library function: its identifier, the label the editor shows, its inputs and its expression.
 type Func = (&'static str, &'static str, &'static [In], &'static str);
 
 fn type_code(ty: &str) -> f32 {
-    match ty {
+    match ty.split('=').next().unwrap_or(ty) {
         "f1" => 0.0,
         "i1" => 1.0,
         "b" => 2.0,
@@ -142,7 +149,25 @@ impl Emit<'_> {
         })
     }
 
+    /// `sdf(input)` and `sdf(input, position)`: evaluate a shape input, here or at another position.
+    fn shape(&mut self, args: &[E]) -> Result<u32, String> {
+        let (Some(E::Var(input)), 1..=2) = (args.first(), args.len()) else {
+            return Err("sdf takes a shape input and optionally a position".into());
+        };
+        if !self.vars.contains_key(input) {
+            return Err(format!("unknown shape input '{input}'"));
+        }
+        let at = args.get(1).map(|e| self.emit(e)).transpose()?;
+        let ins: Vec<(&str, u32)> = at.iter().map(|&p| ("a", p)).collect();
+        let id = self.add("f_sdf_in", &ins);
+        self.g.nodes.get_mut(&id).unwrap().strs.insert("name".into(), input.clone());
+        Ok(id)
+    }
+
     fn call(&mut self, name: &str, args: &[E]) -> Result<u32, String> {
+        if name == "sdf" {
+            return self.shape(args);
+        }
         let a: Vec<u32> = args.iter().map(|e| self.emit(e)).collect::<Result<_, _>>()?;
         let arity = |n: usize| if a.len() == n { Ok(()) } else { Err(format!("{name} takes {n} argument(s), got {}", a.len())) };
         // one of our f_* ops
@@ -194,6 +219,29 @@ impl Emit<'_> {
             return Ok(self.add(kind, &ins));
         }
         match name {
+            // the shape that is nearer, with its material
+            "sdf_union" => {
+                arity(2)?;
+                let (zero, one) = (self.fconst(0.0), self.fconst(1.0));
+                let le = self.add("f_le", &[("a", a[0]), ("b", a[1])]);
+                let t = self.add("f_if", &[("cond", le), ("a", zero), ("b", one)]);
+                let d = self.add("f_min", &[("a", a[0]), ("b", a[1])]);
+                Ok(self.add("f_sdf_mix", &[("a", a[0]), ("b", a[1]), ("c", t), ("d", d)]))
+            }
+            "sdf_mix" => {
+                arity(4)?;
+                Ok(self.add("f_sdf_mix", &[("a", a[0]), ("b", a[1]), ("c", a[2]), ("d", a[3])]))
+            }
+            "sdf_set_color" | "sdf_set_metalness" | "sdf_set_roughness" | "sdf_set_id" => {
+                arity(2)?;
+                let id = self.add("f_sdf_set", &[("a", a[0]), ("b", a[1])]);
+                self.g.nodes.get_mut(&id).unwrap().strs.insert("name".into(), name.trim_start_matches("sdf_set_").into());
+                Ok(id)
+            }
+            "sdf_rock" => {
+                arity(6)?;
+                Ok(self.add("f_sdf_rock", &[("a", a[0]), ("b", a[1]), ("c", a[2]), ("d", a[3]), ("e", a[4]), ("f", a[5])]))
+            }
             // 2 to the power x
             "exp2" => {
                 arity(1)?;
@@ -241,7 +289,29 @@ fn compile(ins: &[In], src: &str, names: &BTreeMap<String, &'static str>) -> Res
         let n = em.g.nodes.get_mut(&id).unwrap();
         n.strs.insert("name".into(), (*name).into());
         n.nums.insert("type".into(), type_code(ty));
+        if ty.starts_with("sdf") {
+            n.nums.insert("sdf".into(), 1.0);
+        }
+        if let Some((_, default)) = ty.split_once('=') {
+            let v: Vec<f32> = default.split(',').map(|x| x.parse().map_err(|_| format!("bad default '{default}'"))).collect::<Result<_, _>>()?;
+            match v.as_slice() {
+                [one] => {
+                    n.nums.insert("v".into(), *one);
+                }
+                many => {
+                    for (k, c) in many.iter().zip(["x", "y", "z", "w"]) {
+                        n.nums.insert(c.into(), *k);
+                    }
+                }
+            }
+        }
         em.vars.insert((*name).to_string(), id);
+    }
+    // the position of an SDF function: the input when it is connected, else the space being evaluated
+    if ins.iter().any(|(name, ty)| *name == "P" && *ty == "f3") {
+        let id = em.add("f_sdf_pos", &[]);
+        em.g.nodes.get_mut(&id).unwrap().strs.insert("name".into(), "P".into());
+        em.vars.insert("P".into(), id);
     }
     let (lets, result) = parse(src)?;
     for (name, e) in &lets {
@@ -308,6 +378,13 @@ fn category(folder: &str, ident: &str) -> &'static str {
         return "Conversion";
     }
     let f = folder.trim_start_matches("Functions/").to_ascii_lowercase();
+    match f.as_str() {
+        "sdf/primitives" => return "SDF Primitives",
+        "sdf/operators" => return "SDF Operators",
+        "sdf/transforms" => return "SDF Transforms",
+        "sdf/material" => return "SDF Material",
+        _ => {}
+    }
     match f.split('/').next().unwrap_or_default() {
         "math" | "cycles" => "Math",
         "colorvalues" => "Color",
@@ -322,7 +399,7 @@ fn category(folder: &str, ident: &str) -> &'static str {
 }
 
 /// The Library panel folders of the library functions, in the panel's order.
-pub const CATEGORIES: &[&str] = &["Math", "Color", "Random", "Easing", "Switch", "Ranges", "Transforms", "Conversion", "Various"];
+pub const CATEGORIES: &[&str] = &["Math", "Color", "Random", "Easing", "Switch", "Ranges", "Transforms", "Conversion", "Various", "SDF Primitives", "SDF Operators", "SDF Transforms", "SDF Material"];
 
 struct Lib {
     graphs: BTreeMap<String, Graph>,
@@ -586,8 +663,83 @@ const TABLE: &[(&str, &[Func])] = &[
         ("booleanToFloat1", "Bool to Float", &[("Boolean", "b")], "Boolean ? 1 : 0"),
         ("turnsToDegrees", "Turns to Degrees", &[("turns", "f1")], "turns * 360"),
     ]),
+    // the SDF functions: the identifiers are the public reference's page names, the inputs' its input names in lower
+    // case; defaults as it gives them. Z is up.
+    ("Functions/SDF/Primitives", &[
+        ("3d_sdf_capped_cone", "SDF Capped Cone", &[("radius_base", "f1=0.5"), ("radius_top", "f1=0.2"), ("height", "f1=1"), ("center_position", "f3=0,0,0"), ("P", "f3")], "q = P - center_position; mc_sdf_lathe(length(q.xy), q.z, radius_base, radius_top, height)"),
+        ("3d_sdf_capped_cone_2_points", "SDF Capped Cone (2 Points)", &[("position_base", "f3=0,0,0"), ("position_top", "f3=0,0,1"), ("radius_base", "f1=0.5"), ("radius_top", "f1=0.2"), ("P", "f3")], "mc_sdf_cone2(P, position_base, position_top, radius_base, radius_top)"),
+        ("3d_sdf_capped_torus", "SDF Capped Torus", &[("major_radius", "f1=0.5"), ("minor_radius", "f1=0.2"), ("angle", "f1=0.75"), ("angle_offset", "f1=0"), ("symmetrical", "b=1"), ("center_position", "f3=0,0,0.5"), ("P", "f3")], "q = P - center_position; a = mod(atan2(q.y, q.x) / tau - angle_offset, 1); w = mod(a + 0.5, 1) - 0.5; lo = symmetrical ? angle * -0.5 : 0; hi = symmetrical ? angle * 0.5 : angle; cut = symmetrical ? abs(w) < angle * 0.5 : a < angle; e0 = (angle_offset + lo) * tau; e1 = (angle_offset + hi) * tau; cut ? min(length(q - vec3(major_radius * cos(e0), major_radius * sin(e0), 0)), length(q - vec3(major_radius * cos(e1), major_radius * sin(e1), 0))) - minor_radius : length(vec2(length(q.xy) - major_radius, q.z)) - minor_radius"),
+        ("3d_sdf_capsule", "SDF Capsule", &[("start", "f3=0,0,0"), ("end", "f3=0,0,1"), ("radius", "f1=0.25"), ("start_end_at_tip", "b=0"), ("center_position", "f3=0,0,0"), ("P", "f3")], "d = normalize(end - start); a = start_end_at_tip ? start + d * radius : start; b = start_end_at_tip ? end - d * radius : end; mc_sdf_seg(P - center_position, a, b) - radius"),
+        ("3d_sdf_cone", "SDF Cone", &[("radius", "f1=0.5"), ("height", "f1=1"), ("center_position", "f3=0,0,0"), ("P", "f3")], "q = P - center_position; mc_sdf_lathe(length(q.xy), q.z, radius, 0, height)"),
+        ("3d_sdf_cube", "SDF Cube", &[("size", "f3=1,1,1"), ("rounding", "f1=0"), ("pivot_position_local", "f3=0,0,-0.5"), ("center_position", "f3=0,0,0"), ("P", "f3")], "s = size * 0.5; r = max(min(rounding, min(s.x, min(s.y, s.z))), 0); mc_sdf_box(P - center_position + pivot_position_local, s - r) - r"),
+        ("3d_sdf_cylinder", "SDF Cylinder", &[("height", "f1=1"), ("radius", "f1=0.5"), ("rounding", "f1=0"), ("pivot_position_local", "f3=0,0,-0.5"), ("center_position", "f3=0,0,0"), ("P", "f3")], "q = P - center_position + pivot_position_local; h = height * 0.5; r = max(min(rounding, min(radius, h)), 0); mc_sdf_extrude(length(q.xy) - radius + r, q.z, h - r) - r"),
+        ("3d_sdf_cylinder_2_points", "SDF Cylinder (2 Points)", &[("start", "f3=0,0,0"), ("end", "f3=0,0,1"), ("radius", "f1=0.25"), ("P", "f3")], "mc_sdf_cone2(P, start, end, radius, radius)"),
+        ("3d_sdf_ellipsoid", "SDF Ellipsoid", &[("radius", "f3=0.35,0.35,0.5"), ("center_position", "f3=0,0,0"), ("P", "f3")], "q = P - center_position; k0 = length(q / radius); k1 = length(q / (radius * radius)); k1 > 0 ? k0 * (k0 - 1) / k1 : 0 - min(radius.x, min(radius.y, radius.z))"),
+        ("3d_sdf_elongated_cylinder", "SDF Elongated Cylinder", &[("height", "f1=0.5"), ("radius", "f1=0.5"), ("rounding", "f1=0"), ("center_position", "f3=0,0,0"), ("elongation_distance", "f1=0.5"), ("P", "f3")], "q = P - center_position; e = elongation_distance * 0.5; h = height * 0.5; r = max(min(rounding, min(radius, h)), 0); x = q.x - clamp(q.x, 0 - e, e); mc_sdf_extrude(length(vec2(x, q.y)) - radius + r, q.z - h, h - r) - r"),
+        ("3d_sdf_ground_plane", "SDF Ground Plane", &[("height", "f1=0"), ("P", "f3")], "P.z - height"),
+        ("3d_sdf_helix", "SDF Helix", &[("major_radius", "f1=0.4"), ("minor_radius", "f1=0.1"), ("height", "f1=0.5"), ("windings", "f1=4"), ("center_position", "f3=0,0,0"), ("P", "f3")], "q = P - center_position; s = 0.5 / (floor(windings * 2) / 2); a = mod(atan2(q.y, q.x) / tau, 1); k = clamp(round(q.z / s - a), 0, ceil(height / s)); z = clamp(s * (a + k), 0, height); c = sqrt(1 + pow(s / (tau * major_radius), 2)); length(vec2(length(q.xy) - major_radius, (q.z - z) / c)) - minor_radius"),
+        ("3d_sdf_hexagonal_prism", "SDF Hexagonal Prism", &[("height", "f1=1"), ("radius", "f1=0.5"), ("rounding", "f1=0"), ("center_position", "f3=0,0,0"), ("P", "f3")], "q = P - center_position; h = height * 0.5; r = max(min(rounding, min(radius, h)), 0); a = (radius - r) * 0.8660254; k = vec2(-0.8660254, 0.5); u = abs(q.xy); f = u - k * (2 * min(dot(k, u), 0)); x = f.x - clamp(f.x, a * -0.57735027, a * 0.57735027); y = f.y - a; mc_sdf_extrude(length(vec2(x, y)) * (y < 0 ? -1 : 1), q.z - h, h - r) - r"),
+        ("3d_sdf_infinite_plane", "SDF Infinite Plane", &[("normal", "f3=0,0,1"), ("center_position", "f1=0"), ("P", "f3")], "dot(P, normalize(normal)) - center_position"),
+        ("3d_sdf_plane", "SDF Plane", &[("normal", "f3=0,0,1"), ("size", "f2=1,1"), ("thickness", "f1=0"), ("center_position", "f3=0,0,0"), ("P", "f3")], "n = normalize(normal); s = n.z < 0 ? -1 : 1; a = -1 / (s + n.z); b = n.x * n.y * a; u = vec3(1 + s * n.x * n.x * a, s * b, 0 - s * n.x); v = vec3(b, s + n.y * n.y * a, 0 - n.y); q = P - center_position; mc_sdf_box(vec3(dot(q, u), dot(q, v), dot(q, n)), vec3(size.x * 0.5, size.y * 0.5, 0)) - thickness"),
+        ("3d_sdf_pyramid", "SDF Pyramid", &[("height", "f1=1"), ("base_size", "f2=1,1"), ("base_position", "f3=0,0,0"), ("P", "f3")], "mc_sdf_pyramid(P - base_position, height, base_size.x * 0.5, base_size.y * 0.5)"),
+        ("3d_sdf_pyramid_square", "SDF Pyramid Square", &[("height", "f1=1"), ("base_size", "f1=1"), ("base_position", "f3=0,0,0"), ("P", "f3")], "mc_sdf_pyramid(P - base_position, height, base_size * 0.5, base_size * 0.5)"),
+        ("3d_sdf_rock", "SDF Rock", &[("max_facets", "i1=8"), ("smoothness", "f1=0"), ("randomness", "f1=0"), ("seed", "f1=0"), ("scale", "f1=0.5"), ("center_position", "f3=0,0,0.5"), ("P", "f3")], "sdf_rock(P - center_position, float(max_facets), smoothness, randomness, seed, scale)"),
+        ("3d_sdf_sphere", "SDF Sphere", &[("radius", "f1=0.5"), ("center_position", "f3=0,0,0"), ("P", "f3")], "length(P - center_position) - radius"),
+        ("3d_sdf_torus", "SDF Torus", &[("radius_major", "f1=0.5"), ("radius_minor", "f1=0.2"), ("center_position", "f3=0,0,0"), ("P", "f3")], "q = P - center_position; length(vec2(length(q.xy) - radius_major, q.z)) - radius_minor"),
+    ]),
+    ("Functions/SDF/Operators", &[
+        ("3d_sdf_op_intersection", "SDF Intersection", &[("sdf_1", "sdf"), ("sdf_2", "sdf")], "a = sdf(sdf_1); b = sdf(sdf_2); sdf_mix(a, b, a >= b ? 0 : 1, max(a, b))"),
+        ("3d_sdf_op_intersection_smooth", "SDF Intersection Smooth", &[("sdf_1", "sdf"), ("sdf_2", "sdf"), ("smoothness", "f1=0")], "a = sdf(sdf_1); b = sdf(sdf_2); k = max(smoothness, 0); h = k > 0 ? saturate(0.5 - 0.5 * (b - a) / k) : (a >= b ? 1 : 0); sdf_mix(a, b, 1 - h, lerp(b, a, h) + k * h * (1 - h))"),
+        ("3d_sdf_op_intersection_surface", "SDF Intersection Surface", &[("base_sdf", "sdf"), ("intersecting_sdf", "sdf"), ("thickness", "f1=0.02")], "a = sdf(base_sdf); b = sdf(intersecting_sdf); sdf_mix(a, b, 0, max(abs(a) - thickness, b))"),
+        ("3d_sdf_op_morph", "SDF Morph", &[("base_sdf", "sdf"), ("target_sdf", "sdf"), ("mix_factor", "f1=0")], "a = sdf(base_sdf); b = sdf(target_sdf); sdf_mix(a, b, mix_factor, lerp(a, b, mix_factor))"),
+        ("3d_sdf_op_repeat_mirror", "SDF Repeat Mirror", &[("sdf", "sdf"), ("amount_plus", "i3=2,0,0"), ("amount_minus", "i3=2,0,0"), ("spacing", "f3=2,2,2"), ("origin_position", "f3=0,0,0"), ("P", "f3")], "q = P - origin_position; i = clamp(round(q / spacing), -float(amount_minus), float(amount_plus)); sdf(sdf, (q - spacing * i) * (1 - 2 * mod(i, 2)) + origin_position)"),
+        ("3d_sdf_op_rounding", "SDF Rounding", &[("sdf", "sdf"), ("radius", "f1=0.05")], "sdf(sdf) - radius"),
+        ("3d_sdf_op_shell", "SDF Shell", &[("sdf", "sdf"), ("thickness", "f1=0.02")], "abs(sdf(sdf)) - thickness"),
+        ("3d_sdf_op_subtraction", "SDF Subtraction", &[("sdf_1", "sdf"), ("sdf_2", "sdf")], "a = sdf(sdf_1); b = sdf(sdf_2); sdf_mix(a, b, 0, max(a, -b))"),
+        ("3d_sdf_op_subtraction_smooth", "SDF Subtraction Smooth", &[("sdf_1", "sdf"), ("sdf_2", "sdf"), ("smoothness", "f1=0")], "a = sdf(sdf_1); b = sdf(sdf_2); c = -b; k = max(smoothness, 0); h = k > 0 ? saturate(0.5 - 0.5 * (c - a) / k) : (a >= c ? 1 : 0); sdf_mix(a, b, 0, lerp(c, a, h) + k * h * (1 - h))"),
+        ("3d_sdf_op_symmetry", "SDF Symmetry", &[("sdf", "sdf"), ("mirror_plane_position", "f3=0,0,0"), ("mirror_axis", "i3=1,0,0"), ("flip_axis", "i3=0,0,0"), ("pre_offset", "f3=0,0,0"), ("P", "f3")], "m = saturate(abs(float(mirror_axis))); f = 1 - 2 * saturate(abs(float(flip_axis))); r = 1 - 2 * m; q = (P - mirror_plane_position) * f; o = mirror_plane_position - pre_offset; d1 = sdf(sdf, q + o); d2 = m.x > 0 ? sdf_union(d1, sdf(sdf, q * vec3(r.x, 1, 1) + o)) : d1; d3 = m.y > 0 ? sdf_union(d2, sdf_union(sdf(sdf, q * vec3(1, r.y, 1) + o), sdf(sdf, q * vec3(r.x, r.y, 1) + o))) : d2; m.z > 0 ? sdf_union(d3, sdf_union(sdf_union(sdf(sdf, q * vec3(1, 1, r.z) + o), sdf(sdf, q * vec3(r.x, 1, r.z) + o)), sdf_union(sdf(sdf, q * vec3(1, r.y, r.z) + o), sdf(sdf, q * vec3(r.x, r.y, r.z) + o)))) : d3"),
+        ("3d_sdf_op_union", "SDF Union", &[("sdf_1", "sdf"), ("sdf_2", "sdf")], "a = sdf(sdf_1); b = sdf(sdf_2); sdf_union(a, b)"),
+        ("3d_sdf_op_union_chamfer", "SDF Union Chamfer", &[("sdf_1", "sdf"), ("sdf_2", "sdf"), ("radius", "f1=0")], "a = sdf(sdf_1); b = sdf(sdf_2); sdf_mix(a, b, a <= b ? 0 : 1, radius > 0 ? min(min(a, b), (a + b - radius) * 0.70710678) : min(a, b))"),
+        ("3d_sdf_op_union_smooth", "SDF Union Smooth", &[("sdf_1", "sdf"), ("sdf_2", "sdf"), ("smoothness", "f1=0")], "a = sdf(sdf_1); b = sdf(sdf_2); k = max(smoothness, 0); h = k > 0 ? saturate(0.5 + 0.5 * (b - a) / k) : (a <= b ? 1 : 0); sdf_mix(a, b, 1 - h, lerp(b, a, h) - k * h * (1 - h))"),
+    ]),
+    ("Functions/SDF/Transforms", &[
+        ("3d_sdf_transform_bend", "SDF Bend", &[("sdf", "sdf"), ("angle", "f1=0"), ("start", "f1=0"), ("end", "f1=0"), ("P", "f3")], "t = end > start ? saturate((P.z - start) / (end - start)) : (P.z < start ? 0 : 1); c = vec3(0, 0, start); sdf(sdf, mc_sdf_rotate(P - c, vec3(0, 1, 0), -angle * t) + c)"),
+        ("3d_sdf_transform_elongate", "SDF Elongate", &[("sdf", "sdf"), ("elongation", "f3=0,0,0"), ("center_position", "f3=0,0,0"), ("P", "f3")], "q = P - center_position; sdf(sdf, q - clamp(q, min(elongation, 0), max(elongation, 0)) + center_position)"),
+        ("3d_sdf_transform_flip", "SDF Flip", &[("sdf", "sdf"), ("mirror_axis", "i3=1,0,0"), ("P", "f3")], "sdf(sdf, P * (1 - 2 * saturate(abs(float(mirror_axis)))))"),
+        ("3d_sdf_transform_offset", "SDF Offset", &[("sdf", "sdf"), ("offset", "f3=0,0,0"), ("P", "f3")], "sdf(sdf, P - offset)"),
+        ("3d_sdf_transform_offset_p", "SDF Offset P", &[("offset", "f3=0,0,0"), ("P", "f3")], "P - offset"),
+        ("3d_sdf_transform_rotate", "SDF Rotate", &[("sdf", "sdf"), ("angle", "f1=0"), ("axis", "f3=0,1,0"), ("pivot_position", "f3=0,0,0"), ("P", "f3")], "sdf(sdf, mc_sdf_rotate(P - pivot_position, axis, -angle) + pivot_position)"),
+        ("3d_sdf_transform_rotate_p", "SDF Rotate P", &[("angle", "f1=0"), ("axis", "f3=0,1,0"), ("pivot_position", "f3=0,0,0"), ("P", "f3")], "mc_sdf_rotate(P - pivot_position, axis, -angle) + pivot_position"),
+        ("3d_sdf_transform_scale", "SDF Scale", &[("sdf", "sdf"), ("scale", "f1=1"), ("pivot_position", "f3=0,0,0"), ("P", "f3")], "sdf(sdf, (P - pivot_position) / scale + pivot_position) * scale"),
+        ("3d_sdf_transform_twist", "SDF Twist", &[("sdf", "sdf"), ("angle", "f1=0"), ("start", "f1=0"), ("end", "f1=0"), ("P", "f3")], "t = end > start ? saturate((P.z - start) / (end - start)) : (P.z < start ? 0 : 1); sdf(sdf, mc_sdf_rotate(P, vec3(0, 0, 1), -angle * t))"),
+    ]),
+    ("Functions/SDF/Material", &[
+        ("3d_sdf_set_color", "SDF Set Color", &[("sdf_scene", "sdf"), ("base_color", "f3=1,1,1")], "sdf_set_color(sdf(sdf_scene), base_color)"),
+        ("3d_sdf_set_id", "SDF Set Material ID", &[("sdf_scene", "sdf"), ("id", "i1=0")], "sdf_set_id(sdf(sdf_scene), id)"),
+        ("3d_sdf_set_material", "SDF Set Material", &[("sdf_scene", "sdf"), ("base_color", "f3=1,1,1"), ("metalness", "f1=0"), ("roughness", "f1=0.5")], "sdf_set_roughness(sdf_set_metalness(sdf_set_color(sdf(sdf_scene), base_color), metalness), roughness)"),
+        ("3d_sdf_set_metalness", "SDF Set Metalness", &[("sdf_scene", "sdf"), ("metalness", "f1=0")], "sdf_set_metalness(sdf(sdf_scene), metalness)"),
+        ("3d_sdf_set_roughness", "SDF Set Roughness", &[("sdf_scene", "sdf"), ("roughness", "f1=0.5")], "sdf_set_roughness(sdf(sdf_scene), roughness)"),
+    ]),
     // helpers
     ("", &[
+        // distance from p to the segment a..b
+        ("mc_sdf_seg", "SDF Segment", &[("p", "f3"), ("a", "f3"), ("b", "f3")], "pa = p - a; ba = b - a; length(pa - ba * saturate(dot(pa, ba) / dot(ba, ba)))"),
+        ("mc_sdf_seg2", "SDF Segment 2D", &[("p", "f2"), ("a", "f2"), ("b", "f2")], "pa = p - a; ba = b - a; length(pa - ba * saturate(dot(pa, ba) / dot(ba, ba)))"),
+        // a solid of revolution with straight sides, in its (radius, height) half plane: the nearest of its three
+        // edges, base radius ra at height 0, top radius rb at height top
+        ("mc_sdf_lathe", "SDF Lathe", &[("r", "f1"), ("h", "f1"), ("ra", "f1"), ("rb", "f1"), ("top", "f1")], "p = vec2(r, h); d = min(mc_sdf_seg2(p, vec2(0, 0), vec2(ra, 0)), min(mc_sdf_seg2(p, vec2(0, top), vec2(rb, top)), mc_sdf_seg2(p, vec2(ra, 0), vec2(rb, top)))); (h > 0 && h < top && r < ra + (rb - ra) * h / top) ? 0 - d : d"),
+        // the same solid around the axis a..b
+        ("mc_sdf_cone2", "SDF Lathe 2 Points", &[("p", "f3"), ("a", "f3"), ("b", "f3"), ("ra", "f1"), ("rb", "f1")], "pa = p - a; ba = b - a; l = length(ba); h = dot(pa, ba) / l; mc_sdf_lathe(sqrt(dot(pa, pa) - h * h), h, ra, rb, l)"),
+        // a box of half size b around the origin
+        ("mc_sdf_box", "SDF Box", &[("q", "f3"), ("b", "f3")], "d = abs(q) - b; length(max(d, 0)) + min(max(d.x, max(d.y, d.z)), 0)"),
+        // a 2D shape of distance d extruded by half height h around z = 0
+        ("mc_sdf_extrude", "SDF Extrude", &[("d", "f1"), ("z", "f1"), ("h", "f1")], "w = vec2(d, abs(z) - h); min(max(w.x, w.y), 0) + length(max(w, 0))"),
+        // unsigned distance to a triangle: to its plane above it, else to the nearest edge
+        ("mc_sdf_tri", "SDF Triangle", &[("p", "f3"), ("a", "f3"), ("b", "f3"), ("c", "f3")], "ab = b - a; bc = c - b; ca = a - c; n = cross(ab, c - a); (dot(cross(ab, n), p - a) <= 0 && dot(cross(bc, n), p - b) <= 0 && dot(cross(ca, n), p - c) <= 0) ? abs(dot(n, p - a)) / length(n) : min(mc_sdf_seg(p, a, b), min(mc_sdf_seg(p, b, c), mc_sdf_seg(p, c, a)))"),
+        // a pyramid of base half sizes a, b at z = 0: folded into one quadrant, the base and two faces are nearest
+        ("mc_sdf_pyramid", "SDF Pyramid Solid", &[("q", "f3"), ("h", "f1"), ("a", "f1"), ("b", "f1")], "u = vec3(abs(q.x), abs(q.y), q.z); top = vec3(0, 0, h); c = vec3(a, b, 0); d = min(mc_sdf_box(u, c), min(mc_sdf_tri(u, vec3(a, 0, 0), c, top), mc_sdf_tri(u, c, vec3(0, b, 0), top))); (u.z > 0 && u.x * h + u.z * a < a * h && u.y * h + u.z * b < b * h) ? 0 - d : d"),
+        // v rotated around an axis through the origin, in turns (right-handed)
+        ("mc_sdf_rotate", "SDF Rotate Vector", &[("v", "f3"), ("axis", "f3"), ("turns", "f1")], "k = normalize(axis); a = turns * tau; c = cos(a); v * c + cross(k, v) * sin(a) + k * (dot(k, v) * (1 - c))"),
         // the mixing step of the Hash functions: a seed scattered by an irrational step, then three rounds of
         // fract(x * (x + c) * k) that stretch every small difference past a whole period, so neighbouring seeds land
         // far apart; constants chosen by testing the spread of integer, fractional and grid seeds

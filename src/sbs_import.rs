@@ -1051,8 +1051,11 @@ impl Cx {
                             v.into_iter().map(|x| x.1).collect()
                         })
                         .unwrap_or_default();
+                    // an input's exact identifier, else the same words spelled another way (`Radius base`, `radiusBase`)
+                    let words = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>();
                     for c in &fnode.conns {
-                        if let (Some(pos), Some(from)) = (order.iter().position(|o| *o == c.slot), link(c)) {
+                        let input = order.iter().position(|o| *o == c.slot).or_else(|| order.iter().position(|o| words(o) == words(&c.slot)));
+                        if let (Some(pos), Some(from)) = (input, link(c)) {
                             if let Some(slot) = crate::func::CALL_SLOTS.get(pos) {
                                 if let Some(n) = g.nodes.get_mut(id) {
                                     n.ins.insert((*slot).into(), from);

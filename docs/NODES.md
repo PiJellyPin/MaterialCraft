@@ -321,6 +321,11 @@ Substance Designer's 161 function presets (its `sbs://functions.sbs` library: `F
 | `f_sequence` | a, b | run a, then b; returns b |
 | `f_set` | a | store a in the variable `name`; returns a |
 | `f_get` |  | read the variable `name` (0 until it is set) |
+| `f_sdf_pos` |  | the SDF position (float3): the input `name` when it is connected, else the space the caller is evaluating, else (uv, 0) |
+| `f_sdf_in` | a | evaluate the SDF input `name` where it is connected, at position a (default: the current space), bringing its material |
+| `f_sdf_mix` | a, b, c, d | returns d, with the materials of a and b mixed by c: colour, metalness and roughness blend, the id is the nearer one's |
+| `f_sdf_set` | a, b | returns a, with b as the `name` of its material (color, metalness, roughness or id) |
+| `f_sdf_rock` | a, b, c, d, e, f | distance to a faceted rock at a: facets b, smoothness c, randomness d, seed e, scale f |
 | `f_random` | a, b | random float between a (default 0) and b (default 1); `seed` shifts the sequence |
 | `f_sample_gray` | a | brightness of input image `slot` (default in) at the position a (float2, 0..1) |
 | `f_sample_color` | a | colour (float4) of input image `slot` at the position a |
