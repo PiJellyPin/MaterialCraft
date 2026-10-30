@@ -886,10 +886,11 @@ impl<'a> Writer<'a> {
                 let mut fds = Vec::new();
                 for (k, val) in &vals {
                     let PVal::Const { ty, raw, .. } = val else { continue };
+                    let raw = if n.kind == "sbs:fn:instance" && k == "instance" { self.function_path(raw) } else { raw.clone() };
                     let mut fd = XElem::new("funcData");
                     push(&mut fd, v("name", k));
                     let mut cv = XElem::new("constantValue");
-                    push(&mut cv, const_elem(*ty, raw));
+                    push(&mut cv, const_elem(*ty, &raw));
                     push(&mut fd, cv);
                     fds.push(fd);
                 }
@@ -1105,6 +1106,17 @@ impl<'a> Writer<'a> {
                 f
             }
         }
+    }
+
+    /// The path a function call writes: as it is, except a call to a library function added in the editor
+    /// (`pkg:///Functions/Math/clamp`, no dependency yet), which names the library package as its dependency.
+    fn function_path(&mut self, raw: &str) -> String {
+        let (path, dep) = crate::sbs::split_path(raw);
+        if dep.is_some() || crate::libfuncs::entry(&path).is_none() {
+            return raw.to_string();
+        }
+        let dep = self.dependency("sbs://functions.sbs");
+        format!("pkg:///{}?dependency={dep}", path.trim_start_matches('/'))
     }
 
     /// The path an instance node writes: what the file had while the node still points at the same graph.
@@ -2187,6 +2199,16 @@ pub fn slots(n: &Node, lib: &BTreeMap<String, Graph>) -> Vec<String> {
     match n.kind.as_str() {
         "sbs:output" => vec!["inputNodeOutput".into()],
         "sbs:input" => Vec::new(),
+        // a call to a library function: its inputs (the links of a call to anything else are all it shows)
+        "sbs:fn:instance" => {
+            let mut v: Vec<String> = library_call(n).map(|e| e.inputs.iter().map(|(id, _)| id.to_string()).collect()).unwrap_or_default();
+            for k in n.ins.keys() {
+                if !v.contains(k) {
+                    v.push(k.clone());
+                }
+            }
+            v
+        }
         "sbs:graph" => {
             let Some(sd) = n.strs.get("#graph").and_then(|g| lib.get(g)).and_then(|g| g.sd.as_ref()) else {
                 return n.ins.keys().cloned().collect();
@@ -2257,6 +2279,7 @@ pub fn label(n: &Node, g: &Graph) -> String {
             g.sd.as_ref().and_then(|s| s.input_identifier(&uid)).unwrap_or_else(|| "Input".into())
         }
         "sbs:graph" => n.strs.get("#graph").map(|p| p.rsplit('/').next().unwrap_or(p).to_string()).unwrap_or_else(|| "Graph".into()),
+        "sbs:fn:instance" if library_call(n).is_some() => library_call(n).map(|e| e.label.to_string()).unwrap_or_default(),
         k => match node_def(n) {
             Some(d) => d.label.to_string(),
             None => k.rsplit([':', '/']).next().map(sbs_defs::label_of).unwrap_or_default(),
@@ -2264,11 +2287,25 @@ pub fn label(n: &Node, g: &Graph) -> String {
     }
 }
 
-/// A new node of a native kind. `graph` is a graph of the package for `sbs:graph` (an instance of it).
+/// The library function a function call node (`sbs:fn:instance`) calls, when it is one MaterialCraft has built in.
+pub fn library_call(n: &Node) -> Option<&'static crate::libfuncs::Entry> {
+    match values(n).get("instance") {
+        Some(PVal::Const { raw, .. }) => crate::libfuncs::entry(&crate::sbs::split_path(raw).0),
+        _ => None,
+    }
+}
+
+/// A new node of a native kind. `graph` is a graph of the package for `sbs:graph` (an instance of it), or the
+/// path of a library function for `sbs:fn:instance` (`Functions/Math/clamp`: a call to it; saving names the
+/// library package as its dependency).
 pub fn new_node(kind: &str, graph: Option<&str>, pos: [f32; 2]) -> Node {
     let mut n = Node { kind: kind.to_string(), pos, ..Default::default() };
-    if kind == "sbs:graph" {
-        n.strs.insert("#graph".into(), graph.unwrap_or_default().to_string());
+    match (kind, graph) {
+        ("sbs:graph", _) => {
+            n.strs.insert("#graph".into(), graph.unwrap_or_default().to_string());
+        }
+        ("sbs:fn:instance", Some(path)) => set_value(&mut n, "instance", Some(PVal::Const { ty: PTy::S, raw: format!("pkg:///{path}"), rel: None })),
+        _ => {}
     }
     n
 }

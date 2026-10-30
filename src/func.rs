@@ -238,6 +238,7 @@ pub const FUNC_SPECS: &[Spec] = &[
     f!("f_while", ["a", "b", "c"], [], "run a once, then repeat c until b is true (at most `max` times, -1 no limit); returns the last c (a when c never ran)"),
     f!("f_set", ["a"], [], "store a in the variable `name`; returns a"),
     f!("f_get", [], [], "read the variable `name` (0 until it is set)"),
+    f!("f_defined", [], [], "true when the variable `name` exists here: set before, an input of the function or of the graph"),
     f!("f_random", [], ["a", "b"], "random float between a (default 0) and b (default 1); `seed` shifts the sequence"),
     f!("f_sample_gray", ["a"], [], "brightness of input image `slot` (default in) at the position a (float2, 0..1)"),
     f!("f_sample_color", ["a"], [], "colour (float4) of input image `slot` at the position a"),
@@ -291,6 +292,7 @@ enum Op {
     While,
     Set,
     Get,
+    Defined,
     Random,
     SampleGray,
     SampleColor,
@@ -433,6 +435,7 @@ fn op_of(kind: &str) -> Option<Op> {
         "f_while" => Op::While,
         "f_set" => Op::Set,
         "f_get" => Op::Get,
+        "f_defined" => Op::Defined,
         "f_random" => Op::Random,
         "f_sample_gray" => Op::SampleGray,
         "f_sample_color" => Op::SampleColor,
@@ -1043,6 +1046,7 @@ impl Prog {
                 v
             }
             Op::Get => st.vars.iter().find(|(k, _)| *k == n.name).map(|(_, v)| v.clone()).unwrap_or_else(|| Value::float(0.0)),
+            Op::Defined => Value::Bool(st.vars.iter().any(|(k, _)| *k == n.name) || env.args.contains_key(&n.name) || env.graph_inputs.contains_key(&n.name)),
             Op::Random => {
                 let lo = self.opt_arg(n, 0, env, pos, st)?.map(|v| v.as_f32() as f64).unwrap_or(0.0);
                 let hi = self.opt_arg(n, 1, env, pos, st)?.map(|v| v.as_f32() as f64).unwrap_or(1.0);
@@ -1159,7 +1163,7 @@ impl Prog {
             Op::Out | Op::Pin => t(0, memo)?.ok_or("an input is not connected")?,
             Op::Float | Op::Random | Op::SampleGray => Pin::Float,
             Op::Int | Op::Index | Op::Count | Op::Seed => Pin::Int,
-            Op::Bool => Pin::Bool,
+            Op::Bool | Op::Defined => Pin::Bool,
             Op::Str => Pin::Text,
             Op::Vec(lanes, int) => {
                 for k in 0..4 {
