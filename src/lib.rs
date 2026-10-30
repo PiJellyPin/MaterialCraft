@@ -34,6 +34,7 @@ pub mod nodes8;
 pub mod nodes9;
 pub mod nodes10;
 pub mod nodes10_img;
+pub mod nodes10_ma;
 pub mod nodes10_mat;
 pub mod nodes10_pano;
 pub mod nodes10_spl;
