@@ -60,11 +60,10 @@ Note: Initial MaterialX exports may not fully reproduce advanced node graph beha
 - [ ] Keep graph editing, validation, rendering, and export consistent across the editor, CLI, and MCP.
 - [ ] Add resumable batch jobs and repeatable unattended exports, with progress reports, clear errors, and machine-readable results.
 
-## Analytics
+## Crash Reporting and Local Playbacks
 
-- [ ] Add opt-in analytics for feature usage, performance, and errors to guide application improvements (defaults off).
-- [ ] Report aggregate trends without collecting project contents, asset names, or file paths.
-- [ ] Fully transparent and public dashboards: every collected field and data point will be made public on Grafana dashboards.
+- [ ] Improve the undo/redo system by supporting a timeline scrubbing of user actions stored as a complimentary object file (can be turned off)
+- [ ] Have an automatic crash report screen that can be used to easily populate a GitHub issue request
 
 ## User Interface
 
