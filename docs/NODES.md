@@ -122,8 +122,8 @@ Nodes with several outputs: `path_sample` (position, width, height, side); `shap
 | `bevel` | in | bevel a shape: distance smoothing threshold use_as_normal normal_intensity corner(0 round,1 angular) directx |
 | `distance` | in | distance field of a mask: distance mode |
 | `color_match` | in, reference, src_color | ,target_color recolour: method(0 statistics transfer from reference,1 colour swap) strength source_mode(0 average,1 colour,2 input) src_r src_g src_b target_mode(0 colour,1 input) target_r target_g target_b custom_variation variation_hue variation_chroma variation_luma use_mask mask_hue_range mask_chroma_range mask_luma_range mask_smoothness |
-| `make_it_tile_photo` | in | make a photo tile: width width_v |
-| `make_it_tile_patch` | in | make an image tile with random patches |
+| `make_it_tile_photo` | in | make a photo tile: width width_v sharp sharp_v warp warp_v seed |
+| `make_it_tile_patch` | in | make an image tile with random patches: mode(0 cells,1 stamped) patches softness octave mask_size mask_precision mask_warp size_x size_y disorder size_var rotation rotation_var bg_r bg_g bg_b bg_a color_var lum_var seed |
 | `clamp` | in | clamp values: low high apply_alpha |
 | `highpass` | in | high-pass filter: radius |
 | `swirl` | in | swirl distortion: amount radius |
@@ -153,7 +153,7 @@ Nodes with several outputs: `path_sample` (position, width, height, side); `shap
 | `non_uniform_blur` | in, mask | blur by a mask: intensity |
 | `radial_blur` | in | spin blur around a centre: mode(0 spin,1 zoom) samples angle x y amount radius |
 | `anisotropic_blur` | in | blur stretched in one direction: intensity anisotropy angle |
-| `symmetry` | in | mirror the image around a line: axis(0 x,1 y,2 both,3 diagonal,4 anti-diagonal,5 eight-fold) offset flip transfer(0 copy,1 add,2 sub,3 mul,4 add sub,5 max,6 min) |
+| `symmetry` | in | mirror the image around a line: axis(0 x,1 y,2 both,3 diagonal,4 anti-diagonal,5 eight-fold,6 both diagonals) offset flip transfer(0 copy,1 add,2 sub,3 mul,4 add sub,5 max,6 min) |
 | `skew` | in | shear that keeps tiling: skew_x skew_y (whole numbers) align(0 centre,1 top left,2 bottom right) |
 | `auto_levels` | in | stretch values to the full range: per_channel |
 | `channel_mixer` | in | mix colour channels: rr rg rb gr gg gb br bg bb mono |

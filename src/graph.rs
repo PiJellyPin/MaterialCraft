@@ -127,8 +127,8 @@ pub const SPECS: &[Spec] = &[
     s!("color_match", ["in"], ["reference", "src_color", "target_color"], "recolour: method(0 statistics transfer from reference,1 colour swap) strength source_mode(0 average,1 colour,2 input) src_r src_g src_b target_mode(0 colour,1 input) target_r target_g target_b custom_variation variation_hue variation_chroma variation_luma use_mask mask_hue_range mask_chroma_range mask_luma_range mask_smoothness"),
     s!("curvature_smooth", ["in"], [], "smooth curvature from a normal map"),
     s!("height_blend", ["bg", "fg"], ["mask"], "blend two height maps: opacity contrast output"),
-    s!("make_it_tile_photo", ["in"], [], "make a photo tile: width width_v"),
-    s!("make_it_tile_patch", ["in"], [], "make an image tile with random patches"),
+    s!("make_it_tile_photo", ["in"], [], "make a photo tile: width width_v sharp sharp_v warp warp_v seed"),
+    s!("make_it_tile_patch", ["in"], [], "make an image tile with random patches: mode(0 cells,1 stamped) patches softness octave mask_size mask_precision mask_warp size_x size_y disorder size_var rotation rotation_var bg_r bg_g bg_b bg_a color_var lum_var seed"),
     s!("clamp", ["in"], [], "clamp values: low high apply_alpha"),
     s!("highpass", ["in"], [], "high-pass filter: radius"),
     s!("swirl", ["in"], [], "swirl distortion: amount radius"),
@@ -167,7 +167,7 @@ pub const SPECS: &[Spec] = &[
     s!("non_uniform_blur", ["in", "mask"], [], "blur by a mask: intensity"),
     s!("radial_blur", ["in"], [], "spin blur around a centre: mode(0 spin,1 zoom) samples angle x y amount radius"),
     s!("anisotropic_blur", ["in"], [], "blur stretched in one direction: intensity anisotropy angle"),
-    s!("symmetry", ["in"], [], "mirror the image around a line: axis(0 x,1 y,2 both,3 diagonal,4 anti-diagonal,5 eight-fold) offset flip transfer(0 copy,1 add,2 sub,3 mul,4 add sub,5 max,6 min)"),
+    s!("symmetry", ["in"], [], "mirror the image around a line: axis(0 x,1 y,2 both,3 diagonal,4 anti-diagonal,5 eight-fold,6 both diagonals) offset flip transfer(0 copy,1 add,2 sub,3 mul,4 add sub,5 max,6 min)"),
     s!("skew", ["in"], [], "shear that keeps tiling: skew_x skew_y (whole numbers) align(0 centre,1 top left,2 bottom right)"),
     s!("auto_levels", ["in"], [], "stretch values to the full range: per_channel"),
     s!("channel_mixer", ["in"], [], "mix colour channels: rr rg rb gr gg gb br bg bb mono"),
@@ -3565,8 +3565,18 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
             let (h, m) = ops::height_blend(tex("bg")?, tex("fg")?, ins.get("mask").map(|x| x.as_ref()), f("opacity", 1.0), f("contrast", 0.5));
             if f("output", 0.0) > 0.5 { m } else { h }
         }
-        "make_it_tile_photo" => ops::make_tile_photo_ex(tex("in")?, f("width", 0.6), f("width_v", f("width", 0.6))),
-        "make_it_tile_patch" => ops::make_tile_patch(tex("in")?, f("patches", 6.0), f("softness", 0.5), seed),
+        "make_it_tile_photo" => {
+            let w = f("width", 0.6);
+            let tp = ops::TilePhoto { width: [w, f("width_v", w)], sharp: [f("sharp", 0.0), f("sharp_v", 0.0)], warp: [f("warp", 0.0), f("warp_v", 0.0)], seed };
+            ops::make_tile_photo_full(tex("in")?, tp)
+        }
+        "make_it_tile_patch" => {
+            if f("mode", 0.0) > 0.5 {
+                ops::make_tile_patch_stamped(tex("in")?, &tile_patch_params(&f, seed))
+            } else {
+                ops::make_tile_patch(tex("in")?, f("patches", 6.0), f("softness", 0.5), seed)
+            }
+        }
         "clamp" => {
             let (lo, hi) = (f("low", 0.0), f("high", 1.0));
             let ca = f("apply_alpha", 0.0) > 0.5;
@@ -4113,6 +4123,25 @@ pub(crate) fn splatter_params(n: &Node, seed: u32) -> scatter::SplatterP {
     p.opacity = f("opacity", 1.0);
     p.seed = seed;
     p
+}
+
+/// Parameters of a Make It Tile Patch node drawn by stamping.
+pub(crate) fn tile_patch_params(f: &dyn Fn(&str, f32) -> f32, seed: u32) -> ops::TilePatch {
+    ops::TilePatch {
+        octave: f("octave", 3.0).round() as i32,
+        mask_size: f("mask_size", 1.0),
+        mask_precision: f("mask_precision", 0.5),
+        mask_warp: f("mask_warp", 0.0),
+        size: [f("size_x", 2.0), f("size_y", 2.0)],
+        disorder: f("disorder", 0.0),
+        size_var: f("size_var", 0.0),
+        rotation: f("rotation", 0.0),
+        rotation_var: f("rotation_var", 0.0),
+        background: [f("bg_r", 0.0), f("bg_g", 0.0), f("bg_b", 0.0), f("bg_a", 0.0)],
+        color_var: f("color_var", 0.0),
+        lum_var: f("lum_var", 0.0),
+        seed,
+    }
 }
 
 /// Parameters of a Splatter Circular node.
