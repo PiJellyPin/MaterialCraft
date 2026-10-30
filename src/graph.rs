@@ -159,7 +159,7 @@ pub const SPECS: &[Spec] = &[
     s!("blend", ["fg", "bg"], ["mask"], "blend two images: mode(0 copy,1 add,2 sub,3 mul,4 screen,5 overlay,6 max,7 min,8 diff,9 softlight,20 add sub,21 switch) opacity alpha_mode(0 source alpha,1 ignore alpha,2 straight,3 premultiplied) crop_x0 crop_y0 crop_x1 crop_y1"),
     s!("normal", ["in"], [], "height->normal (OpenGL +Y): strength directx alpha_from_input"),
     s!("normal_blend", ["a", "b"], ["mask"], "blend normal maps (a = background, b = foreground): opacity"),
-    s!("ao", ["in"], [], "ambient occlusion: mode(0 blur,1 horizon) radius intensity hbao_radius hbao_intensity quality(0 4,1 8,2 16 samples) use_world_units height_depth surface_size height_depth_cm"),
+    s!("ao", ["in"], [], "ambient occlusion: mode(0 blur,1 horizon) radius intensity light_intensity light_angle band_fine band_mid band_large(blur only) hbao_radius hbao_intensity quality(0 4,1 8,2 16 samples) use_world_units height_depth surface_size height_depth_cm levels_low levels_mid levels_high out_low out_high"),
     s!("quantize_color", ["in"], [], "reduce to few colours (k-means): color_amount contour_smoothing dithering dithering_pattern(0 noise,1 bayer) ignore_alpha distance_color_space(0 lab,1 rgb)"),
     s!("curvature", ["in"], [], "curvature of a normal map: mode(0 normal map,1 height map) intensity directx radius"),
     s!("edge_detect", ["in"], [], "edge lines: mode(0 lines,1 sobel) edge_width edge_roundness invert tolerance intensity"),
@@ -3843,7 +3843,8 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
         "channel" => ops::channel(tex("in")?, f("ch", 0.0).max(0.0) as usize),
         "merge" => {
             let g = |slot: &str, ch: usize| ins.get(slot).map(|t| ops::channel(t, ch));
-            let (r, gg, b, a) = (g("r", 0), g("g", 1), g("b", 2), g("a", 3));
+            // the alpha is the grey value of its input (its luminance), not that input's own alpha (1 for a grey map)
+            let (r, gg, b, a) = (g("r", 0), g("g", 1), g("b", 2), ins.get("a").map(|t| ops::to_gray(t)));
             Tex::from_fn(s, hs, |u, v| {
                 let q = |t: &Option<Tex>, d: f32| t.as_ref().map(|t| t.sample(u, v)[0]).unwrap_or(d);
                 [q(&r, 0.0), q(&gg, 0.0), q(&b, 0.0), q(&a, 1.0)]
@@ -3902,11 +3903,21 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
             }
         }
         "normal_blend" => ops::normal_blend_ex(tex("a")?, tex("b")?, f("opacity", 1.0), ins.get("mask").map(|m| m.as_ref())),
-        "ao" if f("mode", 0.0) < 0.5 => ops::ambient_occlusion(tex("in")?, f("radius", 6.0) * rs, f("intensity", 2.0)),
         "ao" => {
-            let scale = if f("use_world_units", 0.0) > 0.5 { f("height_depth_cm", 30.0) / f("surface_size", 300.0).max(1.0) } else { f("height_depth", 0.1) };
-            let dirs = [4u32, 8, 16][(f("quality", 1.0).round() as usize).min(2)];
-            ops::hbao(tex("in")?, f("hbao_radius", 1.0).clamp(0.0, 1.0) * 0.25, scale, dirs, f("hbao_intensity", 1.0))
+            let ao = if f("mode", 0.0) < 0.5 {
+                let r = f("radius", 6.0) * rs;
+                let bands = [f("band_fine", 0.0), f("band_mid", 0.0), f("band_large", 0.0)].map(|e| e.clamp(-1.0, 1.0));
+                let shift = ops::ao_light_shift(f("light_intensity", 0.0), f("light_angle", 0.0), r);
+                ops::ambient_occlusion_ex(tex("in")?, r, f("intensity", 2.0), bands, shift)
+            } else {
+                let scale = if f("use_world_units", 0.0) > 0.5 { f("height_depth_cm", 30.0) / f("surface_size", 300.0).max(1.0) } else { f("height_depth", 0.1) };
+                let dirs = [4u32, 8, 16][(f("quality", 1.0).round() as usize).min(2)];
+                ops::hbao(tex("in")?, f("hbao_radius", 1.0).clamp(0.0, 1.0) * 0.25, scale, dirs, f("hbao_intensity", 1.0))
+            };
+            match ops::ao_levels(f("levels_low", 0.0), f("levels_mid", 0.5), f("levels_high", 1.0), f("out_low", 0.0), f("out_high", 1.0)) {
+                Some((lo, hi, gm, ol, oh)) => ops::levels(&ao, lo, hi, gm, ol, oh),
+                None => ao,
+            }
         }
         "quantize_color" => {
             let (res, ids, pal) = ops::quantize_color_full(

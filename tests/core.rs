@@ -216,7 +216,7 @@ fn displacement_renders_every_shape_and_camera_without_panics() {
     use materialcraft::tex::Tex;
     let hm = Tex::gray_fn(32, 32, |u, v| (u * 6.0).sin() * 0.5 + 0.5 + v * 0.0);
     let (b, n, r, m, a) = (Tex::solid(4, 4, [0.8, 0.2, 0.2, 1.0]), Tex::solid(4, 4, [0.5, 0.5, 1.0, 1.0]), Tex::solid(4, 4, [0.4; 4]), Tex::solid(4, 4, [0.0, 0.0, 0.0, 1.0]), Tex::solid(4, 4, [1.0; 4]));
-    let maps = Maps { base: &b, normal: &n, rough: &r, metal: &m, ao: &a, emissive: None, height: Some(&hm), env: None };
+    let maps = Maps { base: &b, normal: &n, rough: &r, metal: &m, ao: &a, emissive: None, height: Some(&hm), opacity: None, env: None };
     for shape in 0..3 {
         let plain = render(&maps, &View { shape, relief: RELIEF_NONE, ..View::default() }, 64, 64);
         let center = plain.px[32 * 64 + 32];
@@ -1139,6 +1139,47 @@ fn hbao_and_quantize_color() {
 }
 
 #[test]
+fn blur_ao_spread_light_bands_and_levels() {
+    use materialcraft::tex::Tex;
+    // a round pit in a flat top: the blur AO darkens the pit floor along its walls
+    let ao = |extra: &str| {
+        let g = Graph::parse(&format!("size 128\nnode 1 circle radius=0.3 softness=0.05\nnode 2 invert in=@1\nnode 3 ao in=@2 mode=0 {extra}\noutput o 3\n")).unwrap();
+        g.evaluate(None).unwrap().remove("o").unwrap()
+    };
+    let mean = |t: &Tex| t.px.iter().map(|p| p[0]).sum::<f32>() / t.px.len() as f32;
+    let occluded = |t: &Tex| t.px.iter().filter(|p| p[0] < 0.99).count();
+    let range = |t: &Tex| t.px.iter().fold((1.0f32, 0.0f32), |a, p| (a.0.min(p[0]), a.1.max(p[0])));
+    let at = |t: &Tex, u: f32, v: f32| t.px[(v * t.h as f32) as usize * t.w + (u * t.w as f32) as usize][0];
+    let plain = ao("");
+    // neutral extras leave the result exactly as before
+    assert_eq!(ao("light_intensity=0 band_fine=0 band_mid=0 band_large=0 levels_low=0 levels_mid=0.5 levels_high=1 out_low=0 out_high=1").px, plain.px);
+    // spread: a wider blur reaches further from the walls
+    assert!(occluded(&ao("radius=12")) > occluded(&plain) && occluded(&plain) > occluded(&ao("radius=3")), "more spread, wider occlusion");
+    assert!(mean(&ao("intensity=6")) < mean(&plain), "deeper AO is darker");
+    // a light from the right (angle 0): the floor under the right wall is in its shadow, the left one is lit
+    let (l, r) = (0.24, 0.76);
+    assert!((at(&plain, l, 0.5) - at(&plain, r, 0.5)).abs() < 1e-3, "no light: symmetric");
+    let lit = ao("light_intensity=0.5 light_angle=0");
+    assert!(at(&lit, r, 0.5) < at(&lit, l, 0.5) - 0.02, "light from the right: right {} left {}", at(&lit, r, 0.5), at(&lit, l, 0.5));
+    let lit = ao("light_intensity=0.5 light_angle=0.5");
+    assert!(at(&lit, l, 0.5) < at(&lit, r, 0.5) - 0.02, "light from the left darkens the left wall");
+    // equalizer bands: +1 doubles a band's occlusion, -1 drops it
+    let wide = mean(&ao("radius=12"));
+    for b in ["band_fine", "band_mid", "band_large"] {
+        let (up, down) = (mean(&ao(&format!("radius=12 {b}=1"))), mean(&ao(&format!("radius=12 {b}=-1"))));
+        assert!(up < wide && wide < down, "{b}: {up} {wide} {down}");
+    }
+    assert!(occluded(&ao("radius=12 band_mid=-1 band_large=-1")) < occluded(&ao("radius=12")), "the fine band alone stays close to the walls");
+    // levels: the output range, and an input range / midpoint that change the contrast
+    let (a, b) = range(&ao("intensity=6 out_low=0.3 out_high=0.8"));
+    assert!(a >= 0.3 - 1e-4 && b <= 0.8 + 1e-4 && b > 0.79, "output range {a}..{b}");
+    let base = ao("intensity=6");
+    assert!(mean(&ao("intensity=6 levels_mid=0.7")) < mean(&base) && mean(&base) < mean(&ao("intensity=6 levels_mid=0.3")), "midpoint up darkens");
+    assert!(mean(&ao("intensity=6 levels_low=0.4")) < mean(&base), "a raised low point darkens the shadows");
+    assert!(mean(&ao("intensity=6 levels_high=0.6")) > mean(&base), "a lowered high point lightens the AO");
+}
+
+#[test]
 fn color_and_material_outputs() {
     let run = |body: &str| Graph::parse(&format!("size 64\n{body}")).unwrap().evaluate(None).unwrap();
     let mean = |t: &materialcraft::tex::Tex, c: usize| t.px.iter().map(|p| p[c]).sum::<f32>() / t.px.len() as f32;
@@ -1468,3 +1509,13 @@ fn colorspace_conversion_roundtrips_and_keeps_alpha() {
     assert!(colorspace::is_color_output("basecolor") && !colorspace::is_color_output("normal"));
 }
 
+
+#[test]
+fn rgba_merge_takes_the_alpha_from_a_grey_map() {
+    // a grey map's own alpha is 1: the alpha slot reads its grey value
+    let g = Graph::parse("size 32\nnode 1 fbm scale=4 seed=5\nnode 2 merge r=@1 g=@1 b=@1 a=@1\noutput basecolor 2\n").unwrap();
+    let out = g.evaluate(None).unwrap();
+    let t = &out["basecolor"];
+    assert!(t.px.iter().all(|p| (p[3] - p[0]).abs() < 1e-5), "alpha follows the grey map");
+    assert!(t.px.iter().any(|p| p[3] < 0.9));
+}

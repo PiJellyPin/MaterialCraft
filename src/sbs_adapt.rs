@@ -2115,6 +2115,31 @@ fn floodfill_to_index(ad: &mut Ad) {
     ad.out("shape_index", "output");
 }
 
+/// The older blur-based Ambient Occlusion: how far the AO spreads, an AO "depth", a fake light that darkens the
+/// sides facing away from it, and output levels.
+fn ambient_occlusion(ad: &mut Ad) {
+    ad.set("mode", 0.0);
+    // spread 0.5 (the default) is our default blur radius of 6 pixels
+    ad.lin("AO_Spread", 0, "radius", 12.0, 0.0);
+    // the depth interpretation: 0 is our default depth, 1 five times as deep
+    ad.lin("Light_Distance", 0, "intensity", 8.0, 2.0);
+    ad.same("Light_Intensity", "light_intensity");
+    ad.same("Light_Angle", "light_angle");
+    ad.vec("AO_Levels", &["out_low", "out_high"]);
+    ad.slot("Source", "in");
+}
+
+/// The second blur-based Ambient Occlusion: spreading, a three-band equalizer (fine, medium, large) and levels
+/// (low, midpoint, high).
+fn ambient_occlusion_2(ad: &mut Ad) {
+    ad.set("mode", 0.0);
+    // spreading 0.15 (the default) is our default blur radius of 6 pixels
+    ad.lin("spreading", 0, "radius", 40.0, 0.0);
+    ad.vec("equalizer", &["band_fine", "band_mid", "band_large"]);
+    ad.vec("levels", &["levels_low", "levels_mid", "levels_high"]);
+    ad.slot("Source", "in");
+}
+
 fn hbao(ad: &mut Ad) {
     ad.set("mode", 1.0);
     ad.same("radius", "hbao_radius");
@@ -2300,6 +2325,8 @@ pub(crate) const ADAPTERS: &[Adapter] = &[
     Adapter { ids: &["flood_fill_2/flood_fill_to_grayscale"], kind: "flood_fill_random", f: flood_to_gray },
     Adapter { ids: &["floodfill_to_index/floodfill_to_index"], kind: "flood_fill_to_index", f: floodfill_to_index },
     Adapter { ids: &["flood_fill_2/flood_fill_to_gradient", "flood_fill/flood_fill_to_gradient", "flood_fill_2/flood_fill_to_gradient_2"], kind: "flood_fill_gradient", f: flood_to_gradient },
+    Adapter { ids: &["ambient_occlusion/ambient_occlusion"], kind: "ao", f: ambient_occlusion },
+    Adapter { ids: &["ambient_occlusion_2/ambient_occlusion_2"], kind: "ao", f: ambient_occlusion_2 },
     Adapter { ids: &["hbao/hbao", "hbao_2/hbao"], kind: "ao", f: hbao },
     Adapter { ids: &["height_to_normal_world_units/height_to_normal_world_units", "height_to_normal_world_units/height_to_normal_world_units_2"], kind: "height_to_normal_world", f: height_to_normal_world_units },
     Adapter { ids: &["histogram_scan_non_uniform/histogram_scan_non_uniform"], kind: "histogram_scan", f: histogram_scan_non_uniform },
@@ -2539,6 +2566,29 @@ mod tests {
                 assert!(crate::sbs_lib::find(p, g).is_some(), "adapter for unknown library graph {id}");
             }
         }
+    }
+
+    /// Our parameters for library graph `package/id` with `set` changed from the library defaults.
+    fn adapted(package: &str, id: &'static str, set: &[(&str, Vec<f32>)]) -> std::collections::BTreeMap<String, f32> {
+        let a = adapter(package, id).unwrap();
+        let params: Vec<Param> = set.iter().map(|(n, v)| Param { name: n.to_string(), relative_to: None, value: PValue::Const(Val::F(v.clone())) }).collect();
+        let mut ad = Ad::new(a.kind, id, crate::sbs_lib::find(Some(package), id), &params);
+        (a.f)(&mut ad);
+        ad.finish().0.node.nums
+    }
+
+    #[test]
+    fn library_ambient_occlusion_parameters() {
+        // the defaults land on our blur AO's own defaults, so an untouched node looks as before
+        let n = adapted("ambient_occlusion", "ambient_occlusion", &[]);
+        assert_eq!((n["mode"], n["radius"], n["intensity"], n["out_low"], n["out_high"]), (0.0, 6.0, 2.0, 0.0, 1.0));
+        let n = adapted("ambient_occlusion", "ambient_occlusion", &[("AO_Spread", vec![1.0]), ("Light_Distance", vec![0.5]), ("Light_Intensity", vec![0.4]), ("Light_Angle", vec![0.25]), ("AO_Levels", vec![0.2, 0.9])]);
+        assert_eq!((n["radius"], n["intensity"], n["light_intensity"], n["light_angle"], n["out_low"], n["out_high"]), (12.0, 6.0, 0.4, 0.25, 0.2, 0.9));
+        let n = adapted("ambient_occlusion_2", "ambient_occlusion_2", &[]);
+        assert!((n["radius"] - 6.0).abs() < 1e-4 && n["mode"] == 0.0);
+        assert_eq!((n["band_fine"], n["band_mid"], n["band_large"], n["levels_low"], n["levels_mid"], n["levels_high"]), (0.0, 0.0, 0.0, 0.0, 0.5, 1.0));
+        let n = adapted("ambient_occlusion_2", "ambient_occlusion_2", &[("spreading", vec![0.5]), ("equalizer", vec![-1.0, 0.5, 1.0]), ("levels", vec![0.1, 0.3, 0.8])]);
+        assert_eq!((n["radius"], n["band_fine"], n["band_mid"], n["band_large"], n["levels_low"], n["levels_mid"], n["levels_high"]), (20.0, -1.0, 0.5, 1.0, 0.1, 0.3, 0.8));
     }
 }
 

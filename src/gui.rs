@@ -12,6 +12,7 @@ use materialcraft::tex::{self, Tex};
 use materialcraft::export::{self, Format};
 use materialcraft::gpu3d::{self, DevInputs, MapInputs};
 use materialcraft::{ops, png};
+use materialcraft::user_templates::{self, UserTemplate};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
@@ -152,18 +153,43 @@ fn qimg(t: &Tex) -> ColorImage {
     ColorImage::from_rgba_unmultiplied([t.w, t.h], &bytes)
 }
 
+/// The 2D view's picture: as made (with its alpha) and, when some pixel is not fully opaque, the same colours with the
+/// alpha ignored (the view's Alpha toggle shows one or the other; the colours under a zero alpha are lost once egui
+/// premultiplies them, so the opaque one is made from the bytes too).
+struct Pic2d {
+    img: ColorImage,
+    opaque: Option<ColorImage>,
+}
+
+fn pic2d(w: usize, h: usize, bytes: &[u8]) -> Pic2d {
+    let img = ColorImage::from_rgba_unmultiplied([w, h], bytes);
+    let opaque = if bytes.chunks_exact(4).any(|p| p[3] < 255) {
+        let solid: Vec<u8> = bytes.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2], 255]).collect();
+        Some(ColorImage::from_rgba_unmultiplied([w, h], &solid))
+    } else {
+        None
+    };
+    Pic2d { img, opaque }
+}
+
+fn pic2d_of(t: &Tex) -> Pic2d {
+    let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    let bytes: Vec<u8> = t.px.iter().flat_map(|p| [q(p[0]), q(p[1]), q(p[2]), q(p[3])]).collect();
+    pic2d(t.w, t.h, &bytes)
+}
+
 /// The 2D view's picture and value range from a node result: made on the device when the picture is there (4 bytes per
 /// pixel come back, nothing is converted on the host), otherwise from the pixels.
-fn view_of(p: &Pending) -> Result<(ColorImage, Option<(f32, f32)>), String> {
+fn view_of(p: &Pending) -> Result<(Pic2d, Option<(f32, f32)>), String> {
     let (w, h) = p.dims();
     if let Some((bytes, range)) = p.view() {
         if bytes.len() == w * h * 4 {
-            return Ok((ColorImage::from_rgba_unmultiplied([w, h], &bytes), Some(range)));
+            return Ok((pic2d(w, h, &bytes), Some(range)));
         }
     }
     let t = p.tex()?;
     let range = t.px.iter().fold((f32::MAX, f32::MIN), |m, p| (m.0.min(p[0]).min(p[1]).min(p[2]), m.1.max(p[0]).max(p[1]).max(p[2])));
-    Ok((qimg(&t), Some(range)))
+    Ok((pic2d_of(&t), Some(range)))
 }
 
 // ---------------------------------------------------------------- types
@@ -225,6 +251,10 @@ enum Act {
     FrameAll,
     Search(Option<Pos2>),
     NewOutput(String, u32),
+    /// Swap two connections: the two selected links, or the first two inputs of the selected node (X)
+    SwapLinks,
+    /// Show this node's outputs in the 3D view instead of the graph outputs (again: back to the graph outputs)
+    View3dNode(u32),
     NewGraph,
     Home,
     Drop(String, Pos2),
@@ -242,6 +272,10 @@ enum Act {
     ClosePkg(usize),
     /// Start a new package from one of the New dialog's templates (index into `TEMPLATES`).
     NewFromTemplate(usize),
+    /// Start a new package from one of the user's own templates (its file).
+    NewFromUserTemplate(PathBuf),
+    /// Save a graph of an open package (index, graph name or None for its main graph) as a template of the New dialog.
+    SaveAsTemplate(usize, Option<String>),
     /// Export the maps of a graph of an open package (package index, graph name or None for its main graph).
     ExportMaps(usize, Option<String>),
     /// Save one graph of an open package as a package of its own (with the graphs and functions it needs).
@@ -276,7 +310,7 @@ struct EvalResult {
     outputs: Vec<(String, u32)>,
     sizes: HashMap<u32, usize>,
     /// the 2D view image and the GPU textures are converted on the worker thread so the editor never stalls on them
-    img2d: Option<ColorImage>,
+    img2d: Option<Pic2d>,
     img_for: Option<u32>,
     gpu: Option<gpu3d::GpuMaps>,
     /// the normal map turned to the OpenGL convention the viewers light (made on the worker thread too)
@@ -327,7 +361,7 @@ enum Pass {
 /// The 2D view image of the selected node, sent as soon as that node is done (before the rest of the graph).
 struct Partial {
     gen: u64,
-    img2d: ColorImage,
+    img2d: Pic2d,
     img_for: u32,
 }
 
@@ -371,6 +405,8 @@ struct App {
     redo: Vec<Graph>,
     edit_open: bool,
     sel: BTreeSet<u32>,
+    /// selected links, each named by the node it feeds and that node's input slot
+    sel_links: BTreeSet<(u32, String)>,
     active: Option<u32>,
     sel_comment: Option<usize>,
     clip: Vec<(u32, Node)>,
@@ -420,8 +456,14 @@ struct App {
     thumb_px: HashMap<u32, Vec<u8>>,
     node_err: HashMap<u32, String>,
     tex2d: Option<egui::TextureHandle>,
+    /// the 2D view's picture without its alpha (only when the picture has some)
+    tex2d_opaque: Option<egui::TextureHandle>,
+    /// the 2D view shows the alpha over a checkerboard (off: the colours fully opaque)
+    alpha2d: bool,
     tex2d_size: (usize, usize),
     maps: BTreeMap<String, std::sync::Arc<Tex>>,
+    /// a node whose outputs the 3D view shows instead of the graph outputs (a material node such as PBR Base Material)
+    view3d_node: Option<u32>,
     /// outputs still on the device (see `ensure_maps`), and whether the normal map needs its green channel flipped
     maps_pending: Vec<(String, Pending)>,
     maps_pending_flip: bool,
@@ -444,6 +486,8 @@ struct App {
     confirm_close: Option<usize>,
     /// the rename box of the Explorer: (package index, graph, new name being typed)
     rename_graph: Option<(usize, String, String)>,
+    /// the "Save as template" box: (package index, graph or None for its main graph, template name being typed)
+    save_tmpl: Option<(usize, Option<String>, String)>,
     dirty: bool,
     /// the selected node changed and nothing else: only the 2D view needs another node's cached picture
     view_pending: bool,
@@ -540,6 +584,7 @@ impl App {
             redo: Vec::new(),
             edit_open: false,
             sel: BTreeSet::new(),
+            sel_links: BTreeSet::new(),
             active,
             sel_comment: None,
             clip: Vec::new(),
@@ -574,8 +619,11 @@ impl App {
             thumb_px: HashMap::new(),
             node_err: HashMap::new(),
             tex2d: None,
+            tex2d_opaque: None,
+            alpha2d: true,
             tex2d_size: (0, 0),
             maps: BTreeMap::new(),
+            view3d_node: None,
             maps_pending: Vec::new(),
             maps_pending_flip: false,
             view3d: View { tess: 512, ..View::default() },
@@ -593,6 +641,7 @@ impl App {
             unsaved_name: "Unsaved Package".into(),
             confirm_close: None,
             rename_graph: None,
+            save_tmpl: None,
             dirty: true,
             view_pending: false,
             view_only_next: false,
@@ -616,7 +665,7 @@ impl App {
             import_view: None,
             ctl: None,
             screen: if skip_home { Screen::Editor } else { Screen::Home },
-            new_dlg: NewDlg { open: false, sel: 1, name: "Graph".into(), size: 2048, height: 0, depth16: false, dest: None },
+            new_dlg: NewDlg { open: false, sel: 1, user: Vec::new(), name: "Graph".into(), size: 2048, height: 0, depth16: false, dest: None },
             recent,
             home_filter: String::new(),
             home_page: 0,
@@ -1054,7 +1103,84 @@ impl App {
         self.dirty = true;
     }
 
+    /// Take the selected links out of the graph (no undo step of its own).
+    fn remove_selected_links(&mut self) {
+        for (dst, slot) in std::mem::take(&mut self.sel_links) {
+            if let Some(n) = self.g.nodes.get_mut(&dst) {
+                n.ins.remove(&slot);
+                n.in_out.remove(&slot);
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// Swap what feeds two inputs: the two selected links; one selected link and the next input of its node; or the
+    /// first two inputs of the selected node (a Blend's foreground and background). A swap that would join pins of
+    /// different types is refused.
+    fn swap_links(&mut self) {
+        let next_slot = |app: &App, id: u32, not: Option<&str>| -> Option<String> {
+            let n = app.g.nodes.get(&id)?;
+            node_slots(n, &app.g.subgraphs).into_iter().map(|s| s.0).find(|s| Some(*s) != not).map(str::to_string)
+        };
+        let links: Vec<(u32, String)> = self.sel_links.iter().cloned().collect();
+        let pair = match links.as_slice() {
+            [a, b] => Some((a.clone(), b.clone())),
+            [a] => next_slot(self, a.0, Some(a.1.as_str())).map(|s| (a.clone(), (a.0, s))),
+            [] if self.sel.len() == 1 => {
+                let id = *self.sel.iter().next().unwrap();
+                let first = next_slot(self, id, None);
+                let second = first.as_deref().and_then(|f| next_slot(self, id, Some(f)));
+                first.zip(second).map(|(f, s)| ((id, f), (id, s)))
+            }
+            _ => None,
+        };
+        let Some((a, b)) = pair else {
+            return self.status("Swap (X): select two links, one link, or a node with two inputs.", false);
+        };
+        let feed = |g: &Graph, (dst, slot): &(u32, String)| g.nodes.get(dst).and_then(|n| n.ins.get(slot).map(|s| (*s, n.in_out.get(slot).cloned())));
+        let (fa, fb) = (feed(&self.g, &a), feed(&self.g, &b));
+        if fa.is_none() && fb.is_none() {
+            return self.status("Swap (X): neither input is connected.", false);
+        }
+        let set = |g: &mut Graph, (dst, slot): &(u32, String), f: Option<(u32, Option<String>)>| {
+            if let Some(n) = g.nodes.get_mut(dst) {
+                n.ins.remove(slot);
+                n.in_out.remove(slot);
+                if let Some((src, out)) = f {
+                    n.ins.insert(slot.clone(), src);
+                    if let Some(o) = out {
+                        n.in_out.insert(slot.clone(), o);
+                    }
+                }
+            }
+        };
+        // a source may not feed a node it depends on (a link between two nodes swapped into a loop)
+        let cycle = [(&a, &fb), (&b, &fa)].iter().any(|(dst, f)| f.as_ref().map(|(src, _)| *src == dst.0 || self.depends_on(*src, dst.0)).unwrap_or(false));
+        if cycle {
+            return self.status("Swap rejected: it would create a cycle.", false);
+        }
+        let issues = |g: &Graph| materialcraft::graph::connection_issues(g).into_iter().map(|(n, s, _)| (n, s)).collect::<BTreeSet<_>>();
+        let before = issues(&self.g);
+        self.snap();
+        set(&mut self.g, &a, fb.clone());
+        set(&mut self.g, &b, fa.clone());
+        if let Some(bad) = issues(&self.g).difference(&before).next() {
+            let (_, slot) = bad.clone();
+            self.undo.pop();
+            set(&mut self.g, &a, fa);
+            set(&mut self.g, &b, fb);
+            return self.status(format!("Swap rejected: input '{slot}' cannot take that connection's type."), false);
+        }
+        // the selection follows the links to their new inputs
+        self.sel_links = [a, b].into_iter().filter(|(dst, slot)| self.g.nodes.get(dst).map(|n| n.ins.contains_key(slot)).unwrap_or(false)).filter(|_| !links.is_empty()).collect();
+        self.dirty = true;
+    }
+
     fn delete_selected(&mut self) {
+        if self.sel.is_empty() && !self.sel_links.is_empty() {
+            self.snap();
+            return self.remove_selected_links();
+        }
         if self.sel.is_empty() {
             if let Some(ci) = self.sel_comment.take() {
                 if ci < self.g.comments.len() {
@@ -1065,6 +1191,7 @@ impl App {
             return;
         }
         self.snap();
+        self.remove_selected_links();
         let sel = std::mem::take(&mut self.sel);
         // graph inputs and outputs go with the nodes that read and write them
         materialcraft::sbs_native::remove_nodes(&mut self.g, &sel);
@@ -1270,6 +1397,7 @@ impl App {
     /// The shown graph changed (switch, open, enter or leave a subgraph): drop the previews of the old one right away
     /// instead of leaving them on screen until the new evaluation finishes.
     fn clear_views(&mut self) {
+        self.view3d_node = None;
         self.maps.clear();
         self.maps_pending.clear();
         self.tex2d = None;
@@ -1674,9 +1802,16 @@ impl App {
         let full = pass == Pass::Thumbs;
         // every pass feeds the 3D view (a drag too, at the small size it runs at), so the viewport follows the edit
         let maps = true;
-        let g = match self.g.preview_host() {
+        let host = self.g.preview_host();
+        let own_graph = host.is_none();
+        let mut g = match host {
             Some((h, _)) => h,
             None => self.g.clone(),
+        };
+        // what the 3D view reads: the graph outputs, or the outputs of the node it was set to show
+        let outputs: Vec<(String, u32)> = match self.view3d_node.filter(|n| own_graph && g.nodes.contains_key(n)) {
+            Some(nid) => view3d_taps(&mut g, nid),
+            None => g.output_nodes().into_iter().map(|(u, _, id)| (u, id)).collect(),
         };
         let prev_full = self.preview_full();
         // the final pass may go above the 2D preview size: the 3D textures follow the output resolution
@@ -1690,7 +1825,7 @@ impl App {
         self.job_pass = pass;
         self.job_started = std::time::Instant::now();
         let maps = maps && !view_only;
-        let mut keep: Vec<u32> = if view_only { Vec::new() } else { g.output_nodes().iter().map(|o| o.2).collect() };
+        let mut keep: Vec<u32> = if view_only { Vec::new() } else { outputs.iter().map(|o| o.1).collect() };
         let active = self.view_node();
         if let Some(a) = active {
             keep.push(a);
@@ -1718,7 +1853,6 @@ impl App {
                     }
                 }
             };
-            let outputs: Vec<(String, u32)> = g.output_nodes().into_iter().map(|(u, _, id)| (u, id)).collect();
             // the material outputs are not read back when the 3D view can take them packed from the device
             // (and the node of the 2D view, which the viewer packs on the device as well)
             let mut defer: Vec<u32> = if maps && defer_outputs { outputs.iter().map(|o| o.1).filter(|id| Some(*id) != active).collect() } else { Vec::new() };
@@ -1732,7 +1866,7 @@ impl App {
             }
             tex::set_job(gen);
             // the 2D view's picture and range, from the device when the node is there
-            let mut view_pic: Option<(ColorImage, Option<(f32, f32)>)> = None;
+            let mut view_pic: Option<(Pic2d, Option<(f32, f32)>)> = None;
             if let Some(a) = active {
                 if let Some(p) = r.pending.get(&a).cloned() {
                     if !outputs.iter().any(|o| o.1 == a) {
@@ -1757,6 +1891,7 @@ impl App {
                     let base = ["basecolor", "out", "diffuse"].into_iter().find(|n| pend(n).is_some());
                     let (rough, gloss) = (dev("roughness"), dev("glossiness"));
                     let (base_t, normal_t, metal_t, ao_t, emis_t, height_t) = (base.and_then(dev), dev("normal"), dev("metallic"), dev("ambient_occlusion"), dev("emissive"), dev("height"));
+                    let opacity_t = dev("opacity");
                     dev_maps = gpu3d::prepare_dev(&DevInputs {
                         base: base_t.as_ref(),
                         normal: normal_t.as_ref(),
@@ -1767,6 +1902,7 @@ impl App {
                         ao: ao_t.as_ref(),
                         emissive: emis_t.as_ref(),
                         height: height_t.as_ref(),
+                        opacity: opacity_t.as_ref(),
                     });
                 }
                 if dev_maps.is_some() {
@@ -1805,6 +1941,7 @@ impl App {
                     ao: named("ambient_occlusion"),
                     emissive: named("emissive"),
                     height: named("height"),
+                    opacity: named("opacity"),
                 }))
             } else {
                 None
@@ -1813,7 +1950,7 @@ impl App {
             let (img2d, range2d) = match view_pic {
                 Some((img, range)) => (Some(img), range),
                 None => (
-                    active.and_then(|a| r.kept.get(&a)).map(|a| qimg(a)),
+                    active.and_then(|a| r.kept.get(&a)).map(|a| pic2d_of(a)),
                     active.and_then(|a| r.kept.get(&a)).map(|t| t.px.iter().fold((f32::MAX, f32::MIN), |m, p| (m.0.min(p[0]).min(p[1]).min(p[2]), m.1.max(p[0]).max(p[1]).max(p[2])))),
                 ),
             };
@@ -1845,6 +1982,13 @@ impl App {
         });
     }
 
+    /// Show `pic` in the 2D view (and its opaque twin, when it has one).
+    fn set_view2d(&mut self, ctx: &egui::Context, pic: Pic2d, opts: egui::TextureOptions) {
+        self.tex2d_size = (pic.img.size[0], pic.img.size[1]);
+        self.tex2d = Some(ctx.load_texture("view2d", pic.img, opts));
+        self.tex2d_opaque = pic.opaque.map(|o| ctx.load_texture("view2d_opaque", o, opts));
+    }
+
     /// Resolution of the editor preview: the chosen size, or the graph's own size (at most 4096).
     fn preview_full(&self) -> usize {
         if self.prev_size == 0 {
@@ -1864,15 +2008,14 @@ impl App {
             if let Some(p) = latest {
                 if p.gen == self.gen && self.view_node() == Some(p.img_for) {
                     // a picture smaller than the final one is shown smooth, not as blocks, until the full size arrives
-                    let crisp = p.img2d.size[0] >= self.preview_full();
+                    let crisp = p.img2d.img.size[0] >= self.preview_full();
                     let opts = egui::TextureOptions {
                         magnification: if crisp { egui::TextureFilter::Nearest } else { egui::TextureFilter::Linear },
                         minification: egui::TextureFilter::Linear,
                         wrap_mode: egui::TextureWrapMode::Repeat,
                         mipmap_mode: Some(egui::TextureFilter::Linear),
                     };
-                    self.tex2d_size = (p.img2d.size[0], p.img2d.size[1]);
-                    self.tex2d = Some(ctx.load_texture("view2d", p.img2d, opts));
+                    self.set_view2d(ctx, p.img2d, opts);
                     ctx.request_repaint();
                 }
             }
@@ -1963,11 +2106,9 @@ impl App {
                 }) };
                 if let Some(a) = self.view_node() {
                     if let (Some(img), true) = (r.img2d.take(), r.img_for == Some(a)) {
-                        self.tex2d_size = (img.size[0], img.size[1]);
-                        self.tex2d = Some(ctx.load_texture("view2d", img, opts));
+                        self.set_view2d(ctx, img, opts);
                     } else if let Some(t) = r.kept.get(&a) {
-                        self.tex2d_size = (t.w, t.h);
-                        self.tex2d = Some(ctx.load_texture("view2d", qimg(t), opts));
+                        self.set_view2d(ctx, pic2d_of(t), opts);
                     } else {
                         self.tex2d = None;
                     }
@@ -2067,6 +2208,7 @@ impl App {
             ao: get("ambient_occlusion"),
             emissive: get("emissive"),
             height: get("height"),
+            opacity: get("opacity"),
         };
         let prepared = gpu3d::prepare(&m);
         if let Ok(mut g) = self.gpu.lock() {
@@ -2182,5 +2324,6 @@ include!("gui_spline.rs");
 include!("gui_bake.rs");
 include!("gui_ui.rs");
 include!("gui_home.rs");
+include!("gui_icons.rs");
 include!("gui_launcher.rs");
 include!("gui_view3d.rs");

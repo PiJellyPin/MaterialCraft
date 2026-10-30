@@ -97,12 +97,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             if (P(0u) > 0.5) { o = vec4<f32>(p.xyz, lum(ib[i])); }
         }
         case 15u: {
-            // RGBA merge: channel 0 of a, channel 1 of b, channel 2 of c, channel 3 of d, when connected
+            // RGBA merge: channel 0 of a, channel 1 of b, channel 2 of c and the luminance of d (its grey value, not
+            // its own alpha), when connected
             o = vec4<f32>(
                 select(0.0, ia[i].x, P(0u) > 0.5),
                 select(0.0, ib[i].y, P(1u) > 0.5),
                 select(0.0, ic[i].z, P(2u) > 0.5),
-                select(1.0, idd[i].w, P(3u) > 0.5));
+                select(1.0, lum(idd[i]), P(3u) > 0.5));
         }
         case 16u: {
             // channel shuffle: sources p0..3 (0-3 channels of a, 4-7 of b, 8 zero, 9 one), inversions p4..7
@@ -243,6 +244,21 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
                 let cut = max((q.xyz - vec3<f32>(clear)) / (1.0 - clear), vec3<f32>(0.0));
                 o = vec4<f32>(clamp(p.xyz + cut * vec3<f32>(P(2u), P(3u), P(4u)) * P(5u), vec3<f32>(0.0), vec3<f32>(1.0)), p.w);
             }
+        }
+        case 26u: {
+            // blur AO with weighted detail bands, read towards a light (a = image, b / c / d = blurs of the radius,
+            // half and a quarter of it): P0 depth, P1..P3 band weights, P4 / P5 whole-pixel shift, P6 = 1 one band
+            let x = (i32(id.x) + i32(P(4u))) % i32(u.w);
+            let y = (i32(id.y) + i32(P(5u))) % i32(u.h);
+            let k = u32((y + i32(u.h)) % i32(u.h)) * u.w + u32((x + i32(u.w)) % i32(u.w));
+            let v1 = ib[k].x;
+            let v2 = ic[k].x;
+            let v4 = idd[k].x;
+            var occ = v1 - p.x;
+            if (P(6u) < 0.5) {
+                occ = (1.0 + P(1u)) * (v4 - p.x) + (1.0 + P(2u)) * (v2 - v4) + (1.0 + P(3u)) * (v1 - v2);
+            }
+            o = grey(clamp(1.0 - occ * P(0u), 0.0, 1.0));
         }
         case 25u: {
             // output format: P0 = 1 (8-bit integer), 2 (16-bit integer), 3 (half float)

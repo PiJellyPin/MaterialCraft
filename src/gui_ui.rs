@@ -108,10 +108,13 @@ impl App {
             self.rubber = pointer;
             if !mods.shift {
                 self.sel.clear();
+                self.sel_links.clear();
                 self.sel_comment = None;
             }
         }
-        if resp.clicked() && !mods.shift {
+        // a click on the background: on a link it selects that link (see the links below)
+        let bg_click = resp.clicked();
+        if bg_click && !mods.shift {
             self.sel.clear();
             self.sel_comment = None;
         }
@@ -224,11 +227,32 @@ impl App {
             })
         };
         let in_port = move |p: [f32; 2], i: usize, n: usize, dot: bool, body: f32| if dot { ts(p) + vec2(0.0, 12.0 * z) } else { ts(p) + vec2(0.0, (BAR + body * (i as f32 + 1.0) / (n as f32 + 1.0)) * z) };
-        let link = |painter: &egui::Painter, a: Pos2, b: Pos2, col: Color32, w: f32| {
-            // the handles follow the distance: close nodes get a short, tight wire; a wire that has to turn back gets a wider loop
+        // the curve of a wire from a to b: the handles follow the distance, so close nodes get a short, tight wire and a
+        // wire that has to turn back gets a wider loop
+        let wire = move |a: Pos2, b: Pos2| -> [Pos2; 4] {
             let (adx, ady) = ((b.x - a.x).abs(), (b.y - a.y).abs());
             let dx = if b.x >= a.x { (adx * 0.5).max(ady * 0.2).max(3.0 * z) } else { (adx * 0.25 + ady * 0.2 + 28.0 * z).min(120.0 * z) };
-            let pts = [a, a + vec2(dx, 0.0), b - vec2(dx, 0.0), b];
+            [a, a + vec2(dx, 0.0), b - vec2(dx, 0.0), b]
+        };
+        // distance from p to a wire (the curve followed in 32 straight pieces)
+        let wire_dist = move |pts: &[Pos2; 4], p: Pos2| -> f32 {
+            let at = |t: f32| {
+                let u = 1.0 - t;
+                (pts[0].to_vec2() * (u * u * u) + pts[1].to_vec2() * (3.0 * u * u * t) + pts[2].to_vec2() * (3.0 * u * t * t) + pts[3].to_vec2() * (t * t * t)).to_pos2()
+            };
+            let mut best = f32::MAX;
+            let mut prev = pts[0];
+            for k in 1..=32 {
+                let cur = at(k as f32 / 32.0);
+                let d = cur - prev;
+                let t = if d.length_sq() > 0.0 { ((p - prev).dot(d) / d.length_sq()).clamp(0.0, 1.0) } else { 0.0 };
+                best = best.min((prev + d * t - p).length());
+                prev = cur;
+            }
+            best
+        };
+        let link = |painter: &egui::Painter, a: Pos2, b: Pos2, col: Color32, w: f32| {
+            let pts = wire(a, b);
             // the curve stays inside the hull of its control points: a wire whose hull is off screen is not drawn
             if !Rect::from_points(&pts).expand(4.0).intersects(rect) {
                 return;
@@ -236,15 +260,54 @@ impl App {
             painter.add(CubicBezierShape::from_points_stroke(pts, false, Color32::TRANSPARENT, Stroke::new(w * z.max(0.7), col)));
         };
 
-        // links
+        // links: (node fed, its slot), the wire's ends, whether a selected node touches it
+        let mut wires: Vec<((u32, String), Pos2, Pos2, bool)> = Vec::new();
         for s in &snaps {
             let n = s.slots.len();
             for (slot, src) in &s.ins {
                 if let (Some(i), Some(a)) = (s.slots.iter().position(|x| x.0 == slot), src_port(*src, s.in_out.iter().find(|(k, _)| k == slot).map(|(_, v)| v.as_str()))) {
                     let hot = self.sel.contains(&s.id) || self.sel.contains(src);
-                    link(&painter, a, in_port(s.pos, i, n, s.dot, body_of(s)), if hot { Color32::from_rgb(90, 215, 190) } else { Color32::from_rgb(185, 185, 185) }, 1.8);
+                    wires.push(((s.id, slot.clone()), a, in_port(s.pos, i, n, s.dot, body_of(s)), hot));
                 }
             }
+        }
+        // the wire under the pointer (only over the bare canvas, not while a link is being dragged)
+        let idle = self.connecting.is_none() && self.connecting_in.is_none() && self.rubber.is_none();
+        let hover_wire: Option<(u32, String)> = pointer
+            .filter(|_| idle && resp.hovered())
+            .and_then(|p| wires.iter().map(|w| (wire_dist(&wire(w.1, w.2), p), &w.0)).filter(|(d, _)| *d < 6.0 * z.max(0.6)).min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal)).map(|(_, k)| k.clone()));
+        if bg_click {
+            match &hover_wire {
+                // a link: selected (Shift adds it or takes it out); Delete removes it, X swaps it
+                Some(k) => {
+                    if mods.shift {
+                        if !self.sel_links.remove(k) {
+                            self.sel_links.insert(k.clone());
+                        }
+                    } else {
+                        self.sel_links = [k.clone()].into_iter().collect();
+                    }
+                }
+                None if !mods.shift => self.sel_links.clear(),
+                None => {}
+            }
+        }
+        // links that no longer exist (undo, a deleted node) drop out of the selection
+        self.sel_links.retain(|k| wires.iter().any(|w| w.0 == *k));
+        for (k, a, b, hot) in &wires {
+            let (col, w) = if self.sel_links.contains(k) {
+                (Color32::from_rgb(255, 170, 60), 3.0)
+            } else if hover_wire.as_ref() == Some(k) {
+                (Color32::from_rgb(235, 235, 235), 2.6)
+            } else if *hot {
+                (Color32::from_rgb(90, 215, 190), 1.8)
+            } else {
+                (Color32::from_rgb(185, 185, 185), 1.8)
+            };
+            link(&painter, *a, *b, col, w);
+        }
+        if hover_wire.is_some() {
+            resp.clone().on_hover_text("Click to select this link: Delete removes it, X swaps it with the next input");
         }
 
         // pin type of every node's output: grayscale sockets are drawn gray, colour sockets blue
@@ -350,6 +413,7 @@ impl App {
                 if !self.sel.contains(&id) {
                     if !(mods.shift || mods.command) {
                         self.sel.clear();
+                        self.sel_links.clear();
                     }
                     self.sel.insert(id);
                 }
@@ -394,6 +458,7 @@ impl App {
                     }
                 } else {
                     self.sel = [id].into_iter().collect();
+                    self.sel_links.clear();
                 }
                 self.sel_comment = None;
                 if self.active != Some(id) {
@@ -415,6 +480,8 @@ impl App {
                 nr.clone().on_hover_text(e);
             }
             let (kind, gname) = (s.kind.clone(), s.graph_name.clone());
+            let is_material = s.kind != "sbs:output" && material_outs(&s.outs) >= 2;
+            let shown_3d = self.view3d_node == Some(id);
             nr.context_menu(|ui| {
                 if ui.button("Copy").clicked() {
                     acts.push(Act::Copy);
@@ -449,6 +516,10 @@ impl App {
                     acts.push(Act::ToggleDisable);
                     ui.close();
                 }
+                if ui.button("Swap first two inputs    X").clicked() {
+                    acts.push(Act::SwapLinks);
+                    ui.close();
+                }
                 ui.separator();
                 if matches!(kind.as_str(), "sbs:graph" | "sbs:fxmaps") {
                     if let Some(g) = &gname {
@@ -467,7 +538,26 @@ impl App {
                         }
                     }
                 });
+                if is_material {
+                    let label = if shown_3d { "Show graph outputs in 3D view" } else { "Show in 3D view" };
+                    if ui.button(label).clicked() {
+                        acts.push(Act::View3dNode(id));
+                        ui.close();
+                    }
+                }
             });
+
+            // a material node (several maps the 3D view reads): a "3D" button above the card shows it in the 3D view
+            if is_material && !s.dot && z >= 0.35 {
+                let br = Rect::from_min_size(card.right_top() + vec2(-24.0, -15.0) * z, vec2(24.0, 13.0) * z);
+                let bresp = ui.interact(br, Id::new(("view3d", id)), Sense::click());
+                let fill = if shown_3d { Color32::from_rgb(60, 200, 170) } else if bresp.hovered() { Color32::from_gray(70) } else { Color32::from_gray(45) };
+                painter.rect(br, 3.0 * z, fill, Stroke::new(1.0_f32, Color32::from_gray(if shown_3d { 230 } else { 120 })), egui::StrokeKind::Inside);
+                painter.text(br.center(), Align2::CENTER_CENTER, "3D", FontId::proportional(9.0 * z), if shown_3d { Color32::BLACK } else { Color32::from_gray(220) });
+                if bresp.on_hover_text(if shown_3d { "The 3D view shows this node: click to go back to the graph outputs" } else { "Show this node's outputs in the 3D view" }).clicked() {
+                    acts.push(Act::View3dNode(id));
+                }
+            }
 
             // ports
             if s.kind != "sbs:output" && s.outs.len() >= 2 {
@@ -672,6 +762,7 @@ impl App {
             m
         };
         let has_sel = !self.sel.is_empty();
+        let has_links = !self.sel_links.is_empty();
         let has_clip = !self.clip.is_empty();
         resp.context_menu(|ui| {
             ui.set_min_width(250.0);
@@ -739,8 +830,12 @@ impl App {
                 acts.push(Act::Copy);
                 ui.close();
             }
-            if ui.add_enabled(has_sel, egui::Button::new("Delete Selection    Del")).clicked() {
+            if ui.add_enabled(has_sel || has_links, egui::Button::new("Delete Selection    Del")).clicked() {
                 acts.push(Act::Delete);
+                ui.close();
+            }
+            if ui.add_enabled(has_links || self.sel.len() == 1, egui::Button::new("Swap Connections    X")).clicked() {
+                acts.push(Act::SwapLinks);
                 ui.close();
             }
             if ui.add_enabled(has_sel, egui::Button::new("Delete and Relink    Backspace")).clicked() {
@@ -816,6 +911,7 @@ impl App {
                 self.paste(None);
             }
             Act::Delete => self.delete_selected(),
+            Act::SwapLinks => self.swap_links(),
             Act::SelectAll => {
                 self.sel = self.g.nodes.keys().copied().collect();
                 self.active = self.sel.iter().next().copied();
@@ -941,7 +1037,13 @@ impl App {
                 }
             }
             Act::NewOutput(usage, from) => self.new_output(&usage, from),
+            Act::View3dNode(id) => self.toggle_view3d_node(id),
             Act::NewFromTemplate(i) => self.new_from_template(i),
+            Act::NewFromUserTemplate(p) => self.new_from_user_template(p),
+            Act::SaveAsTemplate(i, name) => {
+                let tname = name.clone().or_else(|| self.package_root(i).map(|r| materialcraft::sbs_native::graph_name(&r))).unwrap_or_default();
+                self.save_tmpl = Some((i, name, tname.rsplit('/').next().unwrap_or("").to_string()));
+            }
             Act::ExportMaps(i, name) => {
                 self.export.target = Some((i, name));
                 self.export.open = true;
@@ -949,7 +1051,20 @@ impl App {
             Act::ExportGraphFile(i, name) => self.export_graph_file(i, name),
             Act::AddGraphFile(i) => self.add_graph_file(i),
             Act::RenameGraph(i, name) => self.rename_graph = Some((i, name.clone(), name)),
-            Act::DeleteGraph(i, name) => self.graph_edit(i, move |g| g.remove_graph(&name).map(|_| format!("Removed graph '{name}'"))),
+            Act::DeleteGraph(i, name) => {
+                let main = |a: &Self| a.parents.first().map(|p| &p.0).unwrap_or(&a.g).meta.get("identifier").cloned();
+                self.switch_pkg(i);
+                let was_main = main(self).as_deref() == Some(name.as_str());
+                let n = name.clone();
+                self.graph_edit(i, move |g| g.remove_graph(&n).map(|_| format!("Removed graph '{n}'")));
+                // the canvas showed the deleted graph: it now shows the one the package opens on
+                if was_main && main(self).as_deref() != Some(name.as_str()) {
+                    self.sel.clear();
+                    self.sel_links.clear();
+                    self.clear_views();
+                    self.fit_view();
+                }
+            }
             Act::DuplicateGraph(i, name) => self.graph_edit(i, move |g| g.duplicate_graph(name.as_deref(), None).map(|k| format!("Copied as '{k}'"))),
         }
     }
@@ -1379,7 +1494,9 @@ impl App {
                     ("Two-finger drag (trackpad / Magic Mouse)", "pan"),
                     ("F", "frame all"),
                     ("C", "comment frame around selection"),
-                    ("Delete", "delete selection"),
+                    ("Delete", "delete selection (nodes or links)"),
+                    ("Click a link", "select it (Shift+click adds)"),
+                    ("X", "swap connections: two selected links, or a node's first two inputs"),
                     ("Double-click a graph node", "open its graph"),
                     ("Ctrl+S / Ctrl+O", "save / open"),
                 ] {
