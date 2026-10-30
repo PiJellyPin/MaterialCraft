@@ -187,3 +187,186 @@ fn broken_packages_are_errors_not_panics() {
     let (_, warnings) = sbs_native::load(&odd, None).expect("damaged links should produce warnings");
     assert!(!warnings.is_empty(), "all_nodes.sbs: broken link was silently accepted");
 }
+
+#[test]
+fn a_renamed_output_keeps_its_users() {
+    let mut g = sbs_native::new_package("mat", 64);
+    let out = sbs_native::add_output(&mut g, "baseColor", Some("base"), [0.0, 0.0]);
+    sbs_native::add_output(&mut g, "normal", Some("nrm"), [0.0, 80.0]);
+    // a graph of the package that runs this one and reads the output by name
+    let mut user = sbs_native::new_package("user", 64);
+    user.nodes.insert(1, Node { kind: "sbs:graph".into(), strs: [("#graph".to_string(), "mat".to_string())].into(), ..Default::default() });
+    let mut reader = Node { kind: "sbs:blend".into(), ..Default::default() };
+    reader.ins.insert("source".into(), 1);
+    reader.in_out.insert("source".into(), "base".into());
+    user.nodes.insert(2, reader);
+
+    assert!(sbs_native::rename_output(&mut g, out, "nrm").is_err(), "two outputs cannot share a name");
+    assert!(sbs_native::rename_output(&mut g, out, "bad name").is_err());
+    assert_eq!(sbs_native::rename_output(&mut g, out, "albedo").unwrap(), ("base".to_string(), "albedo".to_string()));
+    sbs_native::retarget_output(&mut user, "mat", "base", "albedo");
+    assert_eq!(user.nodes[&2].in_out["source"], "albedo");
+    assert_eq!(sbs_native::label(&g.nodes[&out], &g), "albedo");
+    assert!(g.output_nodes().iter().any(|(usage, ident, id)| *id == out && usage == "basecolor" && ident == "albedo"));
+    let text = sbs_native::save_text(&g).unwrap();
+    assert!(text.contains("\"albedo\"") && !text.contains("\"base\""), "{text}");
+}
+
+#[test]
+fn pbr_base_material_inputs_follow_their_switches() {
+    let mut n = Node { kind: "sbs:lib:pbr_base_material/pbr_base_material".into(), ..Default::default() };
+    assert!(!sbs_native::input_switches(&n).is_empty());
+    assert!(!sbs_native::input_used(&n, "basecolor_input"), "every map input starts off");
+    n.strs.insert("user_basecolor".into(), PVal::Const { ty: PTy::B, raw: "1".into(), rel: Some("0".into()) }.enc());
+    assert!(sbs_native::input_used(&n, "basecolor_input"));
+    assert!(!sbs_native::input_used(&n, "normal_input"));
+    // inputs without a switch are always read
+    assert!(sbs_native::input_used(&Node { kind: "sbs:blend".into(), ..Default::default() }, "source"));
+}
+
+#[test]
+fn a_pass_through_reads_one_output_of_a_material_node() {
+    // the 3D view shows a material node through one pass-through per output
+    let mut g = sbs_native::new_package("m", 32);
+    let mut n = Node { kind: "sbs:lib:pbr_base_material/pbr_base_material".into(), ..Default::default() };
+    n.strs.insert("metallic".into(), PVal::Const { ty: PTy::F(1), raw: "0".into(), rel: None }.enc());
+    n.strs.insert("roughness".into(), PVal::Const { ty: PTy::F(1), raw: "0.3".into(), rel: None }.enc());
+    g.nodes.insert(5, n);
+    for (id, pin) in [(100, "diffuse"), (101, "roughness"), (102, "glossiness"), (103, "normal")] {
+        let mut t = Node { kind: "sbs:passthrough".into(), ..Default::default() };
+        t.ins.insert("input".into(), 5);
+        t.in_out.insert("input".into(), pin.into());
+        g.nodes.insert(id, t);
+    }
+    let keep = [100, 101, 102, 103];
+    let r = g.evaluate_all_cached_ex(32, &keep, &[], 0, &std::sync::Arc::new(materialcraft::graph::NodeCache::new(64)), None, false, &mut |_| {});
+    let px = |id: u32| r.kept.get(&id).unwrap_or_else(|| panic!("{id}: {:?}", r.errors.get(&id))).px[0];
+    assert!((px(100)[0] - 0.498).abs() < 0.01, "a dielectric's diffuse is its base colour");
+    assert!((px(101)[0] - 0.3).abs() < 1e-4);
+    assert!((px(102)[0] - 0.7).abs() < 1e-4, "glossiness follows roughness");
+    assert_eq!(px(103), [0.5, 0.5, 1.0, 1.0]);
+}
+
+#[test]
+fn a_graph_saved_as_template_starts_new_projects() {
+    use materialcraft::user_templates;
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("user_templates_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(user_templates::list(&dir).is_empty(), "no folder yet: no templates");
+    let mut g = sbs_native::new_package("brick_base", 64);
+    sbs_native::add_output(&mut g, "baseColor", Some("albedo"), [0.0, 0.0]);
+    sbs_native::add_output(&mut g, "roughness", None, [0.0, 80.0]);
+    let mut n = Node { kind: "sbs:uniform".into(), ..Default::default() };
+    n.strs.insert("outputcolor".into(), PVal::Const { ty: PTy::F(4), raw: "1 0 0 1".into(), rel: None }.enc());
+    g.nodes.insert(7, n);
+
+    assert!(user_templates::save(&dir, "  ", &g, "brick_base").is_err(), "a template needs a name");
+    let p = user_templates::save(&dir, "My Bricks/v2", &g, "brick_base").unwrap();
+    assert_eq!(p.file_name().unwrap(), "My Bricks_v2.sbs", "unsafe characters leave the file name");
+    let list = user_templates::list(&dir);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].name, "My Bricks_v2");
+    assert_eq!(user_templates::outputs(&list[0]).unwrap(), ["albedo", "roughness"]);
+
+    // a new project: a copy with the graph renamed, the nodes and outputs kept
+    let copy = user_templates::instantiate(&list[0], "Wall 01").unwrap();
+    assert_eq!(sbs_native::graph_name(&copy), "Wall_01");
+    assert_eq!(copy.nodes.values().filter(|n| n.kind == "sbs:uniform").count(), 1);
+    assert_eq!(copy.output_idents(), ["albedo", "roughness"]);
+    // or a graph added to a package that is open
+    let mut other = sbs_native::new_package("other", 64);
+    let (first, added, _) = sbs_native::add_package(&mut other, copy).unwrap();
+    assert_eq!((first.as_str(), added), ("Wall_01", 1));
+    assert!(other.subgraphs.contains_key("Wall_01"));
+
+    // saving under the same name replaces the template
+    user_templates::save(&dir, "My Bricks/v2", &g, "brick_base").unwrap();
+    assert_eq!(user_templates::list(&dir).len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_graph_a_package_opens_on_can_be_deleted() {
+    let mut g = sbs_native::new_package("first", 64);
+    sbs_native::add_output(&mut g, "baseColor", None, [0.0, 0.0]);
+    // the only graph stays
+    assert!(g.remove_graph("first").is_err(), "a package keeps at least one graph");
+    let second = sbs_native::duplicate_graph(&mut g, None, Some("second")).unwrap();
+    sbs_native::duplicate_graph(&mut g, None, Some("third")).unwrap();
+    // not while another graph uses it
+    let mut user = Node { kind: "sbs:graph".into(), ..Default::default() };
+    user.strs.insert("#graph".into(), "first".into());
+    g.subgraphs.get_mut("third").unwrap().nodes.insert(50, user);
+    assert!(g.remove_graph("first").is_err(), "'third' still uses it");
+    g.subgraphs.get_mut("third").unwrap().nodes.remove(&50);
+    g.remove_graph("first").unwrap();
+    // the next graph is the one the package opens on, with the rest of the package
+    assert_eq!(g.meta.get("identifier").map(String::as_str), Some(second.as_str()));
+    assert_eq!(g.subgraphs.keys().cloned().collect::<Vec<_>>(), vec!["third".to_string()]);
+    assert_eq!(g.output_idents().len(), 1);
+    let back = open(&sbs_native::save_text(&g).unwrap());
+    assert_eq!(back.meta.get("identifier").map(String::as_str), Some("second"));
+    assert!(back.subgraphs.contains_key("third") && !back.subgraphs.contains_key("first"));
+}
+
+/// One pixel of library blend node `kind` over two uniform colours, with `set` written on the node.
+fn lib_blend_px(kind: &str, fg: [f32; 4], bg: [f32; 4], set: &[(&str, PTy, &str)]) -> [f32; 4] {
+    let mut g = sbs_native::new_package("b", 16);
+    for (id, c) in [(1, fg), (2, bg)] {
+        let mut u = Node { kind: "sbs:uniform".into(), ..Default::default() };
+        let raw = format!("{} {} {} {}", c[0], c[1], c[2], c[3]);
+        u.strs.insert("outputcolor".into(), PVal::Const { ty: PTy::F(4), raw, rel: None }.enc());
+        g.nodes.insert(id, u);
+    }
+    let mut n = Node { kind: kind.into(), ..Default::default() };
+    n.ins.insert("Foreground".into(), 1);
+    n.ins.insert("Background".into(), 2);
+    for (k, ty, raw) in set {
+        n.strs.insert((*k).into(), PVal::Const { ty: *ty, raw: (*raw).into(), rel: None }.enc());
+    }
+    g.nodes.insert(3, n);
+    let r = g.evaluate_all_cached_ex(16, &[3], &[], 0, &std::sync::Arc::new(materialcraft::graph::NodeCache::new(16)), None, false, &mut |_| {});
+    r.kept.get(&3).unwrap_or_else(|| panic!("{kind}: {:?}", r.errors.get(&3))).px[0]
+}
+
+fn near(a: [f32; 4], b: [f32; 4]) -> bool {
+    a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 2e-3)
+}
+
+#[test]
+fn the_library_blend_follows_its_mode_and_alpha_switch() {
+    let (fg, bg) = ([0.6, 0.2, 0.1, 1.0], [0.3, 0.5, 0.7, 1.0]);
+    let px = |set: &[(&str, PTy, &str)]| lib_blend_px("sbs:lib:blend/blend", fg, bg, set);
+    // the modes are numbered as on the built-in blend; the library's default is 1, Add
+    assert!(near(px(&[]), [0.9, 0.7, 0.8, 1.0]), "{:?}", px(&[]));
+    assert!(near(px(&[("Blending_Mode", PTy::I(1), "0")]), fg), "copy");
+    assert!(near(px(&[("Blending_Mode", PTy::I(1), "3")]), [0.18, 0.1, 0.07, 1.0]), "multiply");
+    assert!(near(px(&[("Blending_Mode", PTy::I(1), "6")]), [0.3, 0.2, 0.1, 1.0]), "min");
+    assert!(near(px(&[("Blending_Mode", PTy::I(1), "0"), ("Opacity", PTy::F(1), "0.5")]), [0.45, 0.35, 0.4, 1.0]), "opacity");
+    // with alpha blending the foreground's alpha weighs it in, without it the alpha is ignored
+    let half = [0.6, 0.2, 0.1, 0.5];
+    let copy = ("Blending_Mode", PTy::I(1), "0");
+    let on = lib_blend_px("sbs:lib:blend/blend", half, bg, &[copy]);
+    assert!(near(on, [0.45, 0.35, 0.4, 0.5]), "{on:?}");
+    let off = lib_blend_px("sbs:lib:blend/blend", half, bg, &[copy, ("Alpha_Blending", PTy::B, "0")]);
+    assert!(near(off, [0.6, 0.2, 0.1, 1.0]), "{off:?}");
+}
+
+#[test]
+fn the_library_color_blend_keeps_the_background_brightness() {
+    let lum = |c: [f32; 4]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    let (fg, bg) = ([0.6, 0.4, 0.3, 1.0], [0.3, 0.5, 0.7, 1.0]);
+    let px = |fg: [f32; 4], set: &[(&str, PTy, &str)]| lib_blend_px("sbs:lib:blend/color", fg, bg, set);
+    // the foreground's hue and saturation (its channel differences) at the background's brightness
+    let c = px(fg, &[]);
+    assert!((lum(c) - lum(bg)).abs() < 2e-3, "{c:?}");
+    assert!((c[0] - c[1] - (fg[0] - fg[1])).abs() < 2e-3 && (c[1] - c[2] - (fg[1] - fg[2])).abs() < 2e-3, "{c:?}");
+    // Opacity mixes it with the background
+    let h = px(fg, &[("Opacity", PTy::F(1), "0.5")]);
+    assert!(near(h, [(c[0] + bg[0]) / 2.0, (c[1] + bg[1]) / 2.0, (c[2] + bg[2]) / 2.0, 1.0]), "{h:?}");
+    assert!(near(px(fg, &[("Opacity", PTy::F(1), "0")]), bg));
+    // a transparent foreground leaves the background with alpha blending, and blends anyway without it
+    let clear = [0.6, 0.4, 0.3, 0.0];
+    assert!(near(px(clear, &[]), [0.3, 0.5, 0.7, 0.0]), "{:?}", px(clear, &[]));
+    assert!(near(px(clear, &[("Alpha_Blending", PTy::B, "0")]), c), "{:?}", px(clear, &[("Alpha_Blending", PTy::B, "0")]));
+}
