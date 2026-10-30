@@ -55,3 +55,24 @@ multi_directional_warp* directions = 1:1 direction|2:2 directions|4:4 directions
 normal_combine blend_quality = Whiteout|Channel mixer|Detail oriented
 threshold mode = Greater|Greater or equal|Lower|Lower or equal
 slope_blur* mode = 5:Max (assumed)|6:Min (assumed)|7:Blur
+
+# the Shape Splatter v2 family and Grid Atlas: read from the public node reference; the numbers are inferred
+shape_splatter_v2 position_distribution_mode = 2D grid|Poisson disc|Uniform|Custom function
+shape_splatter_v2 position_distribution_sequence = R2|Halton
+shape_splatter_v2 output_normal_format = DirectX|OpenGL
+shape_splatter_v2 shape_type = SDF function|Cube|Sphere|Cylinder|Plane|Disc|Image input|Grid atlas|Pattern function
+shape_splatter_v2 grid_atlas_normal_format = DirectX|OpenGL
+shape_splatter_v2 size_mode = Auto|Absolute (texture space)
+shape_splatter_v2 line_position_offset_mode = All - Horizontal|All - Vertical|Quincunx - Horizontal|Quincunx - Vertical
+shape_splatter_v2 slope_rotation_input = Background|Vector map
+shape_splatter_v2 vector_map_rotation_axis = Normal|Z axis
+shape_splatter_v2 cap_uv_mode = Polar|Planar
+shape_splatter_v2_mapper_* projection_mode = From splatter UVs|Triplanar|Custom function
+shape_splatter_v2_mapper_color input_normal_format = DirectX|OpenGL
+shape_splatter_v2_mapper_* image_projection = 1 image|3 images|6 images|1 image per material ID
+shape_splatter_v2_mapper_* input_selection_mode = From splatter data|Manual|Random
+shape_splatter_v2_mapper_* color_input_blending_mode = Copy|Add|Subtract|Multiply|Overlay
+shape_splatter_v2_mapper_* tiling_mode = No tiling|Horizontal|Vertical|H and V
+shape_splatter_v2_to_mask output = Binary mask|Shape ID|Material ID|Shape ID (normalized)|Material ID (normalized)
+shape_splatter_v2_to_mask material_pattern_id_mask_combination = None|AND|OR
+grid_atlas_* output_size_mode = Manual|Automatic ratio
