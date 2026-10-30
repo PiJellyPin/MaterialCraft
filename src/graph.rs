@@ -3843,7 +3843,8 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
         "channel" => ops::channel(tex("in")?, f("ch", 0.0).max(0.0) as usize),
         "merge" => {
             let g = |slot: &str, ch: usize| ins.get(slot).map(|t| ops::channel(t, ch));
-            let (r, gg, b, a) = (g("r", 0), g("g", 1), g("b", 2), g("a", 3));
+            // the alpha is the grey value of its input (its luminance), not that input's own alpha (1 for a grey map)
+            let (r, gg, b, a) = (g("r", 0), g("g", 1), g("b", 2), ins.get("a").map(|t| ops::to_gray(t)));
             Tex::from_fn(s, hs, |u, v| {
                 let q = |t: &Option<Tex>, d: f32| t.as_ref().map(|t| t.sample(u, v)[0]).unwrap_or(d);
                 [q(&r, 0.0), q(&gg, 0.0), q(&b, 0.0), q(&a, 1.0)]

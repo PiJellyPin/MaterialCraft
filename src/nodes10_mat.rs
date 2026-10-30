@@ -2,7 +2,7 @@
 //! Library graphs implemented natively (see `nodes10`): material filters (blends, switches, transforms,
 //! adjustments, crops, weathering), mask generators, PBR utilities and renders, atlas tools and MaterialCraft's own
 //! versions of the library's material presets.
-use crate::nodes10::{curvature_of, dec_n, enc_n, g, grey, is_blank, lerp, lerp4, level_contrast, noise, rnd, smooth, to_lin, to_srgb, Cx};
+use crate::nodes10::{curvature_of, dec_n, dot3, enc_n, g, grey, is_blank, lerp, lerp4, level_contrast, noise, norm3, rnd, smooth, to_lin, to_srgb, Cx};
 use crate::ops;
 use crate::tex::{lum, Tex};
 use std::collections::HashMap;
@@ -568,6 +568,7 @@ pub fn compute(cx: &Cx) -> Option<Tex> {
             };
             emit(cx, &f, &|o| if o.eq_ignore_ascii_case("mask") { Some(water.clone()) } else { None })
         }
+        "x_season_filter" | "x_season_filter_material" => season_filter(cx),
         "x_material_crop" => {
             let m = Mat::read(cx, &["diffuse", "basecolor", "normal", "specular", "emissive", "glossiness", "roughness", "metallic", "specular_level", "height", "ambient_occlusion", "opacity"]);
             let mat = cx.v4("matrix");
@@ -1129,6 +1130,164 @@ fn draw_scratches(buf: &mut [f32], s: usize, hs: usize, n: usize, len: f32, seed
     }
 }
 
+// ------------------------------------------------------------------------------------------------ season filter
+
+/// The inputs of the Season Filter graphs, per channel of CH (the graphs list them in the order of their outputs).
+const SEASON_INPUTS: [&str; 12] = ["Input", "Input_0", "Input_4", "Input_3", "", "Input_1", "Input_5", "Input_6", "", "Height", "Input_7", ""];
+
+/// A grey channel under the season layers, bottom to top: moss, water, ice, snow (`k` holds water, ice, snow, moss).
+fn season_stack(p: f32, k: [f32; 4], moss: f32, water: f32, ice: f32, snow: f32) -> f32 {
+    lerp(lerp(lerp(lerp(p, moss, k[3]), water, k[0]), ice, k[1]), snow, k[2])
+}
+
+fn season_filter(cx: &Cx) -> Tex {
+    let (s, hs, seed) = (cx.s, cx.hs, cx.seed);
+    let (su, sv) = (s as f32, hs as f32);
+    let unit = |id: &str| cx.f(id).clamp(0.0, 1.0);
+    let m = Mat::read(cx, &SEASON_INPUTS);
+    let dx = cx.i("normal_format") == 0;
+    let (water, details, refraction, reflection) = (unit("water_level"), unit("water_details"), unit("refraction"), unit("reflection"));
+    let (ice, ice_details, snow, moss) = (unit("ice"), unit("ice_details"), unit("snow"), unit("moss"));
+    // no water, snow or moss: the material goes through untouched (ice only freezes water, the light only shades the layers)
+    if water <= 0.0 && snow <= 0.0 && moss <= 0.0 {
+        return emit(cx, &|c| m.get(c), &|_| None);
+    }
+    let (moss_col, water_col) = (cx.col("moss_color"), cx.col("water_color"));
+    let (light, (ly, lx)) = (unit("light_intensity"), (cx.f("light_angle") * TAU).sin_cos());
+    let (ry, rx) = (cx.f("reflection_angle") * TAU).sin_cos();
+    let (rx, ry) = (rx * unit("reflection_distance") * 0.25, ry * unit("reflection_distance") * 0.25);
+    let half = norm3([lx * 0.5, ly * 0.5, 1.0]);
+    let cells = 2 << cx.i("moss_scale").clamp(1, 4);
+    let mask = cx.img("Input_12").filter(|_| cx.b("mask"));
+    let n_in = m.get("normal");
+    // what the layers settle on: the height, or a relief rebuilt from the normal map
+    let relief = if cx.i("effect_from_height_normal") == 1 { crate::nodes2::normal_to_height(&n_in, dx, 0.5, 1.0) } else { m.get("height") };
+    let settled = if moss > 0.0 { ops::blur(&relief, 6.0 * cx.rs()) } else { relief.clone() };
+    // the water line, a little above 1 at full level so the highest peaks go under too
+    let lv = water * 1.03;
+    // the water's swell, stretched along the flow by a blur; the details add fine ripples
+    let ripple = if water > 0.0 {
+        let raw = Tex::from_fn(s, hs, |u, v| grey(noise(u, v, 5, 3, seed.wrapping_add(31)) + details * (noise(u, v, 20, 3, seed.wrapping_add(32)) - 0.5)));
+        ops::directional_blur(&raw, cx.f("flow_direction"), 0.2)
+    } else {
+        Tex::solid(s, hs, grey(0.5))
+    };
+    // the layers' own patterns: ripples, ice cracks and frost, snow grain, moss tufts
+    let pat = Tex::from_fn(s, hs, |u, v| {
+        let cracked = if water > 0.0 && ice > 0.0 && ice_details > 0.0 {
+            let c = crate::noise::voronoi(u, v, 9, 9, seed.wrapping_add(34), 1.0);
+            let line = 1.0 - smooth(0.0, 0.05, c.1 - c.0);
+            0.5 + ice_details * ((noise(u, v, 24, 3, seed.wrapping_add(35)) - 0.5) * 0.6 - line * 0.5)
+        } else {
+            0.5
+        };
+        let grain = if snow > 0.0 { noise(u, v, 32, 3, seed.wrapping_add(36)) } else { 0.5 };
+        let tuft = if moss > 0.0 { noise(u, v, cells * 3, 3, seed.wrapping_add(39)) } else { 0.5 };
+        [ripple.sample(u, v)[0], cracked, grain, tuft]
+    });
+    // how much of each layer shows: water (ice included), ice, snow, moss
+    let cover = Tex::from_fn(s, hs, |u, v| {
+        let r = g(&relief, u, v);
+        let um = mask.map(|t| g(t, u, v)).unwrap_or(1.0);
+        let wet = smooth(0.0, 0.02, lv - r) * um;
+        let mut frozen = 0.0;
+        if ice > 0.0 && wet > 0.0 {
+            // the shallows freeze first
+            let shallow = 1.0 - ((lv - r) / lv).clamp(0.0, 1.0);
+            let t = lerp(1.05, -0.15, ice);
+            frozen = wet * smooth(t, t + 0.1, noise(u, v, 5, 4, seed.wrapping_add(37)) * 0.55 + shallow * 0.45);
+        }
+        let mut drift = 0.0;
+        if snow > 0.0 {
+            // snow rests on what faces up and in the low parts, and melts on open water
+            let nn = dec_n(n_in.sample(u, v), dx);
+            let up = (nn[2] * 0.7 + nn[1].max(0.0) * 0.3).clamp(0.0, 1.0);
+            let t = lerp(1.2, -0.2, snow);
+            drift = smooth(t, t + 0.15, up * 0.5 + (1.0 - r) * 0.2 + noise(u, v, 8, 4, seed.wrapping_add(38)) * 0.4) * um * (1.0 - wet + frozen);
+        }
+        let mut growth = 0.0;
+        if moss > 0.0 {
+            // moss grows from the cavities, out of the water
+            let t = lerp(1.2, -0.2, moss);
+            let cavity = (g(&settled, u, v) - r).max(0.0) * 3.0;
+            growth = smooth(t, t + 0.15, noise(u, v, cells, 4, seed.wrapping_add(33)) * 0.6 + (1.0 - r) * 0.25 + cavity) * um * (1.0 - wet);
+        }
+        [wet, frozen, drift, growth]
+    });
+    let bump = Tex::from_fn(s, hs, |u, v| {
+        let (k, d) = (cover.sample(u, v), pat.sample(u, v));
+        grey((k[0] - k[1]) * (d[0] - 0.5) * 0.5 + k[1] * (d[1] - 0.5) * 0.35 + k[2] * (0.25 + (d[2] - 0.5) * 0.1) + k[3] * (0.1 + (d[3] - 0.5) * 0.4))
+    });
+    // the surface the layers make: their own relief over what is left of the material's
+    let surf = Tex::from_fn(s, hs, |u, v| {
+        let (du, dv) = (1.0 / su, 1.0 / sv);
+        let slope_u = (bump.sample(u + du, v)[0] - bump.sample(u - du, v)[0]) * su * 0.03;
+        let slope_v = (bump.sample(u, v + dv)[0] - bump.sample(u, v - dv)[0]) * sv * 0.03;
+        let k = cover.sample(u, v);
+        let keep = 1.0 - (k[0].max(k[2]) * 0.85).max(k[3] * 0.4);
+        let nn = dec_n(n_in.sample(u, v), dx);
+        enc_n([nn[0] * keep - slope_u, nn[1] * keep + slope_v, nn[2].max(0.2)], false)
+    });
+    let paint = |t: &Tex, u: f32, v: f32| -> [f32; 4] {
+        let p = t.sample(u, v);
+        let (k, d) = (cover.sample(u, v), pat.sample(u, v));
+        let nn = dec_n(surf.sample(u, v), false);
+        let shade = (1.0 + light * 1.6 * (nn[0] * lx + nn[1] * ly)).clamp(0.35, 1.65);
+        let tint = |c: [f32; 4], b: f32| [c[0] * b, c[1] * b, c[2] * b, p[3]];
+        let mut o = lerp4(p, tint(moss_col, (0.55 + 0.9 * d[3]) * shade), k[3]);
+        if k[0] > 0.0 {
+            let under = t.sample(u + nn[0] * refraction * 0.08, v - nn[1] * refraction * 0.08);
+            let depth = ((lv - g(&relief, u, v)) / lv).clamp(0.0, 1.0);
+            let sea = lerp4(under, tint(water_col, 1.0), (water_col[3] * (1.0 + depth)).min(1.0));
+            // the water mirrors the sky, or the shore where the mirrored point stands out of the water
+            let (ou, ov) = (u + rx + nn[0] * 0.03, v + ry - nn[1] * 0.03);
+            let mirror = lerp4(tint([0.62, 0.72, 0.8, 1.0], shade), t.sample(ou, ov), 1.0 - cover.sample(ou, ov)[0]);
+            let sea = lerp4(sea, mirror, reflection * (0.35 + (1.0 - nn[2]) * 3.0).min(1.0));
+            let glint = dot3(nn, half).max(0.0).powf(120.0) * light * 0.6;
+            o = lerp4(o, [sea[0] + glint, sea[1] + glint, sea[2] + glint, p[3]], k[0]);
+            o = lerp4(o, lerp4(under, tint([0.8, 0.88, 0.93, 1.0], (0.7 + 0.6 * d[1]) * shade), 0.8), k[1]);
+        }
+        o = lerp4(o, tint([0.93, 0.95, 0.97, 1.0], (0.9 + 0.2 * d[2]) * shade), k[2]);
+        [o[0].clamp(0.0, 1.0), o[1].clamp(0.0, 1.0), o[2].clamp(0.0, 1.0), p[3]]
+    };
+    let f = |c: &'static str| -> Tex {
+        let t = m.get(c);
+        if !channel_on(cx, "", c) {
+            return t;
+        }
+        // the graphs have no intensity for metallic
+        let id = format!("{}_intensity", if c == "ambientocclusion" { "ambient_occlusion" } else { c });
+        let ki = if cx.lib.input(&id).is_some() { unit(&id) } else { 1.0 };
+        Tex::from_fn(s, hs, |u, v| {
+            let p = t.sample(u, v);
+            let (k, d) = (cover.sample(u, v), pat.sample(u, v));
+            let any = 1.0 - (1.0 - k[0]) * (1.0 - k[2]) * (1.0 - k[3]);
+            if any * ki <= 0.0 {
+                return p;
+            }
+            let e = match c {
+                "diffuse" | "basecolor" => paint(&t, u, v),
+                "normal" => {
+                    let (a, b, w) = (dec_n(p, dx), dec_n(surf.sample(u, v), false), any * ki);
+                    return enc_n([lerp(a[0], b[0], w), lerp(a[1], b[1], w), lerp(a[2], b[2], w)], dx);
+                }
+                "specular" => lerp4(p, grey(0.22), any),
+                "glossiness" => grey(season_stack(p[0], k, 0.15 + 0.2 * d[3], 0.95, 0.75 - (0.5 - d[1]).max(0.0) * 0.6, 0.3)),
+                "roughness" => grey(season_stack(p[0], k, 0.85 - 0.2 * d[3], 0.05, 0.25 + (0.5 - d[1]).max(0.0) * 0.6, 0.7)),
+                "metallic" => grey(p[0] * (1.0 - any)),
+                "height" => {
+                    let flood = (lv - g(&relief, u, v)).max(0.0) * k[0];
+                    grey((p[0] + flood + k[1] * (d[1] - 0.5) * 0.03 + k[2] * (0.08 + 0.06 * d[2]) + k[3] * (0.02 + 0.03 * d[3])).clamp(0.0, 1.0))
+                }
+                "ambientocclusion" => grey(season_stack(p[0], k, p[0] * (0.6 + 0.6 * d[3]), 1.0, 1.0, 1.0)),
+                _ => p,
+            };
+            lerp4(p, e, ki)
+        })
+    };
+    emit(cx, &f, &|_| None)
+}
+
 // ------------------------------------------------------------------------------------------------ weathering
 
 fn weathering(cx: &Cx) -> Tex {
@@ -1312,31 +1471,54 @@ fn pbr_base_material(cx: &Cx) -> Tex {
     let (hpos, hrange) = (cx.f("height_position"), cx.f("height_range"));
     let height = Tex::from_fn(s, hs, |u, v| grey(height_in.map(|t| (hpos - 0.5) + g(t, u, v) * hrange * 2.0 + (0.5 - hrange)).unwrap_or(hpos).clamp(0.0, 1.0)));
     let nfh = cx.f("normal_from_height_intensity");
+    // per pixel: the connected maps where the node uses them, else the settings
+    let (base_in, metal_in) = (use_in("user_basecolor", "basecolor_input"), use_in("user_metallic", "metallic_input"));
+    let (diffuse_in, spec_in) = (use_in("user_diffuse", "diffuse_input"), use_in("user_specular", "specular_input"));
+    let (rough_in, gloss_in) = (use_in("user_roughness", "roughness_input"), use_in("user_glossiness", "glossiness_input"));
+    let base_at = |u: f32, v: f32| base_in.map(|t| t.sample(u, v)).unwrap_or(base_col);
+    let metal_at = |u: f32, v: f32| metal_in.map(|t| g(t, u, v)).unwrap_or(metal_v).clamp(0.0, 1.0);
+    let rough_at = |u: f32, v: f32| rough_in.map(|t| g(t, u, v)).unwrap_or_else(|| rough + (grunge(u, v) - 0.5) * rga).clamp(0.0, 1.0);
+    let gloss_at = |u: f32, v: f32| gloss_in.map(|t| g(t, u, v)).unwrap_or_else(|| gloss + (grunge(u, v) - 0.5) * gga).clamp(0.0, 1.0);
+    let (diffuse_col, spec_col) = (cx.col("diffuse_color"), cx.col("specular"));
+    let diffuse_at = |u: f32, v: f32| diffuse_in.map(|t| t.sample(u, v)).unwrap_or(diffuse_col);
+    let spec_at = |u: f32, v: f32| spec_in.map(|t| t.sample(u, v)).unwrap_or(spec_col);
+    // dielectric reflectance (linear F0): 2% .. 6%, 4% in the middle of the range
+    let f0 = lerp(0.02, 0.06, cx.f("specular_range").clamp(0.0, 1.0));
+    // 0: metallic / roughness, the other channels derived from it; 1: specular / glossiness, the other way round
+    let spec_gloss = cx.i("pbr_workflow") == 1;
     let f = |c: &'static str| -> Tex {
         match c {
-            "diffuse" => match use_in("user_diffuse", "diffuse_input") {
+            "diffuse" if spec_gloss => Tex::from_fn(s, hs, diffuse_at),
+            "diffuse" => match diffuse_in {
                 Some(t) => t.clone(),
-                None => {
-                    let d = cx.col("diffuse_color");
-                    let k = 1.0 - metal_v;
-                    Tex::solid(s, hs, [d[0] * k + base_col[0] * k * 0.0, d[1] * k, d[2] * k, 1.0])
-                }
+                None => Tex::from_fn(s, hs, |u, v| {
+                    let (b, k) = (base_at(u, v), 1.0 - metal_at(u, v));
+                    [b[0] * k, b[1] * k, b[2] * k, 1.0]
+                }),
             },
-            "basecolor" => use_in("user_basecolor", "basecolor_input").cloned().unwrap_or_else(|| Tex::solid(s, hs, base_col)),
+            "basecolor" if spec_gloss && base_in.is_none() => Tex::from_fn(s, hs, |u, v| {
+                let (d, sp, m) = (diffuse_at(u, v), spec_at(u, v), metal_at(u, v));
+                [lerp(d[0], sp[0], m), lerp(d[1], sp[1], m), lerp(d[2], sp[2], m), 1.0]
+            }),
+            "basecolor" => Tex::from_fn(s, hs, base_at),
             "normal" => match use_in("user_normal", "normal_input") {
                 Some(t) => t.clone(),
                 None => ops::normal_from_height(&height, nfh * 0.1, true),
             },
-            "specular" => use_in("user_specular", "specular_input").cloned().unwrap_or_else(|| Tex::solid(s, hs, cx.col("specular"))),
-            "glossiness" => match use_in("user_glossiness", "glossiness_input") {
+            "specular" if spec_gloss => Tex::from_fn(s, hs, spec_at),
+            "specular" => match spec_in {
                 Some(t) => t.clone(),
-                None => Tex::from_fn(s, hs, |u, v| grey((gloss + (grunge(u, v) - 0.5) * gga).clamp(0.0, 1.0))),
+                None => Tex::from_fn(s, hs, |u, v| {
+                    let (b, m) = (base_at(u, v), metal_at(u, v));
+                    let ch = |x: f32| to_srgb(lerp(f0, to_lin(x), m));
+                    [ch(b[0]), ch(b[1]), ch(b[2]), 1.0]
+                }),
             },
-            "roughness" => match use_in("user_roughness", "roughness_input") {
-                Some(t) => t.clone(),
-                None => Tex::from_fn(s, hs, |u, v| grey((rough + (grunge(u, v) - 0.5) * rga).clamp(0.0, 1.0))),
-            },
-            "metallic" => use_in("user_metallic", "metallic_input").cloned().unwrap_or_else(|| Tex::solid(s, hs, grey(metal_v))),
+            "glossiness" if spec_gloss => Tex::from_fn(s, hs, |u, v| grey(gloss_at(u, v))),
+            "glossiness" => Tex::from_fn(s, hs, |u, v| grey(gloss_in.map(|t| g(t, u, v)).unwrap_or_else(|| 1.0 - rough_at(u, v)))),
+            "roughness" if spec_gloss => Tex::from_fn(s, hs, |u, v| grey(rough_in.map(|t| g(t, u, v)).unwrap_or_else(|| 1.0 - gloss_at(u, v)))),
+            "roughness" => Tex::from_fn(s, hs, |u, v| grey(rough_at(u, v))),
+            "metallic" => Tex::from_fn(s, hs, |u, v| grey(metal_at(u, v))),
             "height" => height.clone(),
             "ambientocclusion" => use_in("user_ao", "ambientOcclusion_input").cloned().unwrap_or_else(|| Tex::solid(s, hs, grey(1.0))),
             _ => Tex::solid(s, hs, grey(1.0)),

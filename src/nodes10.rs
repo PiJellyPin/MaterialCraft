@@ -185,6 +185,8 @@ pub const LIBS: &[(&str, &str, &str)] = &[
     ("x_scatter_on_spline_grayscale", "spline_tools", "scatter_on_spline_grayscale"),
     ("x_scatter_splines_on_splines", "spline_tools", "scatter_splines_on_splines"),
     ("x_scratches_generator_normal", "pattern_scratches_generator", "scratches_generator_normal"),
+    ("x_season_filter", "season_filter", "season_filter"),
+    ("x_season_filter_material", "season_filter_material", "season_filter"),
     ("x_select_path", "paths_tools", "select_path"),
     ("x_shadows", "shadows", "shadows"),
     ("x_shape_splatter", "shape_splatter", "shape_splatter"),
@@ -311,7 +313,7 @@ pub fn label(kind: &str) -> Option<String> {
 
 pub fn category(kind: &str) -> &'static str {
     let k = kind.strip_prefix("x_").unwrap_or(kind);
-    if k.starts_with("mg_") || k.starts_with("material_") || k.ends_with("_weathering") || k.starts_with("pbr_") || k.starts_with("snow") || k.starts_with("water") || k == "mesh_data_combiner" || k == "multi_material_blend" || preset_material(kind) {
+    if k.starts_with("mg_") || k.starts_with("material_") || k.ends_with("_weathering") || k.starts_with("pbr_") || k.starts_with("snow") || k.starts_with("water") || k.starts_with("season") || k == "mesh_data_combiner" || k == "multi_material_blend" || preset_material(kind) {
         "Material"
     } else if k.starts_with("spline") || k.contains("path") || k.starts_with("scatter_") || k == "point_list" || k.starts_with("shape_splatter") || k.starts_with("panorama") || k == "blackbody" || k.starts_with("cube_3d") || k == "3d_texture_position" || k == "scratches_generator_normal" {
         "Generators"
@@ -442,6 +444,7 @@ fn note(kind: &str) -> Option<&'static str> {
         k if k.starts_with("x_shape_splatter") => "splatter data travels in MaterialCraft's own encoding: these nodes work together, not with other programs' splatter images",
         k if k.starts_with("x_3d_texture") => "3D textures are slice atlases in MaterialCraft's own layout (grid of slices, first slice top left)",
         k if k.ends_with("_weathering") => "the weathering is MaterialCraft's own (masks from curvature, occlusion and noise)",
+        k if k.starts_with("x_season_filter") => "the water, ice, snow and moss are MaterialCraft's own; the result is a still image, so the flow direction turns the ripples and does not animate them",
         "x_pbr_render" => "the render is MaterialCraft's own image-based shading of the material on the chosen shape",
         "x_rt_irradiance" => "irradiance is estimated from the height, emissive and an analytic sky",
         "x_get_size_color" | "x_get_size_grayscale" => "the size is written as pixel counts in the red and green channels",

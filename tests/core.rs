@@ -216,7 +216,7 @@ fn displacement_renders_every_shape_and_camera_without_panics() {
     use materialcraft::tex::Tex;
     let hm = Tex::gray_fn(32, 32, |u, v| (u * 6.0).sin() * 0.5 + 0.5 + v * 0.0);
     let (b, n, r, m, a) = (Tex::solid(4, 4, [0.8, 0.2, 0.2, 1.0]), Tex::solid(4, 4, [0.5, 0.5, 1.0, 1.0]), Tex::solid(4, 4, [0.4; 4]), Tex::solid(4, 4, [0.0, 0.0, 0.0, 1.0]), Tex::solid(4, 4, [1.0; 4]));
-    let maps = Maps { base: &b, normal: &n, rough: &r, metal: &m, ao: &a, emissive: None, height: Some(&hm), env: None };
+    let maps = Maps { base: &b, normal: &n, rough: &r, metal: &m, ao: &a, emissive: None, height: Some(&hm), opacity: None, env: None };
     for shape in 0..3 {
         let plain = render(&maps, &View { shape, relief: RELIEF_NONE, ..View::default() }, 64, 64);
         let center = plain.px[32 * 64 + 32];
@@ -1468,3 +1468,149 @@ fn colorspace_conversion_roundtrips_and_keeps_alpha() {
     assert!(colorspace::is_color_output("basecolor") && !colorspace::is_color_output("normal"));
 }
 
+
+#[test]
+fn rgba_merge_takes_the_alpha_from_a_grey_map() {
+    // a grey map's own alpha is 1: the alpha slot reads its grey value
+    let g = Graph::parse("size 32\nnode 1 fbm scale=4 seed=5\nnode 2 merge r=@1 g=@1 b=@1 a=@1\noutput basecolor 2\n").unwrap();
+    let out = g.evaluate(None).unwrap();
+    let t = &out["basecolor"];
+    assert!(t.px.iter().all(|p| (p[3] - p[0]).abs() < 1e-5), "alpha follows the grey map");
+    assert!(t.px.iter().any(|p| p[3] < 0.9));
+}
+
+const SEASON_MAT: &str = "size 64\nnode 1 fbm scale=5 octaves=4 seed=9\nnode 2 fbm scale=3 octaves=4 seed=2\nnode 3 normal in=@2 strength=3\nnode 4 color r=0.5 g=0.5 b=0.5\nnode 5 color r=0.8 g=0.8 b=0.8\nnode 7 gradient mode=0\nnode 8 color r=0 g=0 b=0\n";
+const SEASON_IN: &str = "Input=@1 Input_0=@1 Input_4=@3 Input_3=@4 Input_1=@4 Input_5=@5 Input_6=@5 Input_7=@5 Height=@2";
+
+fn season(kind: &str, params: &str, pin: &str) -> materialcraft::tex::Tex {
+    let g = Graph::parse(&format!("{SEASON_MAT}node 6 {kind} {SEASON_IN} {params}\noutput o 6.{pin}\n")).unwrap();
+    g.evaluate(None).unwrap()["o"].clone()
+}
+
+fn season_change(a: &str, b: &str, pin: &str) -> f32 {
+    let (x, y) = (season("x_season_filter", a, pin), season("x_season_filter", b, pin));
+    x.px.iter().zip(&y.px).map(|(p, q)| (0..3).map(|c| (p[c] - q[c]).abs()).sum::<f32>() / 3.0).sum::<f32>() / x.px.len() as f32
+}
+
+#[test]
+fn season_filter_leaves_the_material_alone_with_no_effect() {
+    let g = Graph::parse(&format!("{SEASON_MAT}output a 1\noutput h 2\noutput n 3\noutput r 5\n")).unwrap();
+    let src = g.evaluate(None).unwrap();
+    // ice, light and every look setting only act on a water, snow or moss layer
+    let quiet = "light_intensity=1 light_angle=0.4 ice=1 ice_details=1 water_details=1 refraction=1 reflection=1 flow_direction=0.3 moss_scale=1";
+    let same = |pin: &str, name: &str| {
+        let t = season("x_season_filter", quiet, pin);
+        assert!(t.px.iter().zip(&src[name].px).all(|(a, b)| (0..3).all(|c| (a[c] - b[c]).abs() < 1e-5)), "{pin} changed");
+    };
+    for (pin, name) in [("diffuse", "a"), ("basecolor", "a"), ("height", "h"), ("normal", "n"), ("roughness", "r"), ("metallic", "r"), ("ambient_occlusion", "r")] {
+        same(pin, name);
+    }
+    // the mask holds back every layer
+    let held = season("x_season_filter", "water_level=0.6 snow=0.6 moss=0.6 mask=1 Input_12=@8", "diffuse");
+    assert!(held.px.iter().zip(&src["a"].px).all(|(a, b)| (a[0] - b[0]).abs() < 1e-5), "a black mask keeps everything");
+}
+
+#[test]
+fn season_filter_water_floods_the_low_parts() {
+    let water = "water_level=0.5 ice=0";
+    let (h, r) = (season("x_season_filter", "", "height"), season("x_season_filter", water, "roughness"));
+    let flooded = season("x_season_filter", water, "height");
+    let (mut low, mut high) = (0, 0);
+    for i in 0..h.px.len() {
+        if h.px[i][0] < 0.45 {
+            low += 1;
+            assert!(r.px[i][0] < 0.1, "still water is smooth");
+            assert!((flooded.px[i][0] - 0.515).abs() < 0.01, "the surface is level");
+        } else if h.px[i][0] > 0.56 {
+            high += 1;
+            assert!((r.px[i][0] - 0.8).abs() < 1e-4, "dry ground keeps its roughness");
+            assert!((flooded.px[i][0] - h.px[i][0]).abs() < 1e-4);
+        }
+    }
+    assert!(low > 50 && high > 50, "the test relief has both ({low}, {high})");
+    for (a, b, pin) in [
+        ("water_level=0.4 ice=0", "water_level=0.6 ice=0", "diffuse"),
+        ("water_level=0.6 ice=0 water_details=0", "water_level=0.6 ice=0 water_details=1", "normal"),
+        ("water_level=0.6 ice=0 refraction=0 reflection=0", "water_level=0.6 ice=0 refraction=1 reflection=0", "diffuse"),
+        ("water_level=0.6 ice=0 reflection=0", "water_level=0.6 ice=0 reflection=1", "diffuse"),
+        ("water_level=0.6 ice=0 reflection_distance=0.1", "water_level=0.6 ice=0 reflection_distance=0.9", "diffuse"),
+        ("water_level=0.6 ice=0 reflection_angle=0.1", "water_level=0.6 ice=0 reflection_angle=0.6", "diffuse"),
+        ("water_level=0.6 ice=0 flow_direction=0", "water_level=0.6 ice=0 flow_direction=0.25", "normal"),
+        ("water_level=0.6 ice=0 water_color_0=0.03", "water_level=0.6 ice=0 water_color_0=0.9", "diffuse"),
+        ("water_level=0.6 ice=0 water_color_3=0", "water_level=0.6 ice=0 water_color_3=0.9", "diffuse"),
+    ] {
+        assert!(season_change(a, b, pin) > 2e-3, "{a} / {b} on {pin}: {}", season_change(a, b, pin));
+    }
+    // clear, still water with no reflection and no light shows the ground as it is
+    let clear = "water_level=1 ice=0 water_color_3=0 reflection=0 refraction=0 light_intensity=0";
+    let (a, b) = (season("x_season_filter", clear, "diffuse"), season("x_season_filter", "", "diffuse"));
+    assert!(a.px.iter().zip(&b.px).all(|(p, q)| (p[0] - q[0]).abs() < 1e-4), "still clear water hides nothing");
+}
+
+#[test]
+fn season_filter_ice_freezes_only_water() {
+    let (open, frozen) = ("water_level=0.6 ice=0", "water_level=0.6 ice=1");
+    assert!(season_change(open, frozen, "diffuse") > 0.05);
+    assert!(season_change(open, frozen, "roughness") > 0.02, "ice is rougher than water");
+    assert!(season_change("water_level=0.6 ice=1 ice_details=0", "water_level=0.6 ice=1 ice_details=1", "diffuse") > 2e-3);
+    assert!(season_change("water_level=0.6 ice=1 ice_details=0", "water_level=0.6 ice=1 ice_details=1", "normal") > 2e-3);
+    assert!(season_change("water_level=0.6 ice=0.3", "water_level=0.6 ice=0.6", "diffuse") > 2e-3, "it spreads with the amount");
+    assert!(season_change("ice=0", "ice=1", "diffuse") == 0.0, "no water, nothing to freeze");
+}
+
+#[test]
+fn season_filter_snow_and_moss_cover_the_material() {
+    let t = season("x_season_filter", "snow=1", "basecolor");
+    let lo = t.px.iter().fold(1.0f32, |m, p| m.min(p[0]));
+    let mean = t.px.iter().map(|p| p[0]).sum::<f32>() / t.px.len() as f32;
+    assert!(lo > 0.5 && t.px.iter().all(|p| p[2] >= p[0]), "full snow is white, a little cold: lowest {lo}, mean {mean}");
+    let some = season("x_season_filter", "snow=0.5", "diffuse");
+    let bare = season("x_season_filter", "", "diffuse");
+    let covered = some.px.iter().zip(&bare.px).filter(|(a, b)| (a[0] - b[0]).abs() > 0.02).count();
+    assert!(covered > 50 && covered < some.px.len() - 50, "half snow leaves gaps: {covered}");
+    assert!(season_change("snow=0", "snow=0.6", "height") > 2e-3, "snow lies on top");
+    assert!(season_change("snow=0", "snow=0.6", "metallic") > 2e-3);
+
+    let green = season("x_season_filter", "moss=1 light_intensity=0", "diffuse");
+    let m = green.px.iter().fold([0.0; 3], |s, p| [s[0] + p[0], s[1] + p[1], s[2] + p[2]]);
+    assert!(m[1] > m[0] && m[0] > m[2], "the default moss colour is green: {m:?}");
+    assert!(season_change("moss=0", "moss=0.6", "roughness") > 2e-3);
+    assert!(season_change("moss=0.7 moss_scale=1", "moss=0.7 moss_scale=4", "diffuse") > 2e-3);
+    assert!(season_change("moss=0.7 moss_color_0=0.1", "moss=0.7 moss_color_0=0.9", "diffuse") > 2e-3);
+    // water drowns the moss and melts the snow
+    assert!(season("x_season_filter", "moss=1 water_level=1 ice=0", "roughness").px.iter().all(|p| p[0] < 0.1));
+    assert!(season("x_season_filter", "snow=1 water_level=1 ice=0", "roughness").px.iter().all(|p| p[0] < 0.1));
+    assert!(season("x_season_filter", "snow=1 water_level=1 ice=1", "roughness").px.iter().all(|p| p[0] > 0.6), "but snow lies on ice");
+}
+
+#[test]
+fn season_filter_light_format_mask_and_blending() {
+    let snow = "snow=0.7 moss=0.3 water_level=0.4 ice=0";
+    assert!(season_change(&format!("{snow} light_intensity=0"), &format!("{snow} light_intensity=1"), "diffuse") > 2e-3);
+    assert!(season_change(&format!("{snow} light_intensity=1 light_angle=0"), &format!("{snow} light_intensity=1 light_angle=0.5"), "diffuse") > 2e-3);
+    assert!(season_change(&format!("{snow} normal_format=0"), &format!("{snow} normal_format=1"), "normal") > 2e-3);
+    assert!(season_change(&format!("{snow} effect_from_height_normal=0"), &format!("{snow} effect_from_height_normal=1"), "diffuse") > 2e-3);
+    // the mask switch and the map
+    assert!(season_change(snow, &format!("{snow} mask=1 Input_12=@7"), "diffuse") > 2e-3);
+    assert_eq!(season_change(snow, &format!("{snow} Input_12=@7"), "diffuse"), 0.0, "the map waits for the switch");
+    // each channel has its strength and its switch
+    for pin in ["diffuse", "basecolor", "normal", "specular", "glossiness", "roughness", "ambient_occlusion", "height"] {
+        let id = format!("{pin}_intensity");
+        assert!(season_change(&format!("{snow} {id}=1"), &format!("{snow} {id}=0.2"), pin) > 1e-3, "{id}");
+        assert_eq!(season_change(&format!("{snow} {id}=0"), "", pin), 0.0, "{id} at 0 keeps the input");
+    }
+    for pin in ["diffuse", "basecolor", "normal", "specular", "glossiness", "roughness", "metallic", "ambient_occlusion", "height"] {
+        assert_eq!(season_change(&format!("{snow} {pin}=0"), "", pin), 0.0, "switching {pin} off keeps the input");
+        assert!(season_change(snow, &format!("{snow} {pin}=0"), pin) > 1e-3, "{pin} has an effect to switch off");
+    }
+}
+
+#[test]
+fn season_filter_material_variant_has_no_base_colour() {
+    let g = Graph::parse(&format!("{SEASON_MAT}node 6 x_season_filter_material Input=@1 Input_4=@3 Height=@2 snow=1\noutput d 6.diffuse\noutput n 6.normal\n")).unwrap();
+    let o = g.evaluate(None).unwrap();
+    assert!(o["d"].px.iter().all(|p| p[0] > 0.5));
+    let specs = materialcraft::nodes10::outputs("x_season_filter_material");
+    assert!(!specs.contains(&"basecolor") && specs.contains(&"diffuse"));
+    assert!(materialcraft::nodes10::outputs("x_season_filter").contains(&"basecolor"));
+}
