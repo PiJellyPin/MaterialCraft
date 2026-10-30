@@ -216,7 +216,7 @@ fn displacement_renders_every_shape_and_camera_without_panics() {
     use materialcraft::tex::Tex;
     let hm = Tex::gray_fn(32, 32, |u, v| (u * 6.0).sin() * 0.5 + 0.5 + v * 0.0);
     let (b, n, r, m, a) = (Tex::solid(4, 4, [0.8, 0.2, 0.2, 1.0]), Tex::solid(4, 4, [0.5, 0.5, 1.0, 1.0]), Tex::solid(4, 4, [0.4; 4]), Tex::solid(4, 4, [0.0, 0.0, 0.0, 1.0]), Tex::solid(4, 4, [1.0; 4]));
-    let maps = Maps { base: &b, normal: &n, rough: &r, metal: &m, ao: &a, emissive: None, height: Some(&hm), env: None };
+    let maps = Maps { base: &b, normal: &n, rough: &r, metal: &m, ao: &a, emissive: None, height: Some(&hm), opacity: None, env: None };
     for shape in 0..3 {
         let plain = render(&maps, &View { shape, relief: RELIEF_NONE, ..View::default() }, 64, 64);
         let center = plain.px[32 * 64 + 32];
@@ -1468,3 +1468,173 @@ fn colorspace_conversion_roundtrips_and_keeps_alpha() {
     assert!(colorspace::is_color_output("basecolor") && !colorspace::is_color_output("normal"));
 }
 
+
+#[test]
+fn rgba_merge_takes_the_alpha_from_a_grey_map() {
+    // a grey map's own alpha is 1: the alpha slot reads its grey value
+    let g = Graph::parse("size 32\nnode 1 fbm scale=4 seed=5\nnode 2 merge r=@1 g=@1 b=@1 a=@1\noutput basecolor 2\n").unwrap();
+    let out = g.evaluate(None).unwrap();
+    let t = &out["basecolor"];
+    assert!(t.px.iter().all(|p| (p[3] - p[0]).abs() < 1e-5), "alpha follows the grey map");
+    assert!(t.px.iter().any(|p| p[3] < 0.9));
+}
+
+/// Pictures for every input of the older material graphs: each differs and all of them tile.
+const OLDER_GRAPH_MAPS: &str = "size 64\nnode 1 fbm scale=4 octaves=4 seed=2\nnode 2 fbm scale=3 octaves=4 seed=5\nnode 3 fbm scale=5 octaves=3 seed=8\nnode 4 fbm scale=2 octaves=3 seed=9\nnode 5 normal in=@1 strength=3\nnode 6 fbm scale=6 octaves=2 seed=11\nnode 7 colorize in=@2 p0=0 r0=0.8 g0=0.3 b0=0.1 p1=1 r1=0.2 g1=0.6 b1=0.9\nnode 8 normal in=@2 strength=3\n";
+
+/// Every older material graph with all its inputs connected, and the settings that wake up what is off by default.
+fn older_graphs() -> Vec<(String, String)> {
+    let weather = |kind: &str, extra: &str| (format!("x_{kind}"), format!("x_{kind} Diffuse=@7 Specular=@2 Height=@1 Normal_High_Poly=@5 Normal_Wold_Space=@5 AO=@3 Curvature=@6 Dust=0.5 Dirtiness=0.5 Age=0.7 {extra}"));
+    let mut v = vec![
+        (String::from("x_directionnal_leaks"), String::from("x_directionnal_leaks Input_2=@7 Input=@5 Input_6=@6 Input_4=@5 Input_1=@1 Input_5=@3 Input_3=@2 dirt_map_input=0")),
+        (String::from("x_edge_blur"), String::from("x_edge_blur Input_2=@7 Input_4=@7 Input_1=@1 Input_3=@2")),
+        (String::from("x_edge_spatter"), String::from("x_edge_spatter Input_2=@7 Input_4=@7 Input_1=@1 Input_3=@2")),
+        (String::from("x_edge_dirt"), String::from("x_edge_dirt Input_2=@7 Input=@7 Input_1=@1 Input_3=@2")),
+        (String::from("x_selective_dirt"), String::from("x_selective_dirt Input_2=@7 Input=@7 Input_1=@1 Input_4=@2")),
+        (String::from("x_occlusion"), String::from("x_occlusion Input_2=@7 Input_1=@1 Input_3=@2")),
+        (String::from("x_occlusion_noise"), String::from("x_occlusion_noise Input_2=@7 Input_1=@1 Input_3=@2 level=0.8")),
+        (String::from("x_random_dirt"), String::from("x_random_dirt Input_2=@7 Input_3=@2")),
+        (String::from("x_sun_bleach"), String::from("x_sun_bleach Input_2=@7 Input=@5 Input_1=@1 Input_3=@2")),
+        (String::from("x_moss_weahtering"), String::from("x_moss_weahtering Input_2=@7 Input=@5 Input_6=@2 Input_3=@7 Input_1=@1 Input_4=@3 Input_5=@6")),
+        (String::from("x_material_composite"), String::from("x_material_composite Layer_One_Ambient=@1 Layer_One_Diffuse=@7 Layer_One_Specular=@7 Layer_One_Height=@2 layerOneNormal=@5 Layer_One_Opacity=@3 Layer_One_Emissive=@7 Layer_Zero_Ambient=@2 Layer_Zero_Diffuse=@5 Layer_Zero_Specular=@5 Layer_Zero_Height=@1 layerZeroNormal=@8 Layer_Zero_Opacity=@4 Layer_Zero_Emissive=@5 Composite_Mask=@6 Ambient_Blending_Amount=0.6 Diffuse_Blending_Amount=0.6 Specular_Blending_Amount=0.6 Height_Blending_Amount=0.6 Normal_Blending_Amount=0.6 Opacity_Blending_Amount=0.6 Emissive_Blending_Amount=0.6")),
+        (String::from("x_material_transforms"), String::from("x_material_transforms Diffuse_In=@7 Specular_In=@7 Height_In=@1 Opacity_In=@2 Emissive_In=@7")),
+        (String::from("x_basecolor_metallic_roughness_to_diffuse_specular_glossiness"), String::from("x_basecolor_metallic_roughness_to_diffuse_specular_glossiness basecolor=@7 roughness=@1 metallic=@2")),
+        (String::from("x_diffuse_metallic_roughness_to_diffuse_specular_glossiness"), String::from("x_diffuse_metallic_roughness_to_diffuse_specular_glossiness diffuse=@7 roughness=@1 metallic=@2")),
+    ];
+    v.push(weather("metal_weathering", "Paint_Peeling=0.6 Rust=0.6"));
+    v.push(weather("wood_weathering", "Varnish_Peeling=0.6"));
+    v
+}
+
+#[test]
+fn every_setting_of_the_older_material_graphs_changes_the_picture() {
+    use materialcraft::{nodes10, params::PK};
+    let render = |line: &str, kind: &str| -> Vec<Vec<[f32; 4]>> {
+        let outs = nodes10::outputs(kind);
+        let mut text = format!("{OLDER_GRAPH_MAPS}node 20 {line}\n");
+        if outs.is_empty() {
+            text += "output o0 20\n";
+        }
+        for (i, o) in outs.iter().enumerate() {
+            text += &format!("output o{i} 20.{o}\n");
+        }
+        let r = Graph::parse(&text).unwrap_or_else(|e| panic!("{kind}: {e}")).evaluate(None).unwrap_or_else(|e| panic!("{kind}: {e}"));
+        (0..outs.len().max(1)).map(|i| r[&format!("o{i}")].px.clone()).collect()
+    };
+    let mean_diff = |a: &[Vec<[f32; 4]>], b: &[Vec<[f32; 4]>]| {
+        let per = |x: &[[f32; 4]], y: &[[f32; 4]]| x.iter().zip(y).map(|(p, q)| (0..3).map(|c| (p[c] - q[c]).abs()).sum::<f32>()).sum::<f32>() / x.len() as f32;
+        a.iter().zip(b).map(|(x, y)| per(x, y)).fold(0.0f32, f32::max)
+    };
+    let mut still = Vec::new();
+    for (kind, line) in older_graphs() {
+        let base = render(&line, &kind);
+        for p in nodes10::pdefs(&kind) {
+            if p.name == "seed" || p.name == "ofmt" {
+                continue;
+            }
+            // the far end of the setting's range
+            let v = match p.k {
+                PK::F { def, lo, hi } => if (hi - def).abs() >= (def - lo).abs() { hi } else { lo },
+                PK::I { def, lo, hi } => if def == 0 { 1.0_f32.min(hi as f32) } else if (hi - def).abs() >= (def - lo).abs() { hi as f32 } else { lo as f32 },
+                PK::B { def } => if def { 0.0 } else { 1.0 },
+                _ => continue,
+            };
+            // (a full turn or a whole tile's offset is the same picture: try a point inside the range too)
+            let inside = match p.k {
+                PK::F { lo, hi, .. } => lo + (hi - lo) * 0.37,
+                _ => v,
+            };
+            if [v, inside].iter().all(|v| mean_diff(&base, &render(&format!("{line} {}={v}", p.name), &kind)) < 1e-3) {
+                still.push(format!("{kind}.{}", p.name));
+            }
+        }
+    }
+    assert!(still.is_empty(), "settings with no effect: {still:?}");
+}
+
+#[test]
+fn older_adjustments_paint_through_their_masks() {
+    let pre = "size 8\nnode 1 color r=0.8 g=0.4 b=0.2\nnode 2 color r=0.25 g=0.25 b=0.25\nnode 3 color r=0.5 g=0.5 b=0.5\n";
+    let px = |line: &str| Graph::parse(&format!("{pre}node 4 {line}\noutput o 4\n")).unwrap().evaluate(None).unwrap()["o"].px[0];
+    let near = |a: [f32; 4], b: [f32; 3]| (0..3).all(|c| (a[c] - b[c]).abs() < 2e-3);
+    // AO 0.25 with level 0.5 and no contrast: smoothstep(0, 1, 0.75) of black
+    let k = 0.84375;
+    assert!(near(px("x_occlusion Input_2=@1 Input_1=@2"), [0.8 * (1.0 - k), 0.4 * (1.0 - k), 0.2 * (1.0 - k)]));
+    // switched off, the input goes through
+    assert!(near(px("x_occlusion Input_2=@1 Input_1=@2 enable=0"), [0.8, 0.4, 0.2]));
+    // opacity and mask scale the paint, colour picks it
+    let half = k * 0.5;
+    assert!(near(px("x_occlusion Input_2=@1 Input_1=@2 opacity=0.5"), [0.8 * (1.0 - half), 0.4 * (1.0 - half), 0.2 * (1.0 - half)]));
+    assert!(near(px("x_occlusion Input_2=@1 Input_1=@2 Input_3=@3"), [0.8 * (1.0 - half), 0.4 * (1.0 - half), 0.2 * (1.0 - half)]));
+    let p = px("x_occlusion Input_2=@1 Input_1=@2 color_0=1 color_1=1 color_2=1");
+    assert!(near(p, [0.8 + 0.2 * k, 0.4 + 0.6 * k, 0.2 + 0.8 * k]));
+}
+
+#[test]
+fn leaks_run_along_their_angle_and_length() {
+    // a bright band: the curvature is convex only in the rows of the band
+    let pre = "size 64\nnode 1 color r=0 g=0 b=0\nnode 2 pixel_processor expr=\"1-0.5*step(0.04,abs(v-0.25))\"\n";
+    let run = |extra: &str| {
+        let g = Graph::parse(&format!("{pre}node 3 x_directionnal_leaks Input_2=@1 Input_1=@2 amount=0 color_0=1 color_1=1 color_2=1 Contrast=1 {extra}\noutput o 3\n")).unwrap();
+        let t = g.evaluate(None).unwrap()["o"].clone();
+        (0..64).map(|y| t.px[y * 64 + 32][0]).collect::<Vec<f32>>()
+    };
+    let down = run("angle=0.75 lenght=4");
+    assert!(down[22] > 0.5 && down[10] < 0.01, "the band itself leaks: {down:?}");
+    assert!(down[27] > 0.35 && down[27] < 0.65, "the leak runs down the picture, fading: {down:?}");
+    assert!(down[8] < 0.01, "and not up it: {down:?}");
+    assert!(down[22] > down[27] && down[27] > down[32], "every streak tapers: {down:?}");
+    let up = run("angle=0.25 lenght=4");
+    assert!(up[8] > 0.5 && up[27] < 0.01, "the angle turns it round: {up:?}");
+    let short = run("angle=0.75 lenght=1");
+    assert!(short[27] < 0.01, "a shorter leak stops sooner: {short:?}");
+    let biased = run("angle=0.75 lenght=4 bias=1");
+    assert!(biased[27] < down[27] * 0.6, "the bias makes it fade along the way");
+}
+
+#[test]
+fn material_composite_mixes_each_channel_by_its_own_mode() {
+    let pre = "size 8\nnode 1 color r=0.2 g=0.4 b=0.6\nnode 2 color r=0.6 g=0.5 b=0.2\nnode 3 color r=0.5 g=0.5 b=0.5\nnode 4 color r=0.25 g=0.25 b=0.25\n";
+    let base = "x_material_composite Layer_Zero_Diffuse=@1 Layer_One_Diffuse=@2 Layer_Zero_Height=@3 Layer_One_Height=@4 Layer_Zero_Ambient=@3 Layer_One_Ambient=@4 Layer_One_Opacity=@3 Composite_Mask=@3";
+    let px = |line: &str, pin: &str| Graph::parse(&format!("{pre}node 5 {base} {line}\noutput o 5.{pin}\n")).unwrap().evaluate(None).unwrap()["o"].px[0];
+    let near = |a: [f32; 4], b: [f32; 3]| (0..3).all(|c| (a[c] - b[c]).abs() < 2e-3);
+    assert!(near(px("", "Diffuse"), [0.6, 0.5, 0.2]), "layer one on top");
+    assert!(near(px("Diffuse_Blending_Amount=0.5", "Diffuse"), [0.4, 0.45, 0.4]));
+    assert!(near(px("Diffuse_Blending_Mode=1", "Diffuse"), [0.8, 0.9, 0.8]), "add");
+    assert!(near(px("Diffuse_Blending_Mode=3", "Diffuse"), [0.12, 0.2, 0.12]), "multiply");
+    assert!(near(px("Diffuse_Blending_Mode=5", "Diffuse"), [0.6, 0.5, 0.6]), "max");
+    assert!(near(px("Use_Composite_Mask=1", "Diffuse"), [0.4, 0.45, 0.4]), "the mask");
+    assert!(near(px("Use_Layer_One_Opacity=1", "Diffuse"), [0.4, 0.45, 0.4]), "layer one's opacity");
+    assert!(near(px("Use_Composite_Mask=1 Use_Layer_One_Opacity=1", "Diffuse"), [0.3, 0.425, 0.5]), "both");
+    // one output's mode leaves the others alone, and the ambient output has no name of a channel
+    assert!(near(px("Diffuse_Blending_Mode=3", "Ambient"), [0.25, 0.25, 0.25]));
+    assert!(near(px("Height_Balance=0.5", "Height"), [0.5, 0.5, 0.5]));
+}
+
+#[test]
+fn material_transforms_move_the_material() {
+    let pre = "size 16\nnode 1 pixel_processor expr=\"1-step(0.5,u)\"\n";
+    let run = |line: &str| Graph::parse(&format!("{pre}node 2 x_material_transforms Diffuse_In=@1 {line}\noutput o 2.Diffuse\n")).unwrap().evaluate(None).unwrap()["o"].clone();
+    let t = run("");
+    assert_eq!(t.px, Graph::parse(&format!("{pre}output o 1\n")).unwrap().evaluate(None).unwrap()["o"].px, "the defaults change nothing");
+    let moved = run("Offset_0=0.5");
+    assert!(moved.px[0][0] < 0.01 && moved.px[12][0] > 0.99, "half a turn of the tile");
+    let twice = run("ScaleUV_0=200");
+    assert!(twice.px[1][0] < 0.01 && twice.px[5][0] > 0.99 && twice.px[9][0] < 0.01 && twice.px[13][0] > 0.99, "200 repeats it twice");
+    let turned = run("Rotation=0.25");
+    assert!((turned.px[1 * 16 + 8][0] - turned.px[15 * 16 + 8][0]).abs() > 0.9, "a quarter turn lays the edge flat");
+}
+
+#[test]
+fn specular_glossiness_conversions_follow_the_metallic_map() {
+    let pre = "size 8\nnode 1 color r=0.8 g=0.4 b=0.2\nnode 2 color r=0.3 g=0.3 b=0.3\nnode 3 color r=0 g=0 b=0\nnode 4 color r=1 g=1 b=1\n";
+    for (kind, input) in [("x_basecolor_metallic_roughness_to_diffuse_specular_glossiness", "basecolor"), ("x_diffuse_metallic_roughness_to_diffuse_specular_glossiness", "diffuse")] {
+        let px = |m: u32, pin: &str| Graph::parse(&format!("{pre}node 5 {kind} {input}=@1 roughness=@2 metallic=@{m}\noutput o 5.{pin}\n")).unwrap().evaluate(None).unwrap()["o"].px[0];
+        let near = |a: [f32; 4], b: [f32; 3]| (0..3).all(|c| (a[c] - b[c]).abs() < 2e-3);
+        assert!(near(px(3, "diffuse"), [0.8, 0.4, 0.2]), "a dielectric keeps its colour as diffuse");
+        assert!(near(px(4, "diffuse"), [0.0, 0.0, 0.0]), "a metal has none");
+        assert!((px(3, "specular")[0] - 0.2195).abs() < 2e-3, "4% reflectance, sRGB-encoded");
+        assert!(near(px(4, "specular"), [0.8, 0.4, 0.2]), "a metal reflects its colour");
+        assert!(near(px(3, "glossiness"), [0.7, 0.7, 0.7]));
+    }
+}

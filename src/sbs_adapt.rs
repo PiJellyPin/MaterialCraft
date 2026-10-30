@@ -2554,6 +2554,7 @@ mod audit {
         for g in crate::sbs_lib::all() {
             let (kind, f): (&'static str, fn(&mut Ad)) = match adapter(g.package, g.id) {
                 Some(a) => (a.kind, a.f),
+                None if crate::nodes10::kind_for(g.package, g.id).is_some() => continue,
                 None => match crate::sbs_import::library_kind(g.id) {
                     Some(k) => (k, generic),
                     None => continue,

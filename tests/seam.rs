@@ -255,3 +255,46 @@ fn non_square_size_round_trips_through_the_file_format() {
     let t = &g.evaluate(Some(128)).unwrap()["o"];
     assert_eq!((t.w, t.h), (128, 64));
 }
+
+/// The older material graphs (`nodes10_ma`) on tiling inputs, through every output.
+#[test]
+fn older_material_graphs_are_seamless() {
+    let pre = "size 128\nnode 1 fbm scale=4 octaves=4 seed=2\nnode 2 fbm scale=3 octaves=4 seed=5\nnode 3 fbm scale=5 octaves=3 seed=8\nnode 5 normal in=@1 strength=3\nnode 6 fbm scale=6 octaves=2 seed=11\nnode 7 colorize in=@2 p0=0 r0=0.8 g0=0.3 b0=0.1 p1=1 r1=0.2 g1=0.6 b1=0.9\n";
+    let weather = "Diffuse=@7 Specular=@2 Height=@1 Normal_High_Poly=@5 Normal_Wold_Space=@5 AO=@3 Curvature=@6 Dust=0.5 Dirtiness=0.5 Age=0.7";
+    let cases: Vec<String> = vec![
+        "x_directionnal_leaks Input_2=@7 Input_1=@1 Input_5=@3 lenght=8".into(),
+        "x_directionnal_leaks Input_2=@7 Input_1=@1 angle=0.1 lenght=20 bias=0.5".into(),
+        "x_edge_blur Input_2=@7 Input_1=@1 blur_radius=8 level=0.8".into(),
+        "x_edge_dirt Input_2=@7 Input_1=@1 level=0.8".into(),
+        "x_edge_spatter Input_2=@7 Input_1=@1 radius=8 level=0.8".into(),
+        "x_occlusion Input_2=@7 Input_1=@1".into(),
+        "x_occlusion_noise Input_2=@7 Input_1=@1 level=0.8 noise_minlevel=2 noise_maxlevel=6".into(),
+        "x_random_dirt Input_2=@7 noise_distortion=1".into(),
+        "x_random_dirt Input_2=@7 Input_3=@2 image_input=1".into(),
+        "x_selective_dirt Input_2=@7 Input_1=@1 level=0.8".into(),
+        "x_sun_bleach Input_2=@7 Input=@5 Input_1=@1 ao_radius=1".into(),
+        format!("x_metal_weathering {weather} Paint_Peeling=0.6 Rust=0.6 Rust_Peeling=0.7"),
+        format!("x_metal_weathering {weather} Paint_Cracks_Scale=9 Paint_Peeling=0.8 Sharp_Edges_Scratches_Warp_Intensity=1"),
+        format!("x_wood_weathering {weather} Varnish_Peeling=0.6 Cracks_Scale=7 Cracks_Warp_Intensity=1"),
+        "x_moss_weahtering Input_2=@7 Input=@5 Input_6=@2 Input_3=@7 Input_1=@1 Input_4=@3".into(),
+        "x_material_composite Layer_One_Diffuse=@7 Layer_Zero_Diffuse=@5 Layer_One_Height=@1 Layer_Zero_Height=@2 layerOneNormal=@5 layerZeroNormal=@5 Composite_Mask=@3 Use_Composite_Mask=1 Height_Auto_Level=1 Normal_Method=1".into(),
+        "x_material_transforms Diffuse_In=@7 Height_In=@1 Offset_0=0.3 Offset_1=0.2".into(),
+        "x_material_transforms Diffuse_In=@7 Height_In=@1 ScaleUV_0=200 ScaleUV_1=300 Rotation=0.25".into(),
+        "x_basecolor_metallic_roughness_to_diffuse_specular_glossiness basecolor=@7 roughness=@1 metallic=@2".into(),
+    ];
+    let mut bad = Vec::new();
+    for line in &cases {
+        let kind = line.split(' ').next().unwrap();
+        let outs = materialcraft::nodes10::outputs(kind);
+        let pins: Vec<String> = if outs.is_empty() { vec![String::new()] } else { outs.iter().map(|o| format!(".{o}")).collect() };
+        for pin in pins {
+            let g = Graph::parse(&format!("{pre}node 20 {line}\noutput o 20{pin}\n")).unwrap();
+            let r = g.evaluate(None).unwrap_or_else(|e| panic!("{line}: {e}"));
+            let (s, i) = seam(&r["o"]);
+            if s > i * 1.5 + 0.01 {
+                bad.push(format!("{line}{pin}: seam {s:.4} inner {i:.4}"));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}

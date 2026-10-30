@@ -30,7 +30,7 @@ fn mat(base: [f32; 3], rough: f32, metal: f32) -> M {
 }
 
 fn maps(m: &M) -> Maps<'_> {
-    Maps { base: &m.base, normal: &m.normal, rough: &m.rough, metal: &m.metal, ao: &m.ao, emissive: None, height: None, env: None }
+    Maps { base: &m.base, normal: &m.normal, rough: &m.rough, metal: &m.metal, ao: &m.ao, emissive: None, height: None, opacity: None, env: None }
 }
 
 fn plain_view(env: &str) -> View {
@@ -389,4 +389,32 @@ fn tone_mappers_stay_in_range_and_rise() {
             prev = y[0];
         }
     }
+}
+
+#[test]
+fn transparent_texels_are_cut_out() {
+    // in a white furnace on a black background: an opaque ball shows about 1, a transparent one the background
+    let v = plain_view("furnace");
+    let opaque = mat([1.0; 3], 1.0, 0.0);
+    let mut clear = mat([1.0; 3], 1.0, 0.0);
+    clear.base = Tex::solid(4, 4, [1.0, 1.0, 1.0, 0.0]);
+    let mut half = mat([1.0; 3], 1.0, 0.0);
+    half.base = Tex::solid(4, 4, [1.0, 1.0, 1.0, 0.5]);
+    let lum = |c: [f32; 3]| (c[0] + c[1] + c[2]) / 3.0;
+    let raster_centre = |m: &Maps| lum(centre_mean(&raster::render_frame(m, &v, 96, 96).0.hdr, 8));
+    let full = raster_centre(&maps(&opaque));
+    assert!(full > 0.9, "opaque ball {full}");
+    assert!(raster_centre(&maps(&clear)) < 0.02, "a zero alpha hides the ball");
+    // partial opacity is a dither pattern: about half of the pixels, on average over the area
+    let h = raster_centre(&maps(&half));
+    assert!(h > full * 0.35 && h < full * 0.65, "half alpha {h} (opaque {full})");
+    // an opacity map wins over the base colour's alpha
+    let black = Tex::solid(4, 4, [0.0, 0.0, 0.0, 1.0]);
+    let white = Tex::solid(4, 4, [1.0; 4]);
+    assert!(raster_centre(&Maps { opacity: Some(&black), ..maps(&opaque) }) < 0.02, "a black opacity map hides the ball");
+    assert!(raster_centre(&Maps { opacity: Some(&white), ..maps(&clear) }) > 0.9, "a white opacity map shows it");
+    // the path tracer lets rays through transparent texels too
+    let pt_centre = |m: &Maps| lum(centre_mean(&pt::render(m, &v, 48, 48, 8), 4));
+    assert!(pt_centre(&maps(&opaque)) > 0.8);
+    assert!(pt_centre(&maps(&clear)) < 0.02, "path tracer: a zero alpha hides the ball");
 }
