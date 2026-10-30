@@ -104,7 +104,7 @@ fn load(path: &str) -> Result<Graph, String> {
         }
     }
     if !path.to_ascii_lowercase().ends_with(".sbs") {
-        return Err(format!("{path}: only Substance packages (.sbs) can be read"));
+        return Err(format!("{path}: only .sbs packages can be read"));
     }
     // linked files are looked for next to the package too
     if let Some(dir) = Path::new(path).parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -547,7 +547,7 @@ fn run(args: &[String]) -> Result<(), String> {
                         println!("wrote {}", d.join("preview.png").display());
                     }
                     if r3d {
-                        let maps = Maps { base: b, normal: n, rough: r, metal: m, ao: a, emissive: out.get("emissive"), height: out.get("height"), env: None };
+                        let maps = Maps { base: b, normal: n, rough: r, metal: m, ao: a, emissive: out.get("emissive"), height: out.get("height"), opacity: out.get("opacity"), env: None };
                         for (label, id) in render3d::SHAPES.iter() {
                             let name: String = label.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
                             let v = View { shape: *id, ..View::default() };

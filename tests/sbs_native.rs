@@ -187,3 +187,132 @@ fn broken_packages_are_errors_not_panics() {
     let (_, warnings) = sbs_native::load(&odd, None).expect("damaged links should produce warnings");
     assert!(!warnings.is_empty(), "all_nodes.sbs: broken link was silently accepted");
 }
+
+#[test]
+fn a_renamed_output_keeps_its_users() {
+    let mut g = sbs_native::new_package("mat", 64);
+    let out = sbs_native::add_output(&mut g, "baseColor", Some("base"), [0.0, 0.0]);
+    sbs_native::add_output(&mut g, "normal", Some("nrm"), [0.0, 80.0]);
+    // a graph of the package that runs this one and reads the output by name
+    let mut user = sbs_native::new_package("user", 64);
+    user.nodes.insert(1, Node { kind: "sbs:graph".into(), strs: [("#graph".to_string(), "mat".to_string())].into(), ..Default::default() });
+    let mut reader = Node { kind: "sbs:blend".into(), ..Default::default() };
+    reader.ins.insert("source".into(), 1);
+    reader.in_out.insert("source".into(), "base".into());
+    user.nodes.insert(2, reader);
+
+    assert!(sbs_native::rename_output(&mut g, out, "nrm").is_err(), "two outputs cannot share a name");
+    assert!(sbs_native::rename_output(&mut g, out, "bad name").is_err());
+    assert_eq!(sbs_native::rename_output(&mut g, out, "albedo").unwrap(), ("base".to_string(), "albedo".to_string()));
+    sbs_native::retarget_output(&mut user, "mat", "base", "albedo");
+    assert_eq!(user.nodes[&2].in_out["source"], "albedo");
+    assert_eq!(sbs_native::label(&g.nodes[&out], &g), "albedo");
+    assert!(g.output_nodes().iter().any(|(usage, ident, id)| *id == out && usage == "basecolor" && ident == "albedo"));
+    let text = sbs_native::save_text(&g).unwrap();
+    assert!(text.contains("\"albedo\"") && !text.contains("\"base\""), "{text}");
+}
+
+#[test]
+fn pbr_base_material_inputs_follow_their_switches() {
+    let mut n = Node { kind: "sbs:lib:pbr_base_material/pbr_base_material".into(), ..Default::default() };
+    assert!(!sbs_native::input_switches(&n).is_empty());
+    assert!(!sbs_native::input_used(&n, "basecolor_input"), "every map input starts off");
+    n.strs.insert("user_basecolor".into(), PVal::Const { ty: PTy::B, raw: "1".into(), rel: Some("0".into()) }.enc());
+    assert!(sbs_native::input_used(&n, "basecolor_input"));
+    assert!(!sbs_native::input_used(&n, "normal_input"));
+    // inputs without a switch are always read
+    assert!(sbs_native::input_used(&Node { kind: "sbs:blend".into(), ..Default::default() }, "source"));
+}
+
+#[test]
+fn a_pass_through_reads_one_output_of_a_material_node() {
+    // the 3D view shows a material node through one pass-through per output
+    let mut g = sbs_native::new_package("m", 32);
+    let mut n = Node { kind: "sbs:lib:pbr_base_material/pbr_base_material".into(), ..Default::default() };
+    n.strs.insert("metallic".into(), PVal::Const { ty: PTy::F(1), raw: "0".into(), rel: None }.enc());
+    n.strs.insert("roughness".into(), PVal::Const { ty: PTy::F(1), raw: "0.3".into(), rel: None }.enc());
+    g.nodes.insert(5, n);
+    for (id, pin) in [(100, "diffuse"), (101, "roughness"), (102, "glossiness"), (103, "normal")] {
+        let mut t = Node { kind: "sbs:passthrough".into(), ..Default::default() };
+        t.ins.insert("input".into(), 5);
+        t.in_out.insert("input".into(), pin.into());
+        g.nodes.insert(id, t);
+    }
+    let keep = [100, 101, 102, 103];
+    let r = g.evaluate_all_cached_ex(32, &keep, &[], 0, &std::sync::Arc::new(materialcraft::graph::NodeCache::new(64)), None, false, &mut |_| {});
+    let px = |id: u32| r.kept.get(&id).unwrap_or_else(|| panic!("{id}: {:?}", r.errors.get(&id))).px[0];
+    assert!((px(100)[0] - 0.498).abs() < 0.01, "a dielectric's diffuse is its base colour");
+    assert!((px(101)[0] - 0.3).abs() < 1e-4);
+    assert!((px(102)[0] - 0.7).abs() < 1e-4, "glossiness follows roughness");
+    assert_eq!(px(103), [0.5, 0.5, 1.0, 1.0]);
+}
+
+#[test]
+fn a_graph_saved_as_template_starts_new_projects() {
+    use materialcraft::user_templates;
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("user_templates_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(user_templates::list(&dir).is_empty(), "no folder yet: no templates");
+    let mut g = sbs_native::new_package("brick_base", 64);
+    sbs_native::add_output(&mut g, "baseColor", Some("albedo"), [0.0, 0.0]);
+    sbs_native::add_output(&mut g, "roughness", None, [0.0, 80.0]);
+    let mut n = Node { kind: "sbs:uniform".into(), ..Default::default() };
+    n.strs.insert("outputcolor".into(), PVal::Const { ty: PTy::F(4), raw: "1 0 0 1".into(), rel: None }.enc());
+    g.nodes.insert(7, n);
+
+    assert!(user_templates::save(&dir, "  ", &g, "brick_base").is_err(), "a template needs a name");
+    let p = user_templates::save(&dir, "My Bricks/v2", &g, "brick_base").unwrap();
+    assert_eq!(p.file_name().unwrap(), "My Bricks_v2.sbs", "unsafe characters leave the file name");
+    let list = user_templates::list(&dir);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].name, "My Bricks_v2");
+    assert_eq!(user_templates::outputs(&list[0]).unwrap(), ["albedo", "roughness"]);
+
+    // a new project: a copy with the graph renamed, the nodes and outputs kept
+    let copy = user_templates::instantiate(&list[0], "Wall 01").unwrap();
+    assert_eq!(sbs_native::graph_name(&copy), "Wall_01");
+    assert_eq!(copy.nodes.values().filter(|n| n.kind == "sbs:uniform").count(), 1);
+    assert_eq!(copy.output_idents(), ["albedo", "roughness"]);
+    // or a graph added to a package that is open
+    let mut other = sbs_native::new_package("other", 64);
+    let (first, added, _) = sbs_native::add_package(&mut other, copy).unwrap();
+    assert_eq!((first.as_str(), added), ("Wall_01", 1));
+    assert!(other.subgraphs.contains_key("Wall_01"));
+
+    // saving under the same name replaces the template
+    user_templates::save(&dir, "My Bricks/v2", &g, "brick_base").unwrap();
+    assert_eq!(user_templates::list(&dir).len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_graph_a_package_opens_on_can_be_deleted() {
+    let mut g = sbs_native::new_package("first", 64);
+    sbs_native::add_output(&mut g, "baseColor", None, [0.0, 0.0]);
+    // the only graph stays
+    assert!(g.remove_graph("first").is_err(), "a package keeps at least one graph");
+    let second = sbs_native::duplicate_graph(&mut g, None, Some("second")).unwrap();
+    sbs_native::duplicate_graph(&mut g, None, Some("third")).unwrap();
+    // not while another graph uses it
+    let mut user = Node { kind: "sbs:graph".into(), ..Default::default() };
+    user.strs.insert("#graph".into(), "first".into());
+    g.subgraphs.get_mut("third").unwrap().nodes.insert(50, user);
+    assert!(g.remove_graph("first").is_err(), "'third' still uses it");
+    g.subgraphs.get_mut("third").unwrap().nodes.remove(&50);
+    g.remove_graph("first").unwrap();
+    // the next graph is the one the package opens on, with the rest of the package
+    assert_eq!(g.meta.get("identifier").map(String::as_str), Some(second.as_str()));
+    assert_eq!(g.subgraphs.keys().cloned().collect::<Vec<_>>(), vec!["third".to_string()]);
+    assert_eq!(g.output_idents().len(), 1);
+    let back = open(&sbs_native::save_text(&g).unwrap());
+    assert_eq!(back.meta.get("identifier").map(String::as_str), Some("second"));
+    assert!(back.subgraphs.contains_key("third") && !back.subgraphs.contains_key("first"));
+}
+
+#[test]
+fn no_library_node_is_labelled_with_a_registered_name() {
+    for (kind, _, _) in materialcraft::nodes10::LIBS {
+        let l = materialcraft::nodes10::label(kind).unwrap_or_default();
+        assert!(!l.contains("Substance") && !l.contains("Bitmap2Material"), "{kind}: {l}");
+    }
+}

@@ -1615,7 +1615,7 @@ fn emboss_with_gloss(ad: &mut Ad) {
     ad.same("Gloss", "gloss");
     ad.slot("Source", "in");
     ad.slot("Height", "height");
-    ad.note("the emboss lighting and gloss follow Substance Designer's model; their strength is not yet matched against a reference render");
+    ad.note("the emboss lighting and gloss follow the documented model; their strength is not yet matched against a reference render");
 }
 
 fn non_uniform_blur(ad: &mut Ad) {
