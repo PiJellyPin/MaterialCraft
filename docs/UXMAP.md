@@ -228,6 +228,8 @@ The default workspace places Explorer and Library on the left, Graph in the cent
 - Click a graph to open it; drag a graph to the canvas to reuse it.
 - Right-click empty space to create/open packages or create a material graph.
 - A package's menu offers graph creation, save, and close.
+- Right-click a graph to open, export, save as package or template, duplicate, rename, or delete it. Delete is refused
+  while another graph uses it; deleting the graph the package opens on makes the next graph the main one. Ctrl+Z undoes it.
 - Closing a modified package offers Save, Discard changes, and Cancel.
 
 ### Library

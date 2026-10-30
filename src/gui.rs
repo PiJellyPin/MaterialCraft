@@ -2324,5 +2324,6 @@ include!("gui_spline.rs");
 include!("gui_bake.rs");
 include!("gui_ui.rs");
 include!("gui_home.rs");
+include!("gui_icons.rs");
 include!("gui_launcher.rs");
 include!("gui_view3d.rs");

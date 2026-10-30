@@ -3168,7 +3168,25 @@ pub fn remove_graph(root: &mut Graph, name: &str) -> Result<(), String> {
         return Err(format!("'{name}' is still used by {}", users.join(", ")));
     }
     if root.meta.get("identifier").map(|m| m == name).unwrap_or(false) {
-        return Err("the graph the package opens on cannot be deleted; open another graph first".into());
+        // the graph the package opens on: the next compositing graph takes its place (and the package's other graphs,
+        // resources and settings with it)
+        let next = root
+            .subgraphs
+            .iter()
+            .find(|(_, g)| matches!(g.sd.as_ref().map(|s| &s.role), Some(Role::Graph)))
+            .map(|(k, _)| k.clone())
+            .ok_or("a package needs at least one graph: add another graph before deleting this one")?;
+        let mut new = root.subgraphs.remove(&next).unwrap_or_default();
+        new.subgraphs = std::mem::take(&mut root.subgraphs);
+        new.resources = std::mem::take(&mut root.resources);
+        for (k, v) in std::mem::take(&mut root.meta) {
+            if k != "identifier" && k != "kind" {
+                new.meta.entry(k).or_insert(v);
+            }
+        }
+        new.meta.insert("identifier".into(), next);
+        *root = new;
+        return Ok(());
     }
     root.subgraphs.remove(name).map(|_| ()).ok_or_else(|| format!("the package has no graph '{name}'"))
 }
