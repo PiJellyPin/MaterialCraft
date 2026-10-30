@@ -288,6 +288,8 @@ and path-traced exports; Save turntable frames writes a sequence.
 - With a node selected, shows its inputs, parameter controls, output size, and output format.
 - Lower per-node resolution can reduce the cost of expensive operations.
 - P exposes a parameter; fn assigns a function graph.
+- On an instance of a graph from the same package, a parameter whose "visible if" condition is false for the
+  node's current values is hidden; an invalid condition, or one reading a function-driven value, shows it.
 - FUNCTIONS AND PATTERN PROGRAMS creates/opens those graphs.
 - PUBLISHED PARAMETERS lists exposed labels and ranges, with a remove control.
 - Selecting a comment frame exposes its title, color, body, and delete control.

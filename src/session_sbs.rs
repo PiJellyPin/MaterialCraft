@@ -532,7 +532,7 @@ fn sd_apply(n: &mut Node, lib: &BTreeMap<String, Graph>, values: &[(String, Json
                 };
                 continue;
             }
-            None if allow_unknown => native::ParamInfo { id: k.clone(), label: k.clone(), ty: if v.as_str().is_some() { PTy::S } else { PTy::F(1) }, def: String::new(), range: None, choices: Vec::new(), group: String::new(), value: None, rel: false },
+            None if allow_unknown => native::ParamInfo { id: k.clone(), label: k.clone(), ty: if v.as_str().is_some() { PTy::S } else { PTy::F(1) }, def: String::new(), range: None, choices: Vec::new(), group: String::new(), value: None, rel: false, visible_if: None },
             None => {
                 let names: Vec<String> = infos.iter().map(|p| p.id.clone()).collect();
                 let hint = closest(k, &names);

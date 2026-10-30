@@ -1980,12 +1980,28 @@ pub struct ParamInfo {
     /// what the node has: its own value, or `None` (the default applies)
     pub value: Option<PVal>,
     pub rel: bool,
+    /// the graph input's "visible if" condition over the other inputs (see [`crate::visible_if`])
+    pub visible_if: Option<String>,
 }
 
 impl ParamInfo {
     /// The value in effect (the node's own, else the default).
     pub fn current(&self) -> PVal {
         self.value.clone().unwrap_or_else(|| PVal::Const { ty: self.ty, raw: self.def.clone(), rel: None })
+    }
+
+    /// Whether the panel shows this parameter: its "visible if" condition holds for the values in effect of `all`
+    /// (the node's parameters). A condition that reads a value computed by a function, or is not valid, shows it.
+    pub fn visible(&self, all: &[ParamInfo]) -> bool {
+        let Some(cond) = &self.visible_if else { return true };
+        let input = |name: &str| {
+            let q = all.iter().find(|q| q.id == name)?;
+            match q.current() {
+                v @ PVal::Const { .. } if !matches!(q.ty, PTy::S | PTy::Path) => Some(v.nums()),
+                _ => None,
+            }
+        };
+        crate::visible_if::visible(cond, &input)
     }
 }
 
@@ -2047,6 +2063,7 @@ pub fn params_of(n: &Node, lib: &BTreeMap<String, Graph>) -> Vec<ParamInfo> {
             group: group.to_string(),
             value: vals.get(p.id).cloned(),
             rel: p.rel,
+            visible_if: None,
         });
     };
     if n.kind == "sbs:graph" {
@@ -2054,7 +2071,8 @@ pub fn params_of(n: &Node, lib: &BTreeMap<String, Graph>) -> Vec<ParamInfo> {
             for p in &sd.inputs {
                 if let Some((id, ty, def, range, choices, label, group)) = input_info(p) {
                     let value = vals.get(&id).cloned();
-                    out.push(ParamInfo { id, label, ty, def, range, choices, group, value, rel: false });
+                    let visible_if = p.v("visibleIf").filter(|c| !c.trim().is_empty());
+                    out.push(ParamInfo { id, label, ty, def, range, choices, group, value, rel: false, visible_if });
                 }
             }
         }
@@ -2079,7 +2097,7 @@ pub fn params_of(n: &Node, lib: &BTreeMap<String, Graph>) -> Vec<ParamInfo> {
                 PVal::Const { ty, .. } => *ty,
                 PVal::Dyn { .. } => PTy::F(1),
             };
-            out.push(ParamInfo { id: k.clone(), label: sbs_defs::label_of(k), ty, def: String::new(), range: None, choices: Vec::new(), group: "Other".into(), value: Some(v.clone()), rel: false });
+            out.push(ParamInfo { id: k.clone(), label: sbs_defs::label_of(k), ty, def: String::new(), range: None, choices: Vec::new(), group: "Other".into(), value: Some(v.clone()), rel: false, visible_if: None });
         }
     }
     out
