@@ -1809,16 +1809,6 @@ fn voronoi(ad: &mut Ad) {
     ad.ignore(&["non_square_expansion"]);
 }
 
-/// Tile Random: rows of cells of random widths, split once at random.
-fn tile_random(ad: &mut Ad) {
-    ad.set("preset", 10.0);
-    ad.same("x_amount", "bricks_x");
-    ad.same("y_amount", "bricks_y");
-    ad.same("size_random_x", "size_random");
-    ad.same("interstice_amount", "interstice");
-    ad.note("random tiles follow the same rules with their own random choices");
-    ad.ignore(&["non_square_expansion"]);
-}
 /// Tile Random 2: a patchwork of random tiles (our own Random Tiles 2 node).
 fn tile_random_2(ad: &mut Ad) {
     ad.same("amount_x", "amount_x");
@@ -2331,7 +2321,6 @@ pub(crate) const ADAPTERS: &[Adapter] = &[
     Adapter { ids: &["3d_worley_noise/3D_worley_noise"], kind: "noise_3d", f: n3_worley },
     Adapter { ids: &["noise_voronoi/3d_voronoi"], kind: "noise_3d", f: n3_voronoi },
     Adapter { ids: &["noise_voronoi/3d_voronoi_fractal"], kind: "noise_3d", f: n3_voronoi_fractal },
-    Adapter { ids: &["tile_random/tile_random", "tile_random/tile_random_color", "pattern_tile_random/tile_random", "pattern_tile_random/tile_random_color"], kind: "tile_preset", f: tile_random },
     Adapter { ids: &["pattern_tile_random_2/tile_random_2"], kind: "tile_random2", f: tile_random_2 },
     Adapter { ids: &["creased/creased"], kind: "preset_noise", f: p_old_creased },
     Adapter { ids: &["noise_creased/creased"], kind: "preset_noise", f: p_creased },
@@ -2554,6 +2543,8 @@ mod audit {
         for g in crate::sbs_lib::all() {
             let (kind, f): (&'static str, fn(&mut Ad)) = match adapter(g.package, g.id) {
                 Some(a) => (a.kind, a.f),
+                // these keep the library's own parameter names (see nodes10)
+                None if crate::nodes10::kind_for(g.package, g.id).is_some() => continue,
                 None => match crate::sbs_import::library_kind(g.id) {
                     Some(k) => (k, generic),
                     None => continue,

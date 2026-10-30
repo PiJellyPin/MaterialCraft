@@ -215,6 +215,8 @@ pub const LIBS: &[(&str, &str, &str)] = &[
     ("x_spline_select", "spline_tools", "spline_select"),
     ("x_spline_warp", "spline_tools", "spline_warp"),
     ("x_srgb_to_acescg", "color_space_conversion", "srgb_to_acescg"),
+    ("x_tile_random", "pattern_tile_random", "tile_random"),
+    ("x_tile_random_color", "pattern_tile_random", "tile_random_color"),
     ("x_tiles_002", "tiles_002", "tiles_002"),
     ("x_tiles_008", "tiles_008", "tiles_008"),
     ("x_tiles_011", "tiles_011", "tiles_011"),
@@ -364,7 +366,7 @@ pub fn pin(kind: &str, out: Option<&str>) -> Option<Pin> {
     }
     if colour.iter().any(|c| name.starts_with(c)) || name.starts_with("output") {
         // single outputs of grayscale tools stay grayscale
-        if matches!(k.as_str(), "x_shadows" | "x_rt_shadows" | "x_3d_linear_gradient" | "x_3d_volume_mask" | "x_3d_texture_sdf" | "x_histogram_render" | "x_directional_distance" | "x_spline_render" | "x_spline_fill" | "x_spline_flow_mapper" | "x_get_size_grayscale" | "x_3d_texture_offset_grayscale") && name != "uv" {
+        if matches!(k.as_str(), "x_tile_random" | "x_shadows" | "x_rt_shadows" | "x_3d_linear_gradient" | "x_3d_volume_mask" | "x_3d_texture_sdf" | "x_histogram_render" | "x_directional_distance" | "x_spline_render" | "x_spline_fill" | "x_spline_flow_mapper" | "x_get_size_grayscale" | "x_3d_texture_offset_grayscale") && name != "uv" {
             return Some(Pin::Gray);
         }
         return Some(Pin::Color);
@@ -560,7 +562,8 @@ pub fn compute(kind: &str, _id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, 
     let t = crate::nodes10_img::compute(&cx)
         .or_else(|| crate::nodes10_mat::compute(&cx))
         .or_else(|| crate::nodes10_spl::compute(&cx))
-        .or_else(|| crate::nodes10_pano::compute(&cx));
+        .or_else(|| crate::nodes10_pano::compute(&cx))
+        .or_else(|| crate::nodes10_tile::compute(&cx));
     match t {
         Some(t) => Ok(Some(t)),
         None => Err(Error::BadParam(_id, format!("{kind}: not implemented"))),
