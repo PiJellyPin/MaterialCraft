@@ -41,6 +41,25 @@ fn logic_variables_and_position() {
 }
 
 #[test]
+fn is_defined_tells_whether_a_variable_exists() {
+    // nothing set: not defined
+    assert_eq!(run("node 1 f_defined name=\"k\"\nnode 2 f_out in=@1\n"), Value::Bool(false));
+    // defined once a Set before it ran, still not for another name
+    assert_eq!(run("node 1 f_float v=5\nnode 2 f_set a=@1 name=\"k\"\nnode 3 f_defined name=\"k\"\nnode 4 f_sequence a=@2 b=@3\nnode 5 f_out in=@4\n"), Value::Bool(true));
+    assert_eq!(run("node 1 f_float v=5\nnode 2 f_set a=@1 name=\"k\"\nnode 3 f_defined name=\"j\"\nnode 4 f_sequence a=@2 b=@3\nnode 5 f_out in=@4\n"), Value::Bool(false));
+    // a value the caller passes in (a function input) and a graph input are defined
+    let p = Prog::compile(&fg("node 1 f_defined name=\"x\"\nnode 2 f_out in=@1\n"), &BTreeMap::new()).unwrap();
+    assert_eq!(p.result_type().unwrap(), Pin::Bool);
+    let mut env = FnEnv::new([64.0, 64.0]);
+    env.args.insert("x".into(), Value::float(1.0));
+    assert_eq!(p.run(&env, [0.5, 0.5]).unwrap(), Value::Bool(true));
+    let inputs: BTreeMap<String, Value> = [("x".to_string(), Value::int(2))].into();
+    let mut env = FnEnv::new([64.0, 64.0]);
+    env.graph_inputs = &inputs;
+    assert_eq!(p.run(&env, [0.5, 0.5]).unwrap(), Value::Bool(true));
+}
+
+#[test]
 fn types_are_checked() {
     let lib = BTreeMap::new();
     let g = fg("node 1 f_float v=1\nnode 2 f_vec2 x=1 y=2\nnode 5 f_vec3 x=1 y=2 z=3\nnode 3 f_add a=@2 b=@5\nnode 4 f_out in=@3\n");

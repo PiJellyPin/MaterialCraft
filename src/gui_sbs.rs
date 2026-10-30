@@ -122,6 +122,14 @@ impl App {
                 nums: vec![],
             })
             .collect();
+        // a function graph also calls the library functions (MaterialCraft's own implementations, saved as calls
+        // to the library package, as the files it reads have them)
+        if fam == Fam::Function {
+            for f in materialcraft::libfuncs::palette() {
+                let ins = f.inputs.iter().map(|(id, _)| *id).collect::<Vec<_>>().join(", ");
+                v.push(Entry { label: f.label.to_string(), kind: "sbs:fn:instance".into(), sub: Some(f.path.clone()), cat: f.category, doc: format!("library function {} ({ins})", f.path), nums: vec![] });
+            }
+        }
         v.push(Entry { label: "Comment".into(), kind: "comment".into(), sub: None, cat: "Utility", doc: "small note placed at the cursor".into(), nums: vec![] });
         v.push(Entry { label: "Frame".into(), kind: "frame".into(), sub: None, cat: "Utility", doc: "frame around the selected nodes".into(), nums: vec![] });
         if fam != Fam::Texture {

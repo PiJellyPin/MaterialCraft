@@ -7,6 +7,10 @@
 //! renders without Adobe Substance 3D Designer installed. Each one is checked against Designer's own output (see
 //! `tests/libfuncs.rs`). Nothing from Designer's package is shipped; the library file, when present, is only a
 //! fallback for functions not implemented here.
+//!
+//! The editor offers them in a function graph's Library panel ([`palette`]): a tile adds a call to the function
+//! (`sbs:fn:instance` naming `Functions/.../<identifier>`), saved with the library package as its dependency the way
+//! files made elsewhere call them. The Hash functions are MaterialCraft's own hash, not Designer's.
 
 use crate::fexpr::{parse, E};
 use crate::graph::{Graph, Node};
@@ -16,6 +20,9 @@ use std::sync::OnceLock;
 
 /// Input of a library function: its identifier and type (`f1`..`f4`, `i1`..`i4`, `b`).
 type In = (&'static str, &'static str);
+
+/// A library function: its identifier, the label the editor shows, its inputs and its expression.
+type Func = (&'static str, &'static str, &'static [In], &'static str);
 
 fn type_code(ty: &str) -> f32 {
     match ty {
@@ -264,9 +271,63 @@ pub fn graphs() -> &'static BTreeMap<String, Graph> {
     &library().graphs
 }
 
+/// A library function as the editor's Library panel offers it.
+#[derive(Debug)]
+pub struct Entry {
+    /// the function's identifier in the library package (`clamp`)
+    pub ident: &'static str,
+    /// its path in the package (`Functions/Math/clamp`), what an instance node names
+    pub path: String,
+    /// the name the editor shows (`Clamp`)
+    pub label: &'static str,
+    /// the Library panel folder (`Math`, `Color`, `Random` ...)
+    pub category: &'static str,
+    /// its inputs: (identifier, type), in the order a call fills them
+    pub inputs: &'static [In],
+}
+
+/// The library functions a user can add to a function graph, by category and label. The helpers that only exist
+/// for the other functions (in no folder of the package) are left out.
+pub fn palette() -> &'static [Entry] {
+    &library().palette
+}
+
+/// The palette entry of an instance path (`Functions/Math/clamp`, with or without `pkg:///` and `?dependency=`),
+/// found by the identifier as [`resolve_path`] does; `None` if it is not a built-in library function.
+pub fn entry(path: &str) -> Option<&'static Entry> {
+    let p = path.trim_start_matches("pkg://").trim_start_matches('/');
+    let p = p.split('?').next().unwrap_or(p);
+    let ident = p.rsplit('/').next().unwrap_or(p);
+    palette().iter().find(|e| e.ident.eq_ignore_ascii_case(ident))
+}
+
+/// The Library panel folder of a function of package folder `folder`.
+fn category(folder: &str, ident: &str) -> &'static str {
+    // the package keeps this conversion among its random functions
+    if ident.eq_ignore_ascii_case("Degrees_to_Turn") {
+        return "Conversion";
+    }
+    let f = folder.trim_start_matches("Functions/").to_ascii_lowercase();
+    match f.split('/').next().unwrap_or_default() {
+        "math" | "cycles" => "Math",
+        "colorvalues" => "Color",
+        "random" => "Random",
+        "easings" => "Easing",
+        "switch" => "Switch",
+        "ranges" => "Ranges",
+        "transforms" => "Transforms",
+        "typeconverters" => "Conversion",
+        _ => "Various",
+    }
+}
+
+/// The Library panel folders of the library functions, in the panel's order.
+pub const CATEGORIES: &[&str] = &["Math", "Color", "Random", "Easing", "Switch", "Ranges", "Transforms", "Conversion", "Various"];
+
 struct Lib {
     graphs: BTreeMap<String, Graph>,
     by_ident: BTreeMap<String, &'static str>,
+    palette: Vec<Entry>,
 }
 
 fn library() -> &'static Lib {
@@ -275,211 +336,261 @@ fn library() -> &'static Lib {
 }
 
 fn build() -> Lib {
+    let all = || TABLE.iter().flat_map(|(folder, fs)| fs.iter().map(move |f| (*folder, f)));
     // name every function first, so an expression can call another by identifier while they are all compiled
     let mut by_ident: BTreeMap<String, &'static str> = BTreeMap::new();
-    for (ident, _, _) in TABLE {
+    for (_, (ident, ..)) in all() {
         let name: &'static str = Box::leak(format!("libfn_{ident}").into_boxed_str());
         if by_ident.insert(ident.to_ascii_lowercase(), name).is_some() {
             panic!("duplicate library function identifier '{ident}'");
         }
     }
     let mut graphs = BTreeMap::new();
-    for (ident, ins, src) in TABLE {
+    let mut palette = Vec::new();
+    for (folder, (ident, label, ins, src)) in all() {
         let name = by_ident[&ident.to_ascii_lowercase()];
         let g = compile(ins, src, &by_ident).unwrap_or_else(|e| panic!("library function '{ident}': {e}"));
         graphs.insert(name.to_string(), g);
+        if !folder.is_empty() {
+            palette.push(Entry { ident, path: format!("{folder}/{ident}"), label, category: category(folder, ident), inputs: ins });
+        }
     }
-    Lib { graphs, by_ident }
+    palette.sort_by_key(|e| (CATEGORIES.iter().position(|c| *c == e.category), e.label));
+    Lib { graphs, by_ident, palette }
 }
 
-/// (registered name = Designer identifier, inputs, expression). Keep the name exactly as Designer's function
-/// identifier so `resolve_path` matches `pkg:///Functions/.../<identifier>`.
+/// (folder in the library package, its functions: (registered name = Designer identifier, label, inputs,
+/// expression)). Keep the folder and the name exactly as the package has them, so `resolve_path` matches
+/// `pkg:///Functions/.../<identifier>` and an instance added in the editor names the function the file has. The
+/// labels are MaterialCraft's own; functions in no folder (`""`) are helpers of the others, not offered to users.
 #[rustfmt::skip]
-const TABLE: &[(&str, &[In], &str)] = &[
-    // Functions/Cycles
-    ("Wave", &[("Amplitude", "f1"), ("Frequency", "f1"), ("greaterThanZero", "b")], "w = Amplitude * sin(Frequency * $time); greaterThanZero ? Amplitude + w : w"),
-    // Functions/Math
-    ("Ln", &[("a", "f1")], "log(a) / exp(1)"),
-    ("Pi", &[], "pi"),
-    ("2Pi", &[], "tau"),
-    ("Pow", &[("x", "f1"), ("n", "f1")], "x <= 0 ? 0 : pow(x, n)"),
-    ("Roughness", &[("Roughness", "f1"), ("CurrentLevel", "i1"), ("TotalLevel", "i1"), ("GlobalOpacity", "f1")], "Roughness == 0 ? GlobalOpacity : (Roughness == 1 ? GlobalOpacity / float(TotalLevel) : GlobalOpacity * ((1 - Roughness) * (Roughness <= 0 ? 0 : pow(Roughness, float(CurrentLevel)))) / (1 - (Roughness <= 0 ? 0 : pow(Roughness, float(TotalLevel)))))"),
-    ("Equality_Float2", &[("A", "f2"), ("B", "f2")], "A == B"),
-    ("Equality_Float3", &[("A", "f3"), ("B", "f3")], "A == B"),
-    ("Equality_Boolean", &[("A", "b"), ("B", "b")], "A == B"),
-    ("Equality_Float4", &[("A", "f4"), ("B", "f4")], "A == B"),
-    ("NotEqual_Float2", &[("A", "f2"), ("B", "f2")], "A != B"),
-    ("NotEqual_Float3", &[("A", "f3"), ("B", "f3")], "A != B"),
-    ("NotEqual_Float4", &[("A", "f4"), ("B", "f4")], "A != B"),
-    ("NotEqual_Boolean", &[("A", "b"), ("B", "b")], "A != B"),
-    ("Curve_Function", &[("curve", "f1"), ("input", "f1")], "curve < 0 ? (input * (1 + curve) - curve * sqrt(1 - (1 - input) * (1 - input))) : ((1 - sqrt(1 - input * input)) * curve + input * (1 - curve))"),
-    ("merge_float4", &[("x", "f1"), ("y", "f1"), ("z", "f1"), ("w", "f1")], "vec4(x, y, z, w)"),
-    ("merge_float3", &[("x", "f1"), ("y", "f1"), ("z", "f1")], "vec3(x, y, z)"),
-    ("distance_vec3", &[("a", "f3"), ("b", "f3")], "distance(a, b)"),
-    ("distance_vec2", &[("a", "f2"), ("b", "f2")], "distance(a, b)"),
-    ("length_vec2", &[("v", "f2")], "length(v)"),
-    ("length_vec3", &[("v", "f3")], "length(v)"),
-    ("sign", &[("x", "f1")], "x < 0 ? 0 - 1 : 1"),
-    ("reflect", &[("i", "f3"), ("n", "f3")], "i - n * (dot(i, n) * 2)"),
-    ("oneminus", &[("x", "f1")], "1 - x"),
-    ("fmod", &[("a", "f1"), ("b", "f1")], "a - b * float(int(a / b))"),
-    ("frac", &[("input", "f1")], "fract(input)"),
-    ("cross_product", &[("a", "f3"), ("b", "f3")], "cross(a, b)"),
-    ("cross_product_vec2", &[("a", "f2"), ("b", "f2")], "a.x * b.y - a.y * b.x"),
-    ("step", &[("a", "f1"), ("x", "f1")], "step(a, x)"),
-    ("divide_float4", &[("input", "f4"), ("scalar", "f1")], "input / scalar"),
-    ("divide_float3", &[("input", "f3"), ("scalar", "f1")], "input / scalar"),
-    ("divide_float2", &[("input", "f2"), ("scalar", "f1")], "input / scalar"),
-    ("clamp", &[("input", "f1"), ("min", "f1"), ("max", "f1")], "clamp(input, min, max)"),
-    ("normalize_vec2", &[("input", "f2")], "normalize(input)"),
-    ("normalize_vec3", &[("input", "f3")], "normalize(input)"),
-    ("normalize_vec4", &[("input", "f4")], "normalize(input)"),
-    ("smoothstep", &[("a", "f1"), ("b", "f1"), ("x", "f1")], "t = saturate((x - a) / (b - a)); t * t * (3 - 2 * t)"),
-    ("saturate_float2", &[("input", "f2")], "saturate(input)"),
-    ("average_float1", &[("a", "f1"), ("b", "f1")], "(a + b) * 0.5"),
-    ("average_float2", &[("a", "f2"), ("b", "f2")], "(a + b) * 0.5"),
-    ("average_float3", &[("a", "f3"), ("b", "f3")], "(a + b) * 0.5"),
-    ("average_float4", &[("a", "f4"), ("b", "f4")], "(a + b) * 0.5"),
-    ("orthogonal_vec2", &[("input", "f2")], "vec2(input.y, 0 - input.x)"),
-    ("saturate", &[("input", "f1")], "saturate(input)"),
-    ("truncate_float1_decimals", &[("input", "f1"), ("decimals", "i1")], "p = pow(10, float(decimals)); decimals <= 0 ? input : floor(input * p) / p"),
-    ("round_float1", &[("input", "f1")], "floor(input + 0.5)"),
-    // Functions/Math/Parity
-    ("EvenCount", &[("Input", "f1")], "ceil(floor(Input) / 2)"),
-    ("OddCount", &[("Input", "f1")], "floor(floor(Input) / 2)"),
-    ("ParityTest", &[("Input", "f1")], "t = 0.25 * (2 * Input + 1); 0.5 > t - floor(t)"),
-    // Functions/Math/Trigo
-    ("deg_to_rad", &[("deg", "f1")], "deg * (pi / 180)"),
-    ("asin", &[("x", "f1")], "asin(x)"),
-    ("acos", &[("x", "f1")], "acos(x)"),
-    // Functions/Random
-    ("Uniform_[A,B[", &[("A", "f1"), ("B", "f1")], "rand(B - A) + A"),
-    ("Discrete_[A,B]", &[("A", "f1"), ("B", "f1"), ("Probability", "f1")], "rand(1) >= Probability ? A : B"),
-    ("Uniform_[-1,1[", &[], "rand(2) - 1"),
-    ("Uniform_F2_[A,B[", &[("A2", "f2"), ("B2", "f2")], "d = B2 - A2; vec2(rand(d.x), rand(d.y)) + A2"),
-    ("Uniform_F3_[A,B[", &[("A", "f3"), ("B", "f3")], "d = B - A; vec3(rand(d.x), rand(d.y), rand(d.z)) + A"),
-    ("Uniform_F4_[A,B[", &[("A", "f4"), ("B", "f4")], "d = B - A; vec4(rand(d.x), rand(d.y), rand(d.z), rand(d.w)) + A"),
-    ("Degrees_to_Turn", &[("input", "f1")], "input / 360"),
-    ("GlobalRandom", &[("Input", "f1"), ("Seed", "i1")], "fract(sin(Input * 12.9898 + float(Seed) * 78.233) * 43758.5453)"),
-    ("normal_distribution", &[("radius", "f1"), ("uniform_random", "f2")], "r = 0.25 * sqrt(0 - 2 * log(max(uniform_random.x, 0.0001))) * radius; t = uniform_random.y * tau; vec2(r * cos(t), r * sin(t))"),
-    // Functions/Ranges
-    ("[-1_1]_to_[0_1]", &[("Input", "f1")], "Input * 0.5 + 0.5"),
-    ("[0_1]_to_[-1_1]", &[("Input", "f1")], "Input * 2 - 1"),
-    ("[0_1]_to_[1_0]", &[("Input", "f1")], "1 - Input"),
-    ("negateFloat", &[("Input", "f1")], "0 - Input"),
-    ("Height_Balance_Fn", &[("Depth_Balance", "f1")], "vec4(max(Depth_Balance, 0), min(1 + Depth_Balance, 1), max(0 - Depth_Balance, 0), min(1 - Depth_Balance, 1))"),
-    ("[0,1]_to_[0,1,0]", &[("input", "f1")], "1 - abs(2 * input - 1)"),
-    ("[a,b]_to_[0,1]", &[("X", "f1"), ("A", "f1"), ("B", "f1")], "saturate((X - A) / (B - A))"),
-    ("triangle_wave", &[("input", "f1")], "1 - abs(1 - 2 * fract(input / 2))"),
-    ("sawtooth_wave", &[("x", "f1")], "m = mod(x, 1); m == 0 ? (abs(x) > 1 ? 1 : abs(x)) : m"),
-    // Functions/Transforms
-    ("Directional_Offset", &[("Direction", "f1"), ("Distance", "f1")], "r = Direction * tau; vec2(cos(r) * Distance, sin(r) * Distance)"),
-    ("MatrixMultiply", &[("MatrixA", "f4"), ("MatrixB", "f4")], "a0 = MatrixA.x; a1 = MatrixA.y; a2 = MatrixA.z; a3 = MatrixA.w; b0 = MatrixB.x; b1 = MatrixB.y; b2 = MatrixB.z; b3 = MatrixB.w; vec4(a0 * b0 + a1 * b2, a0 * b1 + a1 * b3, a2 * b0 + a3 * b2, a2 * b1 + a3 * b3)"),
-    ("RotationMatrix", &[("RotationW", "f1")], "r = RotationW * tau; vec4(cos(r), 0 - sin(r), sin(r), cos(r))"),
-    ("ScaleMatrix", &[("ScaleUV", "f2")], "vec4(100 / ScaleUV.x, 0, 0, 100 / ScaleUV.y)"),
-    ("TileMatrix", &[("tiles_xy", "f2")], "vec4(tiles_xy.x, 0, 0, tiles_xy.y)"),
-    ("rotate_vec2", &[("vec2", "f2"), ("angle", "f1"), ("pivot", "f2")], "p = vec2 - pivot; a = angle * tau; c = cos(a); s = sin(a); vec2(p.x * c + p.y * s, p.y * c - p.x * s) + pivot"),
-    ("matrix_invert", &[("matrix22", "f4")], "m0 = matrix22.x; m1 = matrix22.y; m2 = matrix22.z; m3 = matrix22.w; d = m0 * m3 - m1 * m2; vec4(m3 / d, (0 - m1) / d, (0 - m2) / d, m0 / d)"),
-    ("polar_to_carthesian", &[("input", "f2")], "x = input.x; y = input.y; e = pi * (y - 0.5); vec3(cos(e) * cos(x * tau), cos(e) * sin(x * tau), 0 - sin(e))"),
-    ("carthesian_to_polar", &[("input", "f3")], "x = input.x; y = input.y; z = input.z; vec2(mod(atan2(y, x) / tau, 1), 1 - (atan2(z, sqrt(x * x + y * y)) / pi + 0.5))"),
-    // Functions/Various
-    ("disorder", &[("disorder_radius", "f1"), ("disorder_angle", "f1")], "r = rand(disorder_radius); t = 6.28318501 * (rand(2) - 1); vec2(r * cos(t), r * sin(t))"),
-    ("non_square_output_size", &[("scale", "i1"), ("output_size", "i2"), ("non_square", "b")], "output_size"),
-    ("non_square_expansion_uv_scale", &[("position", "f2"), ("non_square_expansion", "b")], "sl = $sizelog2; sx = sl.x; sy = sl.y; d = max(sx, sy) - min(sx, sy); df = sx > sy ? vec2(d, 0) : vec2(0, d); p2 = vec2(exp2(df.x), exp2(df.y)); non_square_expansion ? (p2 * position - (vec2(1, 1) - p2) * 0.5) : position"),
-    // Functions/colorValues
-    ("directionToNormal", &[("Direction", "f1"), ("slopeAngle", "f1"), ("yUp", "b")], "off = yUp ? 0 : pi; dr = Direction * tau + off; sa = slopeAngle * tau; cx = cos(Direction * tau + pi); vec4(cx * sin(sa) * 0.5 + 0.5, sin(dr) * sin(sa) * 0.5 + 0.5, 1, 1)"),
-    ("RGBtoHSL", &[("RGB", "f3")], "vec3(RGB_hue_hexagonal(rgb), RGB_saturation_HSL(rgb), RGB_lightness_bihexcone(rgb))"),
-    ("HSLtoRGB", &[("HSL", "f3")], "h = HSL.x; s = HSL.y; L = HSL.z; C = (1 - abs(2 * L - 1)) * s; hp = h * 6; X = C * (1 - abs(mod(hp, 2) - 1)); m = L - C / 2; hp < 0 ? vec3(m, m, m) : (hp <= 1 ? (vec3(C, X, 0) + vec3(m, m, m)) : (hp <= 2 ? (vec3(X, C, 0) + vec3(m, m, m)) : (hp <= 3 ? (vec3(0, C, X) + vec3(m, m, m)) : (hp <= 4 ? (vec3(0, X, C) + vec3(m, m, m)) : (hp <= 5 ? (vec3(X, 0, C) + vec3(m, m, m)) : (hp < 6 ? (vec3(C, 0, X) + vec3(m, m, m)) : (vec3(m, m, m))))))))"),
-    ("Random_Color", &[("RGB", "f3"), ("RGB_Randomness", "f3")], "vec3(RGB.x + (rand(1) * 2 - 1) * RGB_Randomness.x, RGB.y + (rand(1) * 2 - 1) * RGB_Randomness.y, RGB.z + (rand(1) * 2 - 1) * RGB_Randomness.z)"),
-    ("Random_Luminosity", &[("RGB", "f3"), ("Luminosity_Randomness", "f1")], "off = (rand(1) * 2 - 1) * Luminosity_Randomness; vec3(RGB.x + off, RGB.y + off, RGB.z + off)"),
-    ("RGBtoHSV", &[("rgb", "f3")], "vec3(RGB_hue_hexagonal(rgb), RGB_saturation_HSV(rgb), RGB_lightness_hexcone(rgb))"),
-    ("RGBtoHSI", &[("rgb", "f3")], "vec3(RGB_hue_2_polar(rgb), RGB_saturation_HSI(rgb), RGB_lightness_average(rgb))"),
-    ("RGBtoHCL", &[("rgb", "f3")], "vec3(RGB_hue_hexagonal(rgb), RGB_chroma_hexagonal(rgb), RGB_lightness_luma_rec601(rgb))"),
-    ("RGB_lightness_average", &[("rgb", "f3")], "(rgb.x + rgb.y + rgb.z) / 3"),
-    ("RGB_lightness_hexcone", &[("rgb", "f3")], "max(rgb.x, max(rgb.y, rgb.z))"),
-    ("RGB_lightness_bihexcone", &[("rgb", "f3")], "(max(rgb.x, max(rgb.y, rgb.z)) + min(rgb.x, min(rgb.y, rgb.z))) * 0.5"),
-    ("RGB_lightness_luma_rec601", &[("rgb", "f3")], "dot(rgb, vec3(0.299, 0.587, 0.114))"),
-    ("RGB_lightness_luma_rec709", &[("rgb", "f3")], "dot(rgb, vec3(0.2126, 0.7152, 0.0722))"),
-    ("RGB_chroma_hexagonal", &[("rgb", "f3")], "max(rgb.x, max(rgb.y, rgb.z)) - min(rgb.x, min(rgb.y, rgb.z))"),
-    ("RGB_chroma_2_polar", &[("rgb", "f3")], "r = rgb.x; g = rgb.y; b = rgb.z; alpha = 0.5 * (2 * r - g - b); beta = (g - b) * sqrt(3) * 0.5; sqrt(alpha * alpha + beta * beta)"),
-    ("RGB_hue_hexagonal", &[("rgb", "f3")], "r = rgb.x; g = rgb.y; b = rgb.z; mx = max(r, max(g, b)); mn = min(r, min(g, b)); c = mx - mn; h = c == 0 ? 0 : (r >= mx ? mod((g - b) / c, 6) : (g >= mx ? (b - r) / c + 2 : (b >= mx ? (r - g) / c + 4 : 1))); h * 60 / 360"),
-    ("RGB_hue_2_polar", &[("rgb", "f3")], "r = rgb.x; g = rgb.y; b = rgb.z; alpha = 0.5 * (2 * r - g - b); beta = (g - b) * sqrt(3) * 0.5; h = atan2(beta, alpha) / pi * 0.5 + 1; mod(h, 1)"),
-    ("RGB_saturation_HSV", &[("rgb", "f3")], "(max(rgb.x, max(rgb.y, rgb.z)) - min(rgb.x, min(rgb.y, rgb.z))) / max(rgb.x, max(rgb.y, rgb.z))"),
-    ("RGB_saturation_HSL", &[("rgb", "f3")], "mx = max(rgb.x, max(rgb.y, rgb.z)); mn = min(rgb.x, min(rgb.y, rgb.z)); L = (mx + mn) * 0.5; (mx - mn) / (1 - abs(2 * L - 1))"),
-    ("RGB_saturation_HSI", &[("rgb", "f3")], "mn = min(rgb.x, min(rgb.y, rgb.z)); I = (rgb.x + rgb.y + rgb.z) / 3; (I - mn) / I"),
-    ("HSItoRGB", &[("hsi", "f3")], "H = hsi.x; S = hsi.y; I = hsi.z; lo = I * (1 - S); th = I * 3; a0 = H * tau; k0 = I * (1 + S * cos(a0) / cos(pi / 3 - a0)); a1 = (H - 1 / 3) * tau; k1 = I * (1 + S * cos(a1) / cos(pi / 3 - a1)); a2 = (H - 2 / 3) * tau; k2 = I * (1 + S * cos(a2) / cos(pi / 3 - a2)); (H >= 0 && H < 1 / 3) ? vec3(k0, th - k0 - lo, lo) : ((H >= 1 / 3 && H < 2 / 3) ? vec3(lo, k1, th - k1 - lo) : ((H >= 2 / 3 && H < 1) ? vec3(th - k2 - lo, lo, k2) : vec3(lo, lo, lo)))"),
-    ("HSVtoRGB", &[("hsv", "f3")], "h = hsv.x; s = hsv.y; v = hsv.z; C = s * v; hp = h * 6; X = C * (1 - abs(mod(hp, 2) - 1)); m = v - C; hp < 0 ? vec3(m, m, m) : (hp <= 1 ? (vec3(C, X, 0) + vec3(m, m, m)) : (hp <= 2 ? (vec3(X, C, 0) + vec3(m, m, m)) : (hp <= 3 ? (vec3(0, C, X) + vec3(m, m, m)) : (hp <= 4 ? (vec3(0, X, C) + vec3(m, m, m)) : (hp <= 5 ? (vec3(X, 0, C) + vec3(m, m, m)) : (hp < 6 ? (vec3(C, 0, X) + vec3(m, m, m)) : (vec3(m, m, m))))))))"),
-    ("HCLtoRGB", &[("hcl", "f3")], "h = hcl.x; C = hcl.y; L = hcl.z; hp = h * 6; X = C * (1 - abs(mod(hp, 2) - 1)); rgbp = hp < 0 ? vec3(0, 0, 0) : (hp <= 1 ? vec3(C, X, 0) : (hp <= 2 ? vec3(X, C, 0) : (hp <= 3 ? vec3(0, C, X) : (hp <= 4 ? vec3(0, X, C) : (hp <= 5 ? vec3(X, 0, C) : (hp < 6 ? vec3(C, 0, X) : (vec3(0, 0, 0)))))))); m = L - dot(rgbp, vec3(0.299, 0.587, 0.114)); rgbp + vec3(m, m, m)"),
-    ("linear_to_sRGB_luminance", &[("input", "f1")], "input <= 0.0031308 ? input * 12.92 : 1.055 * pow(input, 1 / 2.4) - 0.055"),
-    ("linear_to_sRGB_rgb", &[("input", "f3")], "vec3(linear_to_sRGB_luminance(input.x), linear_to_sRGB_luminance(input.y), linear_to_sRGB_luminance(input.z))"),
-    ("sRGB_to_linear_rgb", &[("input", "f3")], "vec3(sRGB_to_linear_luminance(input.x), sRGB_to_linear_luminance(input.y), sRGB_to_linear_luminance(input.z))"),
-    ("sRGB_to_linear_luminance", &[("input", "f1")], "input <= 0.04045 ? input / 12.92 : pow((input + 0.055) / 1.055, 2.4)"),
-    ("temperature_to_rgb", &[("temperature", "f1")], "t = temperature / 100; r = temperature_to_rgb_fit(t, 0.679299712, 0.0463962592, 10.5762053, -1.51725721); g = temperature_to_rgb_fit(t, -0.267794788, 1344.49194, 0.996967077, 2.72198915); bl = temperature_to_rgb_fit(t, -0.369759142, 865.372559, 2.09022808, 1.68704808); max(vec3(r, g, bl), vec3(0, 0, 0))"),
-    ("temperature_to_rgb_fit", &[("input", "f1"), ("a", "f1"), ("b", "f1"), ("c", "f1"), ("d", "f1")], "p = input <= 0 ? 0 : pow(input, d); (a * b + c * p) / (p + b)"),
-    ("acescg_to_linear_srgb", &[("input", "f3")], "vec3(dot(vec3(1.70490003, -0.624159992, -0.0809141025), input), dot(vec3(-0.129553005, 1.13837004, -0.00876800995), input), dot(vec3(-0.0241260994, -0.124632999, 1.14882004), input))"),
-    ("linear_srgb_to_acescg", &[("input", "f3")], "vec3(dot(vec3(0.613117993, 0.341181993, 0.0457873009), input), dot(vec3(0.0699340999, 0.91810298, 0.0119327996), input), dot(vec3(0.0204629991, 0.106769003, 0.87271601), input))"),
-    ("hsl_offset", &[("rgb", "f3"), ("hue", "f1"), ("saturation", "f1"), ("lightness", "f1")], "hsl = RGBtoHSL(rgb); HSLtoRGB(vec3(mod(hsl.x + hue, 1), hsl.y + saturation, hsl.z + lightness))"),
-    // Functions/easings/circ
-    ("ease_in_circ", &[("input", "f1")], "1 - sqrt(1 - pow(input, 2))"),
-    ("ease_out_circ", &[("input", "f1")], "sqrt(1 - pow(input - 1, 2))"),
-    ("ease_in_out_circ", &[("input", "f1")], "input < 0.5 ? (1 - sqrt(1 - pow(2 * input, 2))) / 2 : (sqrt(1 - pow(-2 * input + 2, 2)) + 1) / 2"),
-    // Functions/easings/cubic
-    ("ease_in_cubic", &[("input", "f1")], "input * input * input"),
-    ("ease_out_cubic", &[("input", "f1")], "1 - pow(1 - input, 3)"),
-    ("ease_in_out_cubic", &[("input", "f1")], "input < 0.5 ? 4 * input * input * input : 1 - pow(-2 * input + 2, 3) / 2"),
-    // Functions/easings/expo
-    ("ease_in_expo", &[("input", "f1")], "input == 0 ? 0 : pow(2, 10 * input - 10)"),
-    ("ease_out_expo", &[("input", "f1")], "input == 1 ? 1 : 1 - pow(2, -10 * input)"),
-    ("ease_in_out_expo", &[("input", "f1")], "input == 0 ? 0 : (input == 1 ? 1 : (input < 0.5 ? pow(2, 20 * input - 10) / 2 : (2 - pow(2, -20 * input + 10)) / 2))"),
-    // Functions/easings/quad
-    ("ease_in_quad", &[("input", "f1")], "input * input"),
-    ("ease_out_quad", &[("input", "f1")], "1 - (1 - input) * (1 - input)"),
-    ("ease_in_out_quad", &[("input", "f1")], "input < 0.5 ? 2 * input * input : 1 - pow(-2 * input + 2, 2) / 2"),
-    // Functions/easings/quart
-    ("ease_in_quart", &[("input", "f1")], "input * input * input * input"),
-    ("ease_out_quart", &[("input", "f1")], "1 - pow(1 - input, 4)"),
-    ("ease_in_out_quart", &[("input", "f1")], "input < 0.5 ? 8 * pow(input, 4) : 1 - pow(-2 * input + 2, 4) / 2"),
-    // Functions/easings/quint
-    ("ease_in_quint", &[("input", "f1")], "pow(input, 5)"),
-    ("ease_out_quint", &[("input", "f1")], "1 - pow(1 - input, 5)"),
-    ("ease_in_out_quint", &[("input", "f1")], "input < 0.5 ? 16 * pow(input, 5) : 1 - pow(-2 * input + 2, 5) / 2"),
-    // Functions/easings/sine
-    ("ease_in_sine", &[("input", "f1")], "1 - cos(input * pi / 2)"),
-    ("ease_out_sine", &[("input", "f1")], "sin(input * pi / 2)"),
-    ("ease_in_out_sine", &[("input", "f1")], "0 - (cos(pi * input) - 1) / 2"),
-    // Functions/switch/Float1
-    ("switch_float1_2_inputs", &[("input_selection", "i1"), ("value_1", "f1"), ("value_2", "f1")], "input_selection == 0 ? value_1 : (value_2)"),
-    ("switch_float1_4_inputs", &[("input_selection", "i1"), ("value_1", "f1"), ("value_2", "f1"), ("value_3", "f1"), ("value_4", "f1")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
-    ("switch_float1_8_inputs", &[("input_selection", "i1"), ("value_1", "f1"), ("value_2", "f1"), ("value_3", "f1"), ("value_4", "f1"), ("value_5", "f1"), ("value_6", "f1"), ("value_7", "f1"), ("value_8", "f1")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
-    // Functions/switch/Float2
-    ("switch_float2_2_inputs", &[("input_selection", "i1"), ("value_1", "f2"), ("value_2", "f2")], "input_selection == 0 ? value_1 : (value_2)"),
-    ("switch_float2_4_inputs", &[("input_selection", "i1"), ("value_1", "f2"), ("value_2", "f2"), ("value_3", "f2"), ("value_4", "f2")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
-    ("switch_float2_8_inputs", &[("input_selection", "i1"), ("value_1", "f2"), ("value_2", "f2"), ("value_3", "f2"), ("value_4", "f2"), ("value_5", "f2"), ("value_6", "f2"), ("value_7", "f2"), ("value_8", "f2")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
-    // Functions/switch/Float3
-    ("switch_float3_2_inputs", &[("input_selection", "i1"), ("value_1", "f3"), ("value_2", "f3")], "input_selection == 0 ? value_1 : (value_2)"),
-    ("switch_float3_4_inputs", &[("input_selection", "i1"), ("value_1", "f3"), ("value_2", "f3"), ("value_3", "f3"), ("value_4", "f3")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
-    ("switch_float3_8_inputs", &[("input_selection", "i1"), ("value_1", "f3"), ("value_2", "f3"), ("value_3", "f3"), ("value_4", "f3"), ("value_5", "f3"), ("value_6", "f3"), ("value_7", "f3"), ("value_8", "f3")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
-    // Functions/switch/Float4
-    ("switch_float4_2_inputs", &[("input_selection", "i1"), ("value_1", "f4"), ("value_2", "f4")], "input_selection == 0 ? value_1 : (value_2)"),
-    ("switch_float4_4_inputs", &[("input_selection", "i1"), ("value_1", "f4"), ("value_2", "f4"), ("value_3", "f4"), ("value_4", "f4")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
-    ("switch_float4_8_inputs", &[("input_selection", "i1"), ("value_1", "f4"), ("value_2", "f4"), ("value_3", "f4"), ("value_4", "f4"), ("value_5", "f4"), ("value_6", "f4"), ("value_7", "f4"), ("value_8", "f4")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
-    // Functions/switch/Integer1
-    ("switch_integer1_2_inputs", &[("input_selection", "i1"), ("value_1", "i1"), ("value_2", "i1")], "input_selection == 0 ? value_1 : (value_2)"),
-    ("switch_integer1_4_inputs", &[("input_selection", "i1"), ("value_1", "i1"), ("value_2", "i1"), ("value_3", "i1"), ("value_4", "i1")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
-    ("switch_integer1_8_inputs", &[("input_selection", "i1"), ("value_1", "i1"), ("value_2", "i1"), ("value_3", "i1"), ("value_4", "i1"), ("value_5", "i1"), ("value_6", "i1"), ("value_7", "i1"), ("value_8", "i1")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
-    // Functions/switch/Integer2
-    ("switch_integer2_2_inputs", &[("input_selection", "i1"), ("value_1", "i2"), ("value_2", "i2")], "input_selection == 0 ? value_1 : (value_2)"),
-    ("switch_integer2_4_inputs", &[("input_selection", "i1"), ("value_1", "i2"), ("value_2", "i2"), ("value_3", "i2"), ("value_4", "i2")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
-    ("switch_integer2_8_inputs", &[("input_selection", "i1"), ("value_1", "i2"), ("value_2", "i2"), ("value_3", "i2"), ("value_4", "i2"), ("value_5", "i2"), ("value_6", "i2"), ("value_7", "i2"), ("value_8", "i2")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
-    // Functions/switch/Integer3
-    ("switch_integer3_2_inputs", &[("input_selection", "i1"), ("value_1", "i3"), ("value_2", "i3")], "input_selection == 0 ? value_1 : (value_2)"),
-    ("switch_integer3_4_inputs", &[("input_selection", "i1"), ("value_1", "i3"), ("value_2", "i3"), ("value_3", "i3"), ("value_4", "i3")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
-    ("switch_integer3_8_inputs", &[("input_selection", "i1"), ("value_1", "i3"), ("value_2", "i3"), ("value_3", "i3"), ("value_4", "i3"), ("value_5", "i3"), ("value_6", "i3"), ("value_7", "i3"), ("value_8", "i3")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
-    // Functions/switch/Integer4
-    ("switch_integer4_2_inputs", &[("input_selection", "i1"), ("value_1", "i4"), ("value_2", "i4")], "input_selection == 0 ? value_1 : (value_2)"),
-    ("switch_integer4_4_inputs", &[("input_selection", "i1"), ("value_1", "i4"), ("value_2", "i4"), ("value_3", "i4"), ("value_4", "i4")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
-    ("switch_integer4_8_inputs", &[("input_selection", "i1"), ("value_1", "i4"), ("value_2", "i4"), ("value_3", "i4"), ("value_4", "i4"), ("value_5", "i4"), ("value_6", "i4"), ("value_7", "i4"), ("value_8", "i4")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
-    // Functions/typeConverters
-    ("booleanToFloat1", &[("Boolean", "b")], "Boolean ? 1 : 0"),
-    ("turnsToDegrees", &[("turns", "f1")], "turns * 360"),
+const TABLE: &[(&str, &[Func])] = &[
+    ("Functions/Cycles", &[
+        ("Wave", "Wave", &[("Amplitude", "f1"), ("Frequency", "f1"), ("greaterThanZero", "b")], "w = Amplitude * sin(Frequency * $time); greaterThanZero ? Amplitude + w : w"),
+    ]),
+    ("Functions/Math", &[
+        ("Ln", "Ln", &[("a", "f1")], "log(a) / exp(1)"),
+        ("Pi", "Pi", &[], "pi"),
+        ("2Pi", "2 Pi", &[], "tau"),
+        ("Pow", "Power (Positive Base)", &[("x", "f1"), ("n", "f1")], "x <= 0 ? 0 : pow(x, n)"),
+        ("Roughness", "Roughness per Level", &[("Roughness", "f1"), ("CurrentLevel", "i1"), ("TotalLevel", "i1"), ("GlobalOpacity", "f1")], "Roughness == 0 ? GlobalOpacity : (Roughness == 1 ? GlobalOpacity / float(TotalLevel) : GlobalOpacity * ((1 - Roughness) * (Roughness <= 0 ? 0 : pow(Roughness, float(CurrentLevel)))) / (1 - (Roughness <= 0 ? 0 : pow(Roughness, float(TotalLevel)))))"),
+        ("Equality_Float2", "Equal Float2", &[("A", "f2"), ("B", "f2")], "A == B"),
+        ("Equality_Float3", "Equal Float3", &[("A", "f3"), ("B", "f3")], "A == B"),
+        ("Equality_Boolean", "Equal Bool", &[("A", "b"), ("B", "b")], "A == B"),
+        ("Equality_Float4", "Equal Float4", &[("A", "f4"), ("B", "f4")], "A == B"),
+        ("NotEqual_Float2", "Not Equal Float2", &[("A", "f2"), ("B", "f2")], "A != B"),
+        ("NotEqual_Float3", "Not Equal Float3", &[("A", "f3"), ("B", "f3")], "A != B"),
+        ("NotEqual_Float4", "Not Equal Float4", &[("A", "f4"), ("B", "f4")], "A != B"),
+        ("NotEqual_Boolean", "Not Equal Bool", &[("A", "b"), ("B", "b")], "A != B"),
+        ("Curve_Function", "Curve", &[("curve", "f1"), ("input", "f1")], "curve < 0 ? (input * (1 + curve) - curve * sqrt(1 - (1 - input) * (1 - input))) : ((1 - sqrt(1 - input * input)) * curve + input * (1 - curve))"),
+        ("merge_float4", "Merge Float4", &[("x", "f1"), ("y", "f1"), ("z", "f1"), ("w", "f1")], "vec4(x, y, z, w)"),
+        ("merge_float3", "Merge Float3", &[("x", "f1"), ("y", "f1"), ("z", "f1")], "vec3(x, y, z)"),
+        ("distance_vec3", "Distance Float3", &[("a", "f3"), ("b", "f3")], "distance(a, b)"),
+        ("distance_vec2", "Distance Float2", &[("a", "f2"), ("b", "f2")], "distance(a, b)"),
+        ("length_vec2", "Length Float2", &[("v", "f2")], "length(v)"),
+        ("length_vec3", "Length Float3", &[("v", "f3")], "length(v)"),
+        ("sign", "Sign", &[("x", "f1")], "x < 0 ? 0 - 1 : 1"),
+        ("reflect", "Reflect", &[("i", "f3"), ("n", "f3")], "i - n * (dot(i, n) * 2)"),
+        ("oneminus", "One Minus", &[("x", "f1")], "1 - x"),
+        ("fmod", "Float Modulo", &[("a", "f1"), ("b", "f1")], "a - b * float(int(a / b))"),
+        ("frac", "Fraction", &[("input", "f1")], "fract(input)"),
+        ("cross_product", "Cross Product Float3", &[("a", "f3"), ("b", "f3")], "cross(a, b)"),
+        ("cross_product_vec2", "Cross Product Float2", &[("a", "f2"), ("b", "f2")], "a.x * b.y - a.y * b.x"),
+        ("step", "Step", &[("a", "f1"), ("x", "f1")], "step(a, x)"),
+        ("divide_float4", "Divide Float4 by Scalar", &[("input", "f4"), ("scalar", "f1")], "input / scalar"),
+        ("divide_float3", "Divide Float3 by Scalar", &[("input", "f3"), ("scalar", "f1")], "input / scalar"),
+        ("divide_float2", "Divide Float2 by Scalar", &[("input", "f2"), ("scalar", "f1")], "input / scalar"),
+        ("clamp", "Clamp", &[("input", "f1"), ("min", "f1"), ("max", "f1")], "clamp(input, min, max)"),
+        ("normalize_vec2", "Normalize Float2", &[("input", "f2")], "normalize(input)"),
+        ("normalize_vec3", "Normalize Float3", &[("input", "f3")], "normalize(input)"),
+        ("normalize_vec4", "Normalize Float4", &[("input", "f4")], "normalize(input)"),
+        ("smoothstep", "Smoothstep", &[("a", "f1"), ("b", "f1"), ("x", "f1")], "t = saturate((x - a) / (b - a)); t * t * (3 - 2 * t)"),
+        ("saturate_float2", "Saturate Float2", &[("input", "f2")], "saturate(input)"),
+        ("average_float1", "Average Float", &[("a", "f1"), ("b", "f1")], "(a + b) * 0.5"),
+        ("average_float2", "Average Float2", &[("a", "f2"), ("b", "f2")], "(a + b) * 0.5"),
+        ("average_float3", "Average Float3", &[("a", "f3"), ("b", "f3")], "(a + b) * 0.5"),
+        ("average_float4", "Average Float4", &[("a", "f4"), ("b", "f4")], "(a + b) * 0.5"),
+        ("orthogonal_vec2", "Orthogonal Float2", &[("input", "f2")], "vec2(input.y, 0 - input.x)"),
+        ("saturate", "Saturate", &[("input", "f1")], "saturate(input)"),
+        ("truncate_float1_decimals", "Truncate Decimals", &[("input", "f1"), ("decimals", "i1")], "p = pow(10, float(decimals)); decimals <= 0 ? input : floor(input * p) / p"),
+        ("round_float1", "Round", &[("input", "f1")], "floor(input + 0.5)"),
+    ]),
+    ("Functions/Math/Parity", &[
+        ("EvenCount", "Even Count", &[("Input", "f1")], "ceil(floor(Input) / 2)"),
+        ("OddCount", "Odd Count", &[("Input", "f1")], "floor(floor(Input) / 2)"),
+        ("ParityTest", "Parity Test", &[("Input", "f1")], "t = 0.25 * (2 * Input + 1); 0.5 > t - floor(t)"),
+    ]),
+    ("Functions/Math/Trigo", &[
+        ("deg_to_rad", "Degrees to Radians", &[("deg", "f1")], "deg * (pi / 180)"),
+        ("asin", "Arc Sine", &[("x", "f1")], "asin(x)"),
+        ("acos", "Arc Cosine", &[("x", "f1")], "acos(x)"),
+    ]),
+    ("Functions/Random", &[
+        ("Uniform_[A,B[", "Uniform Random", &[("A", "f1"), ("B", "f1")], "rand(B - A) + A"),
+        ("Discrete_[A,B]", "Discrete Random", &[("A", "f1"), ("B", "f1"), ("Probability", "f1")], "rand(1) >= Probability ? A : B"),
+        ("Uniform_[-1,1[", "Uniform Random -1..1", &[], "rand(2) - 1"),
+        ("Uniform_F2_[A,B[", "Uniform Random Float2", &[("A2", "f2"), ("B2", "f2")], "d = B2 - A2; vec2(rand(d.x), rand(d.y)) + A2"),
+        ("Uniform_F3_[A,B[", "Uniform Random Float3", &[("A", "f3"), ("B", "f3")], "d = B - A; vec3(rand(d.x), rand(d.y), rand(d.z)) + A"),
+        ("Uniform_F4_[A,B[", "Uniform Random Float4", &[("A", "f4"), ("B", "f4")], "d = B - A; vec4(rand(d.x), rand(d.y), rand(d.z), rand(d.w)) + A"),
+        ("Degrees_to_Turn", "Degrees to Turns", &[("input", "f1")], "input / 360"),
+        ("GlobalRandom", "Global Random", &[("Input", "f1"), ("Seed", "i1")], "fract(sin(Input * 12.9898 + float(Seed) * 78.233) * 43758.5453)"),
+        ("normal_distribution", "Normal Distribution", &[("radius", "f1"), ("uniform_random", "f2")], "r = 0.25 * sqrt(0 - 2 * log(max(uniform_random.x, 0.0001))) * radius; t = uniform_random.y * tau; vec2(r * cos(t), r * sin(t))"),
+        // pseudo-random values in [0, 1) from a seed: Hash <in><out>, the digits are the seed's and the result's
+        // component counts. MaterialCraft's own hash (see `mc_hash_mix`); each result component starts from its
+        // own offset, so the components differ.
+        ("hash11", "Hash 11", &[("input", "f1")], "mc_hash_mix(input)"),
+        ("hash14", "Hash 14", &[("input", "f1")], "vec4(mc_hash_mix(input), mc_hash_mix(input + 1.5446), mc_hash_mix(input + 3.5607), mc_hash_mix(input + 5.3721))"),
+        ("hash21", "Hash 21", &[("input", "f2")], "mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x))"),
+        ("hash22", "Hash 22", &[("input", "f2")], "vec2(mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x)), mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x + 1.5446)))"),
+        ("hash24", "Hash 24", &[("input", "f2")], "vec4(mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x)), mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x + 1.5446)), mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x + 3.5607)), mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x + 5.3721)))"),
+        ("hash31", "Hash 31", &[("input", "f3")], "mc_hash_mix(input.z + 7.31 * mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x)))"),
+        ("hash32", "Hash 32", &[("input", "f3")], "vec2(mc_hash_mix(input.z + 7.31 * mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x))), mc_hash_mix(input.z + 7.31 * mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x + 1.5446))))"),
+    ]),
+    ("Functions/Ranges", &[
+        ("[-1_1]_to_[0_1]", "Range -1..1 to 0..1", &[("Input", "f1")], "Input * 0.5 + 0.5"),
+        ("[0_1]_to_[-1_1]", "Range 0..1 to -1..1", &[("Input", "f1")], "Input * 2 - 1"),
+        ("[0_1]_to_[1_0]", "Range 0..1 to 1..0", &[("Input", "f1")], "1 - Input"),
+        ("negateFloat", "Negate Float", &[("Input", "f1")], "0 - Input"),
+        ("Height_Balance_Fn", "Height Balance", &[("Depth_Balance", "f1")], "vec4(max(Depth_Balance, 0), min(1 + Depth_Balance, 1), max(0 - Depth_Balance, 0), min(1 - Depth_Balance, 1))"),
+        ("[0,1]_to_[0,1,0]", "Range 0..1 to 0..1..0", &[("input", "f1")], "1 - abs(2 * input - 1)"),
+        ("[a,b]_to_[0,1]", "Range A..B to 0..1", &[("X", "f1"), ("A", "f1"), ("B", "f1")], "saturate((X - A) / (B - A))"),
+        ("triangle_wave", "Triangle Wave", &[("input", "f1")], "1 - abs(1 - 2 * fract(input / 2))"),
+        ("sawtooth_wave", "Sawtooth Wave", &[("x", "f1")], "m = mod(x, 1); m == 0 ? (abs(x) > 1 ? 1 : abs(x)) : m"),
+    ]),
+    ("Functions/Transforms", &[
+        ("Directional_Offset", "Directional Offset", &[("Direction", "f1"), ("Distance", "f1")], "r = Direction * tau; vec2(cos(r) * Distance, sin(r) * Distance)"),
+        ("MatrixMultiply", "Matrix Multiply", &[("MatrixA", "f4"), ("MatrixB", "f4")], "a0 = MatrixA.x; a1 = MatrixA.y; a2 = MatrixA.z; a3 = MatrixA.w; b0 = MatrixB.x; b1 = MatrixB.y; b2 = MatrixB.z; b3 = MatrixB.w; vec4(a0 * b0 + a1 * b2, a0 * b1 + a1 * b3, a2 * b0 + a3 * b2, a2 * b1 + a3 * b3)"),
+        ("RotationMatrix", "Rotation Matrix", &[("RotationW", "f1")], "r = RotationW * tau; vec4(cos(r), 0 - sin(r), sin(r), cos(r))"),
+        ("ScaleMatrix", "Scale Matrix", &[("ScaleUV", "f2")], "vec4(100 / ScaleUV.x, 0, 0, 100 / ScaleUV.y)"),
+        ("TileMatrix", "Tile Matrix", &[("tiles_xy", "f2")], "vec4(tiles_xy.x, 0, 0, tiles_xy.y)"),
+        ("rotate_vec2", "Rotate Float2", &[("vec2", "f2"), ("angle", "f1"), ("pivot", "f2")], "p = vec2 - pivot; a = angle * tau; c = cos(a); s = sin(a); vec2(p.x * c + p.y * s, p.y * c - p.x * s) + pivot"),
+        ("matrix_invert", "Matrix Invert", &[("matrix22", "f4")], "m0 = matrix22.x; m1 = matrix22.y; m2 = matrix22.z; m3 = matrix22.w; d = m0 * m3 - m1 * m2; vec4(m3 / d, (0 - m1) / d, (0 - m2) / d, m0 / d)"),
+        ("polar_to_carthesian", "Polar to Cartesian", &[("input", "f2")], "x = input.x; y = input.y; e = pi * (y - 0.5); vec3(cos(e) * cos(x * tau), cos(e) * sin(x * tau), 0 - sin(e))"),
+        ("carthesian_to_polar", "Cartesian to Polar", &[("input", "f3")], "x = input.x; y = input.y; z = input.z; vec2(mod(atan2(y, x) / tau, 1), 1 - (atan2(z, sqrt(x * x + y * y)) / pi + 0.5))"),
+    ]),
+    ("Functions/Various", &[
+        ("disorder", "Disorder", &[("disorder_radius", "f1"), ("disorder_angle", "f1")], "r = rand(disorder_radius); t = 6.28318501 * (rand(2) - 1); vec2(r * cos(t), r * sin(t))"),
+        ("non_square_output_size", "Non-Square Output Size", &[("scale", "i1"), ("output_size", "i2"), ("non_square", "b")], "output_size"),
+        ("non_square_expansion_uv_scale", "Non-Square UV Scale", &[("position", "f2"), ("non_square_expansion", "b")], "sl = $sizelog2; sx = sl.x; sy = sl.y; d = max(sx, sy) - min(sx, sy); df = sx > sy ? vec2(d, 0) : vec2(0, d); p2 = vec2(exp2(df.x), exp2(df.y)); non_square_expansion ? (p2 * position - (vec2(1, 1) - p2) * 0.5) : position"),
+    ]),
+    ("Functions/colorValues", &[
+        ("directionToNormal", "Direction to Normal", &[("Direction", "f1"), ("slopeAngle", "f1"), ("yUp", "b")], "off = yUp ? 0 : pi; dr = Direction * tau + off; sa = slopeAngle * tau; cx = cos(Direction * tau + pi); vec4(cx * sin(sa) * 0.5 + 0.5, sin(dr) * sin(sa) * 0.5 + 0.5, 1, 1)"),
+        ("RGBtoHSL", "RGB to HSL", &[("RGB", "f3")], "vec3(RGB_hue_hexagonal(rgb), RGB_saturation_HSL(rgb), RGB_lightness_bihexcone(rgb))"),
+        ("HSLtoRGB", "HSL to RGB", &[("HSL", "f3")], "h = HSL.x; s = HSL.y; L = HSL.z; C = (1 - abs(2 * L - 1)) * s; hp = h * 6; X = C * (1 - abs(mod(hp, 2) - 1)); m = L - C / 2; hp < 0 ? vec3(m, m, m) : (hp <= 1 ? (vec3(C, X, 0) + vec3(m, m, m)) : (hp <= 2 ? (vec3(X, C, 0) + vec3(m, m, m)) : (hp <= 3 ? (vec3(0, C, X) + vec3(m, m, m)) : (hp <= 4 ? (vec3(0, X, C) + vec3(m, m, m)) : (hp <= 5 ? (vec3(X, 0, C) + vec3(m, m, m)) : (hp < 6 ? (vec3(C, 0, X) + vec3(m, m, m)) : (vec3(m, m, m))))))))"),
+        ("Random_Color", "Random Color", &[("RGB", "f3"), ("RGB_Randomness", "f3")], "vec3(RGB.x + (rand(1) * 2 - 1) * RGB_Randomness.x, RGB.y + (rand(1) * 2 - 1) * RGB_Randomness.y, RGB.z + (rand(1) * 2 - 1) * RGB_Randomness.z)"),
+        ("Random_Luminosity", "Random Luminosity", &[("RGB", "f3"), ("Luminosity_Randomness", "f1")], "off = (rand(1) * 2 - 1) * Luminosity_Randomness; vec3(RGB.x + off, RGB.y + off, RGB.z + off)"),
+        ("RGBtoHSV", "RGB to HSV", &[("rgb", "f3")], "vec3(RGB_hue_hexagonal(rgb), RGB_saturation_HSV(rgb), RGB_lightness_hexcone(rgb))"),
+        ("RGBtoHSI", "RGB to HSI", &[("rgb", "f3")], "vec3(RGB_hue_2_polar(rgb), RGB_saturation_HSI(rgb), RGB_lightness_average(rgb))"),
+        ("RGBtoHCL", "RGB to HCL", &[("rgb", "f3")], "vec3(RGB_hue_hexagonal(rgb), RGB_chroma_hexagonal(rgb), RGB_lightness_luma_rec601(rgb))"),
+        ("RGB_lightness_average", "Lightness (Average)", &[("rgb", "f3")], "(rgb.x + rgb.y + rgb.z) / 3"),
+        ("RGB_lightness_hexcone", "Lightness (Hexcone)", &[("rgb", "f3")], "max(rgb.x, max(rgb.y, rgb.z))"),
+        ("RGB_lightness_bihexcone", "Lightness (Bi-Hexcone)", &[("rgb", "f3")], "(max(rgb.x, max(rgb.y, rgb.z)) + min(rgb.x, min(rgb.y, rgb.z))) * 0.5"),
+        ("RGB_lightness_luma_rec601", "Luma Rec. 601", &[("rgb", "f3")], "dot(rgb, vec3(0.299, 0.587, 0.114))"),
+        ("RGB_lightness_luma_rec709", "Luma Rec. 709", &[("rgb", "f3")], "dot(rgb, vec3(0.2126, 0.7152, 0.0722))"),
+        ("RGB_chroma_hexagonal", "Chroma (Hexagonal)", &[("rgb", "f3")], "max(rgb.x, max(rgb.y, rgb.z)) - min(rgb.x, min(rgb.y, rgb.z))"),
+        ("RGB_chroma_2_polar", "Chroma (Polar)", &[("rgb", "f3")], "r = rgb.x; g = rgb.y; b = rgb.z; alpha = 0.5 * (2 * r - g - b); beta = (g - b) * sqrt(3) * 0.5; sqrt(alpha * alpha + beta * beta)"),
+        ("RGB_hue_hexagonal", "Hue (Hexagonal)", &[("rgb", "f3")], "r = rgb.x; g = rgb.y; b = rgb.z; mx = max(r, max(g, b)); mn = min(r, min(g, b)); c = mx - mn; h = c == 0 ? 0 : (r >= mx ? mod((g - b) / c, 6) : (g >= mx ? (b - r) / c + 2 : (b >= mx ? (r - g) / c + 4 : 1))); h * 60 / 360"),
+        ("RGB_hue_2_polar", "Hue (Polar)", &[("rgb", "f3")], "r = rgb.x; g = rgb.y; b = rgb.z; alpha = 0.5 * (2 * r - g - b); beta = (g - b) * sqrt(3) * 0.5; h = atan2(beta, alpha) / pi * 0.5 + 1; mod(h, 1)"),
+        ("RGB_saturation_HSV", "Saturation (HSV)", &[("rgb", "f3")], "(max(rgb.x, max(rgb.y, rgb.z)) - min(rgb.x, min(rgb.y, rgb.z))) / max(rgb.x, max(rgb.y, rgb.z))"),
+        ("RGB_saturation_HSL", "Saturation (HSL)", &[("rgb", "f3")], "mx = max(rgb.x, max(rgb.y, rgb.z)); mn = min(rgb.x, min(rgb.y, rgb.z)); L = (mx + mn) * 0.5; (mx - mn) / (1 - abs(2 * L - 1))"),
+        ("RGB_saturation_HSI", "Saturation (HSI)", &[("rgb", "f3")], "mn = min(rgb.x, min(rgb.y, rgb.z)); I = (rgb.x + rgb.y + rgb.z) / 3; (I - mn) / I"),
+        ("HSItoRGB", "HSI to RGB", &[("hsi", "f3")], "H = hsi.x; S = hsi.y; I = hsi.z; lo = I * (1 - S); th = I * 3; a0 = H * tau; k0 = I * (1 + S * cos(a0) / cos(pi / 3 - a0)); a1 = (H - 1 / 3) * tau; k1 = I * (1 + S * cos(a1) / cos(pi / 3 - a1)); a2 = (H - 2 / 3) * tau; k2 = I * (1 + S * cos(a2) / cos(pi / 3 - a2)); (H >= 0 && H < 1 / 3) ? vec3(k0, th - k0 - lo, lo) : ((H >= 1 / 3 && H < 2 / 3) ? vec3(lo, k1, th - k1 - lo) : ((H >= 2 / 3 && H < 1) ? vec3(th - k2 - lo, lo, k2) : vec3(lo, lo, lo)))"),
+        ("HSVtoRGB", "HSV to RGB", &[("hsv", "f3")], "h = hsv.x; s = hsv.y; v = hsv.z; C = s * v; hp = h * 6; X = C * (1 - abs(mod(hp, 2) - 1)); m = v - C; hp < 0 ? vec3(m, m, m) : (hp <= 1 ? (vec3(C, X, 0) + vec3(m, m, m)) : (hp <= 2 ? (vec3(X, C, 0) + vec3(m, m, m)) : (hp <= 3 ? (vec3(0, C, X) + vec3(m, m, m)) : (hp <= 4 ? (vec3(0, X, C) + vec3(m, m, m)) : (hp <= 5 ? (vec3(X, 0, C) + vec3(m, m, m)) : (hp < 6 ? (vec3(C, 0, X) + vec3(m, m, m)) : (vec3(m, m, m))))))))"),
+        ("HCLtoRGB", "HCL to RGB", &[("hcl", "f3")], "h = hcl.x; C = hcl.y; L = hcl.z; hp = h * 6; X = C * (1 - abs(mod(hp, 2) - 1)); rgbp = hp < 0 ? vec3(0, 0, 0) : (hp <= 1 ? vec3(C, X, 0) : (hp <= 2 ? vec3(X, C, 0) : (hp <= 3 ? vec3(0, C, X) : (hp <= 4 ? vec3(0, X, C) : (hp <= 5 ? vec3(X, 0, C) : (hp < 6 ? vec3(C, 0, X) : (vec3(0, 0, 0)))))))); m = L - dot(rgbp, vec3(0.299, 0.587, 0.114)); rgbp + vec3(m, m, m)"),
+        ("linear_to_sRGB_luminance", "Linear to sRGB (Gray)", &[("input", "f1")], "input <= 0.0031308 ? input * 12.92 : 1.055 * pow(input, 1 / 2.4) - 0.055"),
+        ("linear_to_sRGB_rgb", "Linear to sRGB (Color)", &[("input", "f3")], "vec3(linear_to_sRGB_luminance(input.x), linear_to_sRGB_luminance(input.y), linear_to_sRGB_luminance(input.z))"),
+        ("sRGB_to_linear_rgb", "sRGB to Linear (Color)", &[("input", "f3")], "vec3(sRGB_to_linear_luminance(input.x), sRGB_to_linear_luminance(input.y), sRGB_to_linear_luminance(input.z))"),
+        ("sRGB_to_linear_luminance", "sRGB to Linear (Gray)", &[("input", "f1")], "input <= 0.04045 ? input / 12.92 : pow((input + 0.055) / 1.055, 2.4)"),
+        ("temperature_to_rgb", "Temperature to RGB", &[("temperature", "f1")], "t = temperature / 100; r = temperature_to_rgb_fit(t, 0.679299712, 0.0463962592, 10.5762053, -1.51725721); g = temperature_to_rgb_fit(t, -0.267794788, 1344.49194, 0.996967077, 2.72198915); bl = temperature_to_rgb_fit(t, -0.369759142, 865.372559, 2.09022808, 1.68704808); max(vec3(r, g, bl), vec3(0, 0, 0))"),
+        ("temperature_to_rgb_fit", "Temperature Curve Fit", &[("input", "f1"), ("a", "f1"), ("b", "f1"), ("c", "f1"), ("d", "f1")], "p = input <= 0 ? 0 : pow(input, d); (a * b + c * p) / (p + b)"),
+        ("acescg_to_linear_srgb", "ACEScg to Linear sRGB", &[("input", "f3")], "vec3(dot(vec3(1.70490003, -0.624159992, -0.0809141025), input), dot(vec3(-0.129553005, 1.13837004, -0.00876800995), input), dot(vec3(-0.0241260994, -0.124632999, 1.14882004), input))"),
+        ("linear_srgb_to_acescg", "Linear sRGB to ACEScg", &[("input", "f3")], "vec3(dot(vec3(0.613117993, 0.341181993, 0.0457873009), input), dot(vec3(0.0699340999, 0.91810298, 0.0119327996), input), dot(vec3(0.0204629991, 0.106769003, 0.87271601), input))"),
+        ("hsl_offset", "HSL Offset", &[("rgb", "f3"), ("hue", "f1"), ("saturation", "f1"), ("lightness", "f1")], "hsl = RGBtoHSL(rgb); HSLtoRGB(vec3(mod(hsl.x + hue, 1), hsl.y + saturation, hsl.z + lightness))"),
+    ]),
+    ("Functions/easings/circ", &[
+        ("ease_in_circ", "Ease In Circ", &[("input", "f1")], "1 - sqrt(1 - pow(input, 2))"),
+        ("ease_out_circ", "Ease Out Circ", &[("input", "f1")], "sqrt(1 - pow(input - 1, 2))"),
+        ("ease_in_out_circ", "Ease In Out Circ", &[("input", "f1")], "input < 0.5 ? (1 - sqrt(1 - pow(2 * input, 2))) / 2 : (sqrt(1 - pow(-2 * input + 2, 2)) + 1) / 2"),
+    ]),
+    ("Functions/easings/cubic", &[
+        ("ease_in_cubic", "Ease In Cubic", &[("input", "f1")], "input * input * input"),
+        ("ease_out_cubic", "Ease Out Cubic", &[("input", "f1")], "1 - pow(1 - input, 3)"),
+        ("ease_in_out_cubic", "Ease In Out Cubic", &[("input", "f1")], "input < 0.5 ? 4 * input * input * input : 1 - pow(-2 * input + 2, 3) / 2"),
+    ]),
+    ("Functions/easings/expo", &[
+        ("ease_in_expo", "Ease In Expo", &[("input", "f1")], "input == 0 ? 0 : pow(2, 10 * input - 10)"),
+        ("ease_out_expo", "Ease Out Expo", &[("input", "f1")], "input == 1 ? 1 : 1 - pow(2, -10 * input)"),
+        ("ease_in_out_expo", "Ease In Out Expo", &[("input", "f1")], "input == 0 ? 0 : (input == 1 ? 1 : (input < 0.5 ? pow(2, 20 * input - 10) / 2 : (2 - pow(2, -20 * input + 10)) / 2))"),
+    ]),
+    ("Functions/easings/quad", &[
+        ("ease_in_quad", "Ease In Quad", &[("input", "f1")], "input * input"),
+        ("ease_out_quad", "Ease Out Quad", &[("input", "f1")], "1 - (1 - input) * (1 - input)"),
+        ("ease_in_out_quad", "Ease In Out Quad", &[("input", "f1")], "input < 0.5 ? 2 * input * input : 1 - pow(-2 * input + 2, 2) / 2"),
+    ]),
+    ("Functions/easings/quart", &[
+        ("ease_in_quart", "Ease In Quart", &[("input", "f1")], "input * input * input * input"),
+        ("ease_out_quart", "Ease Out Quart", &[("input", "f1")], "1 - pow(1 - input, 4)"),
+        ("ease_in_out_quart", "Ease In Out Quart", &[("input", "f1")], "input < 0.5 ? 8 * pow(input, 4) : 1 - pow(-2 * input + 2, 4) / 2"),
+    ]),
+    ("Functions/easings/quint", &[
+        ("ease_in_quint", "Ease In Quint", &[("input", "f1")], "pow(input, 5)"),
+        ("ease_out_quint", "Ease Out Quint", &[("input", "f1")], "1 - pow(1 - input, 5)"),
+        ("ease_in_out_quint", "Ease In Out Quint", &[("input", "f1")], "input < 0.5 ? 16 * pow(input, 5) : 1 - pow(-2 * input + 2, 5) / 2"),
+    ]),
+    ("Functions/easings/sine", &[
+        ("ease_in_sine", "Ease In Sine", &[("input", "f1")], "1 - cos(input * pi / 2)"),
+        ("ease_out_sine", "Ease Out Sine", &[("input", "f1")], "sin(input * pi / 2)"),
+        ("ease_in_out_sine", "Ease In Out Sine", &[("input", "f1")], "0 - (cos(pi * input) - 1) / 2"),
+    ]),
+    ("Functions/switch/Float1", &[
+        ("switch_float1_2_inputs", "Switch Float (2 Inputs)", &[("input_selection", "i1"), ("value_1", "f1"), ("value_2", "f1")], "input_selection == 0 ? value_1 : (value_2)"),
+        ("switch_float1_4_inputs", "Switch Float (4 Inputs)", &[("input_selection", "i1"), ("value_1", "f1"), ("value_2", "f1"), ("value_3", "f1"), ("value_4", "f1")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
+        ("switch_float1_8_inputs", "Switch Float (8 Inputs)", &[("input_selection", "i1"), ("value_1", "f1"), ("value_2", "f1"), ("value_3", "f1"), ("value_4", "f1"), ("value_5", "f1"), ("value_6", "f1"), ("value_7", "f1"), ("value_8", "f1")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
+    ]),
+    ("Functions/switch/Float2", &[
+        ("switch_float2_2_inputs", "Switch Float2 (2 Inputs)", &[("input_selection", "i1"), ("value_1", "f2"), ("value_2", "f2")], "input_selection == 0 ? value_1 : (value_2)"),
+        ("switch_float2_4_inputs", "Switch Float2 (4 Inputs)", &[("input_selection", "i1"), ("value_1", "f2"), ("value_2", "f2"), ("value_3", "f2"), ("value_4", "f2")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
+        ("switch_float2_8_inputs", "Switch Float2 (8 Inputs)", &[("input_selection", "i1"), ("value_1", "f2"), ("value_2", "f2"), ("value_3", "f2"), ("value_4", "f2"), ("value_5", "f2"), ("value_6", "f2"), ("value_7", "f2"), ("value_8", "f2")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
+    ]),
+    ("Functions/switch/Float3", &[
+        ("switch_float3_2_inputs", "Switch Float3 (2 Inputs)", &[("input_selection", "i1"), ("value_1", "f3"), ("value_2", "f3")], "input_selection == 0 ? value_1 : (value_2)"),
+        ("switch_float3_4_inputs", "Switch Float3 (4 Inputs)", &[("input_selection", "i1"), ("value_1", "f3"), ("value_2", "f3"), ("value_3", "f3"), ("value_4", "f3")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
+        ("switch_float3_8_inputs", "Switch Float3 (8 Inputs)", &[("input_selection", "i1"), ("value_1", "f3"), ("value_2", "f3"), ("value_3", "f3"), ("value_4", "f3"), ("value_5", "f3"), ("value_6", "f3"), ("value_7", "f3"), ("value_8", "f3")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
+    ]),
+    ("Functions/switch/Float4", &[
+        ("switch_float4_2_inputs", "Switch Float4 (2 Inputs)", &[("input_selection", "i1"), ("value_1", "f4"), ("value_2", "f4")], "input_selection == 0 ? value_1 : (value_2)"),
+        ("switch_float4_4_inputs", "Switch Float4 (4 Inputs)", &[("input_selection", "i1"), ("value_1", "f4"), ("value_2", "f4"), ("value_3", "f4"), ("value_4", "f4")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
+        ("switch_float4_8_inputs", "Switch Float4 (8 Inputs)", &[("input_selection", "i1"), ("value_1", "f4"), ("value_2", "f4"), ("value_3", "f4"), ("value_4", "f4"), ("value_5", "f4"), ("value_6", "f4"), ("value_7", "f4"), ("value_8", "f4")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
+    ]),
+    ("Functions/switch/Integer1", &[
+        ("switch_integer1_2_inputs", "Switch Integer (2 Inputs)", &[("input_selection", "i1"), ("value_1", "i1"), ("value_2", "i1")], "input_selection == 0 ? value_1 : (value_2)"),
+        ("switch_integer1_4_inputs", "Switch Integer (4 Inputs)", &[("input_selection", "i1"), ("value_1", "i1"), ("value_2", "i1"), ("value_3", "i1"), ("value_4", "i1")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
+        ("switch_integer1_8_inputs", "Switch Integer (8 Inputs)", &[("input_selection", "i1"), ("value_1", "i1"), ("value_2", "i1"), ("value_3", "i1"), ("value_4", "i1"), ("value_5", "i1"), ("value_6", "i1"), ("value_7", "i1"), ("value_8", "i1")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
+    ]),
+    ("Functions/switch/Integer2", &[
+        ("switch_integer2_2_inputs", "Switch Integer2 (2 Inputs)", &[("input_selection", "i1"), ("value_1", "i2"), ("value_2", "i2")], "input_selection == 0 ? value_1 : (value_2)"),
+        ("switch_integer2_4_inputs", "Switch Integer2 (4 Inputs)", &[("input_selection", "i1"), ("value_1", "i2"), ("value_2", "i2"), ("value_3", "i2"), ("value_4", "i2")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
+        ("switch_integer2_8_inputs", "Switch Integer2 (8 Inputs)", &[("input_selection", "i1"), ("value_1", "i2"), ("value_2", "i2"), ("value_3", "i2"), ("value_4", "i2"), ("value_5", "i2"), ("value_6", "i2"), ("value_7", "i2"), ("value_8", "i2")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
+    ]),
+    ("Functions/switch/Integer3", &[
+        ("switch_integer3_2_inputs", "Switch Integer3 (2 Inputs)", &[("input_selection", "i1"), ("value_1", "i3"), ("value_2", "i3")], "input_selection == 0 ? value_1 : (value_2)"),
+        ("switch_integer3_4_inputs", "Switch Integer3 (4 Inputs)", &[("input_selection", "i1"), ("value_1", "i3"), ("value_2", "i3"), ("value_3", "i3"), ("value_4", "i3")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
+        ("switch_integer3_8_inputs", "Switch Integer3 (8 Inputs)", &[("input_selection", "i1"), ("value_1", "i3"), ("value_2", "i3"), ("value_3", "i3"), ("value_4", "i3"), ("value_5", "i3"), ("value_6", "i3"), ("value_7", "i3"), ("value_8", "i3")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
+    ]),
+    ("Functions/switch/Integer4", &[
+        ("switch_integer4_2_inputs", "Switch Integer4 (2 Inputs)", &[("input_selection", "i1"), ("value_1", "i4"), ("value_2", "i4")], "input_selection == 0 ? value_1 : (value_2)"),
+        ("switch_integer4_4_inputs", "Switch Integer4 (4 Inputs)", &[("input_selection", "i1"), ("value_1", "i4"), ("value_2", "i4"), ("value_3", "i4"), ("value_4", "i4")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
+        ("switch_integer4_8_inputs", "Switch Integer4 (8 Inputs)", &[("input_selection", "i1"), ("value_1", "i4"), ("value_2", "i4"), ("value_3", "i4"), ("value_4", "i4"), ("value_5", "i4"), ("value_6", "i4"), ("value_7", "i4"), ("value_8", "i4")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
+    ]),
+    ("Functions/typeConverters", &[
+        ("booleanToFloat1", "Bool to Float", &[("Boolean", "b")], "Boolean ? 1 : 0"),
+        ("turnsToDegrees", "Turns to Degrees", &[("turns", "f1")], "turns * 360"),
+    ]),
+    // helpers
+    ("", &[
+        // the mixing step of the Hash functions: a seed scattered by an irrational step, then three rounds of
+        // fract(x * (x + c) * k) that stretch every small difference past a whole period, so neighbouring seeds land
+        // far apart; constants chosen by testing the spread of integer, fractional and grid seeds
+        ("mc_hash_mix", "Hash Mix", &[("x", "f1")], "h0 = fract(x * 0.6180339 + 0.3561); h1 = fract(h0 * (h0 + 53.71) * 3.1173); h2 = fract(h1 * (h1 + 29.37) * 1.7311); fract(h2 * (h2 + 41.13) * 2.3917)"),
+    ]),
 ];

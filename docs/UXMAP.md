@@ -240,6 +240,10 @@ The default workspace places Explorer and Library on the left, Graph in the cent
 - Generators/Ready-made and Filters/Ready-made contain reusable graphs.
   Right-click one > Open as example to inspect it separately.
 - Material examples are available in Home > TEMPLATES.
+- Function library (Math, Color, Random, Easing, Switch, Ranges, Transforms, Conversion, Various) lists the library
+  functions while a function graph is open: clamp, color conversions, random and Hash 11..32, easings, switches...
+  A tile adds a Function Call to it with the function's inputs; saving writes the call to the standard functions
+  package, as files made elsewhere have it.
 - For the complete node catalog, use [NODES.md](NODES.md).
 
 ### Graph

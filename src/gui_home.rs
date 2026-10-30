@@ -639,6 +639,7 @@ const LIB_TREE: &[(&str, &[&str])] = &[
     ("Core nodes", &[]),
     ("Pattern builders", &[]),
     ("Logic nodes", &[]),
+    ("Function library", materialcraft::libfuncs::CATEGORIES),
     ("Generators", &["Noises", "Patterns", "Shapes"]),
     ("Filters", &["Adjustments", "Blur and warp", "Transform", "Effects", "Masks and regions"]),
     ("Material tools", &[]),
@@ -1341,9 +1342,15 @@ impl App {
             return all.into_iter().filter(|e| e.label.to_lowercase().contains(&s) || e.doc.to_lowercase().contains(&s)).collect();
         }
         let cat = self.lib_cat.clone();
-        // a function or pattern graph takes only its own family of nodes: all of them, whatever the folder
+        // a library function: a call node with the function's path
+        let lib_fn = |e: &Entry| e.kind == "sbs:fn:instance" && e.sub.is_some();
+        if let Some(sub) = cat.strip_prefix("Function library/") {
+            return all.into_iter().filter(|e| lib_fn(e) && e.cat == sub).collect();
+        }
+        // a function or pattern graph takes only its own family of nodes: all of its atomic ones, whatever the
+        // folder (the library functions have their own folders)
         if matches!(self.g.graph_kind(), "function" | "fxmap") && cat != "Favorites" {
-            return all;
+            return all.into_iter().filter(|e| !lib_fn(e)).collect();
         }
         // the format's atomic nodes, the library graphs by what they make, function and FX-Map nodes
         all.into_iter()
@@ -1419,6 +1426,7 @@ impl App {
                         ui.add_space(10.0);
                         ui.label(egui::RichText::new(match self.lib_cat.as_str() {
                             "Logic nodes" => "Function nodes: open a function graph (a value's fn button, or Explorer > New > Function) to add them.",
+                            c if c.starts_with("Function library") => "Library functions: open a function graph (a value's fn button, or Explorer > New > Function) to add them.",
                             "Pattern builders" => "FX-Map nodes: open an FX-Map's pattern graph to add them.",
                             "Favorites" => "Right-click a node to add it to favorites.",
                             _ => "Nothing here.",
