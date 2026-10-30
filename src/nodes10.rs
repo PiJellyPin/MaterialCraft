@@ -252,7 +252,7 @@ fn table() -> &'static HashMap<&'static str, Info> {
             let imgs: Vec<&'static str> = lib.images().map(|i| i.id).collect();
             let opt: &'static [&'static str] = Box::leak(imgs.into_boxed_slice());
             let outs: &'static [&'static str] = if lib.outputs.len() > 1 { Box::leak(lib.outputs.clone().into_boxed_slice()) } else { &[] };
-            let label = leak(title(id));
+            let label = leak(title(id).replace("Bitmap2Material", "Bitmap To Material"));
             let doc = leak(format!("MaterialCraft's own implementation of the library graph {pkg}/{id}; parameters keep the graph's names"));
             m.insert(kind, Info { kind, lib, spec: Spec { kind, req: &[], opt, doc }, outs, label });
         }

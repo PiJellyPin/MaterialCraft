@@ -308,3 +308,11 @@ fn the_graph_a_package_opens_on_can_be_deleted() {
     assert_eq!(back.meta.get("identifier").map(String::as_str), Some("second"));
     assert!(back.subgraphs.contains_key("third") && !back.subgraphs.contains_key("first"));
 }
+
+#[test]
+fn no_library_node_is_labelled_with_a_registered_name() {
+    for (kind, _, _) in materialcraft::nodes10::LIBS {
+        let l = materialcraft::nodes10::label(kind).unwrap_or_default();
+        assert!(!l.contains("Substance") && !l.contains("Bitmap2Material"), "{kind}: {l}");
+    }
+}

@@ -708,7 +708,7 @@ impl App {
         if is_sbs(&p) {
             return self.open_sbs(p);
         }
-        self.status(format!("{}: only Substance packages (.sbs) can be opened", p.display()), false);
+        self.status(format!("{}: only .sbs packages can be opened", p.display()), false);
     }
 
     fn open_new_dialog(&mut self, dest: Option<usize>) {

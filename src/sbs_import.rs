@@ -915,7 +915,7 @@ impl Cx {
                                 Level::Missing,
                                 &fc.graph,
                                 None,
-                                format!("function '{fpath}' is not available; 0 is used (Substance Designer library functions are built in; this one is not among them)"),
+                                format!("function '{fpath}' is not available; 0 is used (library functions are built in; this one is not among them)"),
                             );
                         }
                     }
@@ -1790,7 +1790,7 @@ impl Cx {
                 c.lin(p, "intensity", 5.0, "intensity", 1.0, 0.0);
                 c.color(p, "highlightcolor", [1.0, 1.0, 1.0, 1.0], ["hl_r", "hl_g", "hl_b", ""]);
                 c.color(p, "shadowcolor", [0.0, 0.0, 0.0, 1.0], ["sh_r", "sh_g", "sh_b", ""]);
-                c.notes.push((Level::Approx, "the emboss lighting follows Substance Designer's model (highlight and shadow colours on the height map's slopes); its strength is not yet matched against a reference render".into()));
+                c.notes.push((Level::Approx, "the emboss lighting follows the documented model (highlight and shadow colours on the height map's slopes); its strength is not yet matched against a reference render".into()));
                 c
             }
             "distance" => {
