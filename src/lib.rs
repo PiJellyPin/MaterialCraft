@@ -39,6 +39,7 @@ pub mod nodes10_mat;
 pub mod nodes10_pano;
 pub mod nodes10_spl;
 pub mod nodes10_tile;
+pub mod nodes10_sv2;
 pub mod tile2;
 pub mod spline;
 pub mod ops;
