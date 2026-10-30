@@ -238,6 +238,7 @@ pub const FUNC_SPECS: &[Spec] = &[
     f!("f_while", ["a", "b", "c"], [], "run a once, then repeat c until b is true (at most `max` times, -1 no limit); returns the last c (a when c never ran)"),
     f!("f_set", ["a"], [], "store a in the variable `name`; returns a"),
     f!("f_get", [], [], "read the variable `name` (0 until it is set)"),
+    f!("f_defined", [], [], "true when the variable `name` exists here: set before, an input of the function or of the graph"),
     f!("f_random", [], ["a", "b"], "random float between a (default 0) and b (default 1); `seed` shifts the sequence"),
     f!("f_sample_gray", ["a"], [], "brightness of input image `slot` (default in) at the position a (float2, 0..1)"),
     f!("f_sample_color", ["a"], [], "colour (float4) of input image `slot` at the position a"),
@@ -257,6 +258,11 @@ pub const FUNC_SPECS: &[Spec] = &[
     f!("f_to_string", ["a"], [], "text of a value"),
     f!("f_concat", ["a", "b"], [], "join two strings"),
     f!("f_call", [], ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"], "run another function (`fn`); a b c d ... l fill its inputs in the order of their node numbers"),
+    f!("f_sdf_pos", [], [], "the SDF position (float3): the input `name` when it is connected, else the space the caller is evaluating, else (uv, 0)"),
+    f!("f_sdf_in", [], ["a"], "evaluate the SDF input `name` where it is connected, at position a (default: the current space), bringing its material"),
+    f!("f_sdf_mix", ["a", "b", "c", "d"], [], "returns d, with the materials of a and b mixed by c: colour, metalness and roughness blend, the id is the nearer one's"),
+    f!("f_sdf_set", ["a", "b"], [], "returns a, with b as the `name` of its material (color, metalness, roughness or id)"),
+    f!("f_sdf_rock", ["a", "b", "c", "d", "e", "f"], [], "distance to a faceted rock at a: facets b, smoothness c, randomness d, seed e, scale f"),
 ];
 
 /// Is this kind a function-graph node?
@@ -291,6 +297,12 @@ enum Op {
     While,
     Set,
     Get,
+    Defined,
+    SdfPos,
+    SdfIn,
+    SdfMix,
+    SdfSet,
+    SdfRock,
     Random,
     SampleGray,
     SampleColor,
@@ -433,6 +445,12 @@ fn op_of(kind: &str) -> Option<Op> {
         "f_while" => Op::While,
         "f_set" => Op::Set,
         "f_get" => Op::Get,
+        "f_defined" => Op::Defined,
+        "f_sdf_pos" => Op::SdfPos,
+        "f_sdf_in" => Op::SdfIn,
+        "f_sdf_mix" => Op::SdfMix,
+        "f_sdf_set" => Op::SdfSet,
+        "f_sdf_rock" => Op::SdfRock,
         "f_random" => Op::Random,
         "f_sample_gray" => Op::SampleGray,
         "f_sample_color" => Op::SampleColor,
@@ -736,7 +754,7 @@ fn infer_pure(op: Op, args: &[Option<Pin>], mask: &str) -> Result<Pin, String> {
         Op::Lerp => lerp3(get(0)?, get(1)?, get(2)?)?,
         Op::Smooth => smooth3(get(0)?, get(1)?, get(2)?)?,
         Op::Swizzle => swizzle(get(0)?, mask)?,
-        Op::ToFloat => coerce(&Value::Num(get(0)?.num()?), Pin::Float),
+        Op::ToFloat => Value::Num(Num { int: false, ..get(0)?.num()? }),
         Op::ToInt => {
             let n = get(0)?.num()?;
             Value::Num(Num { int: true, ..n })
@@ -802,6 +820,61 @@ impl<'a> FnEnv<'a> {
     }
 }
 
+/// The material an SDF function leaves on its shape (the Set color / Set material ID ... nodes).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SdfMaterial {
+    pub color: [f64; 3],
+    pub metalness: f64,
+    pub roughness: f64,
+    pub id: i64,
+}
+
+impl Default for SdfMaterial {
+    fn default() -> SdfMaterial {
+        SdfMaterial { color: [1.0; 3], metalness: 0.0, roughness: 0.5, id: 0 }
+    }
+}
+
+impl SdfMaterial {
+    /// `a` and `b` mixed by `t` (0 is `a`): the id does not blend, it is the nearer one's.
+    fn mix(a: SdfMaterial, b: SdfMaterial, t: f64) -> SdfMaterial {
+        let l = |p: f64, q: f64| p + (q - p) * t;
+        SdfMaterial { color: [l(a.color[0], b.color[0]), l(a.color[1], b.color[1]), l(a.color[2], b.color[2])], metalness: l(a.metalness, b.metalness), roughness: l(a.roughness, b.roughness), id: if t < 0.5 { a.id } else { b.id } }
+    }
+}
+
+/// Distance to a convex rock: the planes of `facets` directions spread evenly over the sphere (at least 4, so it
+/// closes; at most 32), each tilted and pulled in by `randomness`, then rounded by `smooth`.
+fn sdf_rock(p: [f64; 3], facets: f64, smooth: f64, randomness: f64, seed: f64, scale: f64) -> f64 {
+    let n = (facets as i32).clamp(4, 32);
+    let s = (seed * 4096.0) as i32;
+    let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
+    let mut d = f64::NEG_INFINITY;
+    for i in 0..n {
+        let z = 1.0 - (2 * i + 1) as f64 / n as f64;
+        let (r, a) = ((1.0 - z * z).sqrt(), i as f64 * golden);
+        let h = |k: i32| rnd(i, s ^ k.wrapping_mul(977), 0x51ed) as f64;
+        let mut dir = [r * a.cos(), r * a.sin(), z];
+        for (k, c) in dir.iter_mut().enumerate() {
+            *c += randomness * (2.0 * h(k as i32) - 1.0);
+        }
+        let l = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt().max(1e-9);
+        let plane = (p[0] * dir[0] + p[1] * dir[1] + p[2] * dir[2]) / l - scale * (1.0 - 0.5 * randomness * h(3));
+        d = if smooth > 0.0 && d.is_finite() {
+            let t = (0.5 + 0.5 * (d - plane) / smooth).clamp(0.0, 1.0);
+            plane + (d - plane) * t + smooth * t * (1.0 - t)
+        } else {
+            d.max(plane)
+        };
+    }
+    d
+}
+
+fn vec3_of(v: &Value) -> Result<[f64; 3], String> {
+    let n = v.num()?;
+    Ok([lane(&n, 0), lane(&n, 1), lane(&n, 2)])
+}
+
 /// The inputs a function call passes on (a node's input slots, at most).
 pub const CALL_SLOTS: [&str; 12] = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"];
 const MAX_INS: usize = CALL_SLOTS.len();
@@ -824,13 +897,30 @@ pub struct Prog {
     /// declared inputs: (name, type, default), in node-number order
     pub inputs: Vec<(String, Pin, Value)>,
     pub uses_stats: bool,
+    /// the function works on SDF shapes: calls to it share the caller's space and hand back a material
+    uses_sdf: bool,
+    /// per input: an SDF shape. A call does not compute it first, the function evaluates it where it wants it
+    /// (a transform asks for it at another position, a union for its material).
+    lazy: Vec<bool>,
 }
 
-struct State {
+/// Evaluates input `k` of the running function where the caller connected it, at an SDF position.
+type Force<'t> = &'t mut (dyn FnMut(usize, Option<[f64; 3]>) -> Result<Option<(Value, SdfMaterial)>, String> + 't);
+
+struct State<'t> {
     memo: Vec<Option<(Value, u64)>>,
     epoch: u64,
     vars: Vec<(String, Value)>,
     rng: u32,
+    /// the SDF space being evaluated; `None`: no host gave one
+    sdf_p: Option<[f64; 3]>,
+    /// the material of the shape evaluated last
+    mat: SdfMaterial,
+    /// counts what produced a material: a node keeps one only when something did while it ran
+    touched: u64,
+    /// the materials of the results in `memo` (only in a function that uses SDF shapes)
+    mats: Vec<Option<SdfMaterial>>,
+    force: Option<Force<'t>>,
 }
 
 const MAX_CALL_DEPTH: usize = 8;
@@ -863,7 +953,7 @@ impl Prog {
             [] => return Err("the function has no Output node".into()),
             _ => return Err("the function has more than one Output node".into()),
         };
-        let mut prog = Prog { nodes: Vec::new(), out: 0, inputs: Vec::new(), uses_stats: false };
+        let mut prog = Prog { nodes: Vec::new(), out: 0, inputs: Vec::new(), uses_stats: false, uses_sdf: false, lazy: Vec::new() };
         let mut index: HashMap<u32, usize> = HashMap::new();
         let mut visiting: HashSet<u32> = HashSet::new();
         prog.out = prog.add(g, lib, out_id, depth, &mut index, &mut visiting)?;
@@ -874,6 +964,24 @@ impl Prog {
             let n = &g.nodes[&id];
             let (pin, def) = declared(n);
             prog.inputs.push((n.strs.get("name").cloned().unwrap_or_default(), pin, def));
+            prog.lazy.push(n.nums.get("sdf").copied().unwrap_or(0.0) != 0.0);
+        }
+        // an input handed straight to an SDF input is one too: a function wrapping a transform stays lazy
+        let mut wrapped = Vec::new();
+        for n in prog.nodes.iter().filter(|n| n.op == Op::Call) {
+            let Some(c) = &n.callee else { continue };
+            for k in (0..c.inputs.len().min(MAX_INS)).filter(|k| c.lazy[*k]) {
+                let mut src = n.ins[k];
+                while let Some(j) = src.filter(|j| prog.nodes[*j].op == Op::Pin) {
+                    src = prog.nodes[j].ins[0];
+                }
+                if let Some(j) = src.filter(|j| prog.nodes[*j].op == Op::Input) {
+                    wrapped.extend(prog.inputs.iter().position(|(name, ..)| *name == prog.nodes[j].name));
+                }
+            }
+        }
+        for i in wrapped {
+            prog.lazy[i] = true;
         }
         Ok(prog)
     }
@@ -909,9 +1017,15 @@ impl Prog {
         if matches!(op, Op::Stat(_)) {
             self.uses_stats = true;
         }
+        if matches!(op, Op::SdfPos | Op::SdfIn | Op::SdfMix | Op::SdfSet | Op::SdfRock) {
+            self.uses_sdf = true;
+        }
         if let Some(c) = &callee {
             if c.uses_stats {
                 self.uses_stats = true;
+            }
+            if c.uses_sdf {
+                self.uses_sdf = true;
             }
         }
         let i = self.nodes.len();
@@ -931,14 +1045,27 @@ impl Prog {
 
     /// Run the function at `pos` (uv, 0..1).
     pub fn run(&self, env: &FnEnv, pos: [f64; 2]) -> Result<Value, String> {
-        let mut st = State { memo: vec![None; self.nodes.len()], epoch: 0, vars: Vec::new(), rng: 0 };
+        let mut st = self.state(Vec::new(), None, None);
         self.eval(self.out, env, pos, &mut st)
+    }
+
+    /// Run the function as a host of SDF shapes does, at world position `p`: the distance to the surface, and the
+    /// material there.
+    pub fn run_sdf(&self, env: &FnEnv, p: [f64; 3]) -> Result<(Value, SdfMaterial), String> {
+        let mut st = self.state(Vec::new(), Some(p), None);
+        let v = self.eval(self.out, env, [p[0], p[1]], &mut st)?;
+        Ok((v, st.mat))
+    }
+
+    fn state<'t>(&self, vars: Vec<(String, Value)>, sdf_p: Option<[f64; 3]>, force: Option<Force<'t>>) -> State<'t> {
+        let mats = if self.uses_sdf { vec![None; self.nodes.len()] } else { Vec::new() };
+        State { memo: vec![None; self.nodes.len()], epoch: 0, vars, rng: 0, sdf_p, mat: SdfMaterial::default(), touched: 0, mats, force }
     }
 
     /// Like [`Prog::run`], with variables that live across runs: `vars` is what `f_get` reads before anything is
     /// set, and holds every variable the run set afterwards (pattern programs share variables down a branch).
     pub fn run_vars(&self, env: &FnEnv, pos: [f64; 2], vars: &mut Vec<(String, Value)>) -> Result<Value, String> {
-        let mut st = State { memo: vec![None; self.nodes.len()], epoch: 0, vars: std::mem::take(vars), rng: 0 };
+        let mut st = self.state(std::mem::take(vars), None, None);
         let r = self.eval(self.out, env, pos, &mut st);
         *vars = st.vars;
         r
@@ -947,13 +1074,55 @@ impl Prog {
     fn eval(&self, i: usize, env: &FnEnv, pos: [f64; 2], st: &mut State) -> Result<Value, String> {
         if let Some((v, e)) = &st.memo[i] {
             if *e == st.epoch {
+                if let Some(Some(m)) = st.mats.get(i) {
+                    st.mat = *m;
+                    st.touched += 1;
+                }
                 return Ok(v.clone());
             }
         }
         let n = &self.nodes[i];
+        let touched = st.touched;
         let r = self.eval_node(n, env, pos, st).map_err(|e| if e.starts_with("node ") { e } else { format!("node {} ({}): {e}", n.id, kind_of(n.op)) })?;
         st.memo[i] = Some((r.clone(), st.epoch));
+        if st.touched != touched {
+            st.mats[i] = Some(st.mat);
+        }
         Ok(r)
+    }
+
+    /// Node `i` evaluated in SDF space `p`, with its material. Another space has its own results: nothing computed
+    /// there holds here, so a shape used by two transforms is two shapes.
+    fn eval_at(&self, i: usize, p: Option<[f64; 3]>, env: &FnEnv, pos: [f64; 2], st: &mut State) -> Result<(Value, SdfMaterial), String> {
+        st.mat = SdfMaterial::default();
+        if st.sdf_p == p {
+            let v = self.eval(i, env, pos, st)?;
+            return Ok((v, st.mat));
+        }
+        let memo = std::mem::replace(&mut st.memo, vec![None; self.nodes.len()]);
+        let mats = std::mem::replace(&mut st.mats, vec![None; self.nodes.len()]);
+        let outer = std::mem::replace(&mut st.sdf_p, p);
+        let r = self.eval(i, env, pos, st);
+        st.memo = memo;
+        st.mats = mats;
+        st.sdf_p = outer;
+        Ok((r?, st.mat))
+    }
+
+    /// The value of SDF input `name` at `p`: evaluated where the caller connected it, else what was passed, else
+    /// the input's default.
+    fn sdf_input(&self, name: &str, p: Option<[f64; 3]>, env: &FnEnv, st: &mut State) -> Result<Value, String> {
+        let k = self.inputs.iter().position(|(i, ..)| i == name);
+        st.touched += 1;
+        if let (Some(k), Some(force)) = (k, st.force.as_mut()) {
+            if let Some((v, m)) = force(k, p)? {
+                st.mat = m;
+                return Ok(v);
+            }
+        }
+        st.mat = SdfMaterial::default();
+        let default = k.map(|k| self.inputs[k].2.clone()).unwrap_or(Value::float(0.0));
+        Ok(env.args.get(name).map(|v| coerce(v, Pin::Float)).unwrap_or(default))
     }
 
     fn arg(&self, n: &PNode, k: usize, env: &FnEnv, pos: [f64; 2], st: &mut State) -> Result<Value, String> {
@@ -1043,6 +1212,55 @@ impl Prog {
                 v
             }
             Op::Get => st.vars.iter().find(|(k, _)| *k == n.name).map(|(_, v)| v.clone()).unwrap_or_else(|| Value::float(0.0)),
+            Op::Defined => Value::Bool(st.vars.iter().any(|(k, _)| *k == n.name) || env.args.contains_key(&n.name) || env.graph_inputs.contains_key(&n.name)),
+            Op::SdfPos => match env.args.get(&n.name) {
+                Some(v) => coerce(v, Pin::Float3),
+                None => {
+                    let p = st.sdf_p.unwrap_or([pos[0], pos[1], 0.0]);
+                    Value::vec(3, [p[0], p[1], p[2], 0.0])
+                }
+            },
+            Op::SdfIn => {
+                let p = match self.opt_arg(n, 0, env, pos, st)? {
+                    Some(v) => Some(vec3_of(&v)?),
+                    None => st.sdf_p,
+                };
+                self.sdf_input(&n.name, p, env, st)?
+            }
+            Op::SdfMix => {
+                self.arg(n, 0, env, pos, st)?;
+                let ma = st.mat;
+                self.arg(n, 1, env, pos, st)?;
+                let mb = st.mat;
+                let t = self.arg(n, 2, env, pos, st)?.as_f32() as f64;
+                let r = self.arg(n, 3, env, pos, st)?;
+                st.mat = SdfMaterial::mix(ma, mb, t);
+                st.touched += 1;
+                r
+            }
+            Op::SdfSet => {
+                let d = self.arg(n, 0, env, pos, st)?;
+                let mut m = st.mat;
+                let v = self.arg(n, 1, env, pos, st)?;
+                match n.name.as_str() {
+                    "color" => m.color = vec3_of(&v)?,
+                    "metalness" => m.metalness = v.as_f32() as f64,
+                    "roughness" => m.roughness = v.as_f32() as f64,
+                    "id" => m.id = v.as_f32() as i64,
+                    o => return Err(format!("'{o}' is not a material value")),
+                }
+                st.mat = m;
+                st.touched += 1;
+                d
+            }
+            Op::SdfRock => {
+                let p = vec3_of(&self.arg(n, 0, env, pos, st)?)?;
+                let mut x = [0.0; 5];
+                for (k, o) in x.iter_mut().enumerate() {
+                    *o = self.arg(n, k + 1, env, pos, st)?.as_f32() as f64;
+                }
+                Value::float(clean(sdf_rock(p, x[0], x[1], x[2], x[3], x[4])))
+            }
             Op::Random => {
                 let lo = self.opt_arg(n, 0, env, pos, st)?.map(|v| v.as_f32() as f64).unwrap_or(0.0);
                 let hi = self.opt_arg(n, 1, env, pos, st)?.map(|v| v.as_f32() as f64).unwrap_or(1.0);
@@ -1080,6 +1298,10 @@ impl Prog {
             Op::Index => Value::int(env.index),
             Op::Count => Value::int(env.count),
             Op::Seed => Value::int(env.seed as i64),
+            Op::Input if self.uses_sdf && self.inputs.iter().position(|(i, ..)| *i == n.name).is_some_and(|k| self.lazy[k]) => {
+                let p = st.sdf_p;
+                self.sdf_input(&n.name, p, env, st)?
+            }
             Op::Input | Op::GraphInput => {
                 let pin = type_pin(num("type").round() as i32);
                 let default = {
@@ -1123,11 +1345,32 @@ impl Prog {
                 let callee = n.callee.as_ref().ok_or("call without a function")?;
                 let mut sub_env = FnEnv { size: env.size, index: env.index, count: env.count, seed: env.seed, images: env.images.clone(), graph_inputs: env.graph_inputs, args: BTreeMap::new(), stats: env.stats.clone() };
                 for (k, (name, pin, _)) in callee.inputs.iter().enumerate().take(MAX_INS) {
+                    if callee.lazy[k] {
+                        continue;
+                    }
                     if let Some(v) = self.opt_arg(n, k, env, pos, st)? {
                         sub_env.args.insert(name.clone(), coerce(&v, *pin));
                     }
                 }
-                callee.run(&sub_env, pos)?
+                if !callee.uses_sdf {
+                    return callee.run(&sub_env, pos);
+                }
+                // an SDF function runs in the caller's space, and its shape inputs in the caller's graph
+                let p = st.sdf_p;
+                let mut force = |k: usize, at: Option<[f64; 3]>| match n.ins.get(k).copied().flatten() {
+                    Some(j) => self.eval_at(j, at, env, pos, st).map(Some),
+                    None => Ok(None),
+                };
+                let mut sub = callee.state(Vec::new(), p, Some(&mut force));
+                let r = callee.eval(callee.out, &sub_env, pos, &mut sub)?;
+                let (mat, touched) = (sub.mat, sub.touched);
+                drop(sub);
+                // a primitive brings no material; what it is added to keeps its own
+                if touched != 0 {
+                    st.mat = mat;
+                    st.touched += 1;
+                }
+                r
             }
         })
     }
@@ -1159,7 +1402,15 @@ impl Prog {
             Op::Out | Op::Pin => t(0, memo)?.ok_or("an input is not connected")?,
             Op::Float | Op::Random | Op::SampleGray => Pin::Float,
             Op::Int | Op::Index | Op::Count | Op::Seed => Pin::Int,
-            Op::Bool => Pin::Bool,
+            Op::Bool | Op::Defined => Pin::Bool,
+            Op::SdfPos => Pin::Float3,
+            Op::SdfIn | Op::SdfRock => Pin::Float,
+            Op::SdfMix | Op::SdfSet => {
+                for k in 0..4 {
+                    t(k, memo)?;
+                }
+                Pin::Float
+            }
             Op::Str => Pin::Text,
             Op::Vec(lanes, int) => {
                 for k in 0..4 {

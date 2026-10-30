@@ -7,6 +7,16 @@
 //! renders without Adobe Substance 3D Designer installed. Each one is checked against Designer's own output (see
 //! `tests/libfuncs.rs`). Nothing from Designer's package is shipped; the library file, when present, is only a
 //! fallback for functions not implemented here.
+//!
+//! The editor offers them in a function graph's Library panel ([`palette`]): a tile adds a call to the function
+//! (`sbs:fn:instance` naming `Functions/.../<identifier>`), saved with the library package as its dependency the way
+//! files made elsewhere call them. The Hash functions are MaterialCraft's own hash, not Designer's.
+//!
+//! The SDF functions (`Functions/SDF/...`) are written the same way, from the public node reference and the standard
+//! maths of signed distances. Two things set them apart. A primitive measures from `P`, which is the space its caller
+//! is evaluating when nothing is connected to it. And an input of type `sdf` is a shape, not a number: the function
+//! evaluates it where it needs it with `sdf(input, position)`, which is how a transform moves a shape that comes from
+//! the nodes before it, and how a material reaches the operators (see `func::Prog::run_sdf`).
 
 use crate::fexpr::{parse, E};
 use crate::graph::{Graph, Node};
@@ -14,11 +24,15 @@ use std::collections::BTreeMap;
 use std::f32::consts::{PI, TAU};
 use std::sync::OnceLock;
 
-/// Input of a library function: its identifier and type (`f1`..`f4`, `i1`..`i4`, `b`).
+/// Input of a library function: its identifier and type (`f1`..`f4`, `i1`..`i4`, `b`, `sdf`), with its default
+/// after `=` when it has one (`f3=0,0,0.5`).
 type In = (&'static str, &'static str);
 
+/// A library function: its identifier, the label the editor shows, its inputs and its expression.
+type Func = (&'static str, &'static str, &'static [In], &'static str);
+
 fn type_code(ty: &str) -> f32 {
-    match ty {
+    match ty.split('=').next().unwrap_or(ty) {
         "f1" => 0.0,
         "i1" => 1.0,
         "b" => 2.0,
@@ -135,7 +149,25 @@ impl Emit<'_> {
         })
     }
 
+    /// `sdf(input)` and `sdf(input, position)`: evaluate a shape input, here or at another position.
+    fn shape(&mut self, args: &[E]) -> Result<u32, String> {
+        let (Some(E::Var(input)), 1..=2) = (args.first(), args.len()) else {
+            return Err("sdf takes a shape input and optionally a position".into());
+        };
+        if !self.vars.contains_key(input) {
+            return Err(format!("unknown shape input '{input}'"));
+        }
+        let at = args.get(1).map(|e| self.emit(e)).transpose()?;
+        let ins: Vec<(&str, u32)> = at.iter().map(|&p| ("a", p)).collect();
+        let id = self.add("f_sdf_in", &ins);
+        self.g.nodes.get_mut(&id).unwrap().strs.insert("name".into(), input.clone());
+        Ok(id)
+    }
+
     fn call(&mut self, name: &str, args: &[E]) -> Result<u32, String> {
+        if name == "sdf" {
+            return self.shape(args);
+        }
         let a: Vec<u32> = args.iter().map(|e| self.emit(e)).collect::<Result<_, _>>()?;
         let arity = |n: usize| if a.len() == n { Ok(()) } else { Err(format!("{name} takes {n} argument(s), got {}", a.len())) };
         // one of our f_* ops
@@ -187,6 +219,29 @@ impl Emit<'_> {
             return Ok(self.add(kind, &ins));
         }
         match name {
+            // the shape that is nearer, with its material
+            "sdf_union" => {
+                arity(2)?;
+                let (zero, one) = (self.fconst(0.0), self.fconst(1.0));
+                let le = self.add("f_le", &[("a", a[0]), ("b", a[1])]);
+                let t = self.add("f_if", &[("cond", le), ("a", zero), ("b", one)]);
+                let d = self.add("f_min", &[("a", a[0]), ("b", a[1])]);
+                Ok(self.add("f_sdf_mix", &[("a", a[0]), ("b", a[1]), ("c", t), ("d", d)]))
+            }
+            "sdf_mix" => {
+                arity(4)?;
+                Ok(self.add("f_sdf_mix", &[("a", a[0]), ("b", a[1]), ("c", a[2]), ("d", a[3])]))
+            }
+            "sdf_set_color" | "sdf_set_metalness" | "sdf_set_roughness" | "sdf_set_id" => {
+                arity(2)?;
+                let id = self.add("f_sdf_set", &[("a", a[0]), ("b", a[1])]);
+                self.g.nodes.get_mut(&id).unwrap().strs.insert("name".into(), name.trim_start_matches("sdf_set_").into());
+                Ok(id)
+            }
+            "sdf_rock" => {
+                arity(6)?;
+                Ok(self.add("f_sdf_rock", &[("a", a[0]), ("b", a[1]), ("c", a[2]), ("d", a[3]), ("e", a[4]), ("f", a[5])]))
+            }
             // 2 to the power x
             "exp2" => {
                 arity(1)?;
@@ -234,7 +289,29 @@ fn compile(ins: &[In], src: &str, names: &BTreeMap<String, &'static str>) -> Res
         let n = em.g.nodes.get_mut(&id).unwrap();
         n.strs.insert("name".into(), (*name).into());
         n.nums.insert("type".into(), type_code(ty));
+        if ty.starts_with("sdf") {
+            n.nums.insert("sdf".into(), 1.0);
+        }
+        if let Some((_, default)) = ty.split_once('=') {
+            let v: Vec<f32> = default.split(',').map(|x| x.parse().map_err(|_| format!("bad default '{default}'"))).collect::<Result<_, _>>()?;
+            match v.as_slice() {
+                [one] => {
+                    n.nums.insert("v".into(), *one);
+                }
+                many => {
+                    for (k, c) in many.iter().zip(["x", "y", "z", "w"]) {
+                        n.nums.insert(c.into(), *k);
+                    }
+                }
+            }
+        }
         em.vars.insert((*name).to_string(), id);
+    }
+    // the position of an SDF function: the input when it is connected, else the space being evaluated
+    if ins.iter().any(|(name, ty)| *name == "P" && *ty == "f3") {
+        let id = em.add("f_sdf_pos", &[]);
+        em.g.nodes.get_mut(&id).unwrap().strs.insert("name".into(), "P".into());
+        em.vars.insert("P".into(), id);
     }
     let (lets, result) = parse(src)?;
     for (name, e) in &lets {
@@ -264,9 +341,70 @@ pub fn graphs() -> &'static BTreeMap<String, Graph> {
     &library().graphs
 }
 
+/// A library function as the editor's Library panel offers it.
+#[derive(Debug)]
+pub struct Entry {
+    /// the function's identifier in the library package (`clamp`)
+    pub ident: &'static str,
+    /// its path in the package (`Functions/Math/clamp`), what an instance node names
+    pub path: String,
+    /// the name the editor shows (`Clamp`)
+    pub label: &'static str,
+    /// the Library panel folder (`Math`, `Color`, `Random` ...)
+    pub category: &'static str,
+    /// its inputs: (identifier, type), in the order a call fills them
+    pub inputs: &'static [In],
+}
+
+/// The library functions a user can add to a function graph, by category and label. The helpers that only exist
+/// for the other functions (in no folder of the package) are left out.
+pub fn palette() -> &'static [Entry] {
+    &library().palette
+}
+
+/// The palette entry of an instance path (`Functions/Math/clamp`, with or without `pkg:///` and `?dependency=`),
+/// found by the identifier as [`resolve_path`] does; `None` if it is not a built-in library function.
+pub fn entry(path: &str) -> Option<&'static Entry> {
+    let p = path.trim_start_matches("pkg://").trim_start_matches('/');
+    let p = p.split('?').next().unwrap_or(p);
+    let ident = p.rsplit('/').next().unwrap_or(p);
+    palette().iter().find(|e| e.ident.eq_ignore_ascii_case(ident))
+}
+
+/// The Library panel folder of a function of package folder `folder`.
+fn category(folder: &str, ident: &str) -> &'static str {
+    // the package keeps this conversion among its random functions
+    if ident.eq_ignore_ascii_case("Degrees_to_Turn") {
+        return "Conversion";
+    }
+    let f = folder.trim_start_matches("Functions/").to_ascii_lowercase();
+    match f.as_str() {
+        "sdf/primitives" => return "SDF Primitives",
+        "sdf/operators" => return "SDF Operators",
+        "sdf/transforms" => return "SDF Transforms",
+        "sdf/material" => return "SDF Material",
+        _ => {}
+    }
+    match f.split('/').next().unwrap_or_default() {
+        "math" | "cycles" => "Math",
+        "colorvalues" => "Color",
+        "random" => "Random",
+        "easings" => "Easing",
+        "switch" => "Switch",
+        "ranges" => "Ranges",
+        "transforms" => "Transforms",
+        "typeconverters" => "Conversion",
+        _ => "Various",
+    }
+}
+
+/// The Library panel folders of the library functions, in the panel's order.
+pub const CATEGORIES: &[&str] = &["Math", "Color", "Random", "Easing", "Switch", "Ranges", "Transforms", "Conversion", "Various", "SDF Primitives", "SDF Operators", "SDF Transforms", "SDF Material"];
+
 struct Lib {
     graphs: BTreeMap<String, Graph>,
     by_ident: BTreeMap<String, &'static str>,
+    palette: Vec<Entry>,
 }
 
 fn library() -> &'static Lib {
@@ -275,211 +413,336 @@ fn library() -> &'static Lib {
 }
 
 fn build() -> Lib {
+    let all = || TABLE.iter().flat_map(|(folder, fs)| fs.iter().map(move |f| (*folder, f)));
     // name every function first, so an expression can call another by identifier while they are all compiled
     let mut by_ident: BTreeMap<String, &'static str> = BTreeMap::new();
-    for (ident, _, _) in TABLE {
+    for (_, (ident, ..)) in all() {
         let name: &'static str = Box::leak(format!("libfn_{ident}").into_boxed_str());
         if by_ident.insert(ident.to_ascii_lowercase(), name).is_some() {
             panic!("duplicate library function identifier '{ident}'");
         }
     }
     let mut graphs = BTreeMap::new();
-    for (ident, ins, src) in TABLE {
+    let mut palette = Vec::new();
+    for (folder, (ident, label, ins, src)) in all() {
         let name = by_ident[&ident.to_ascii_lowercase()];
         let g = compile(ins, src, &by_ident).unwrap_or_else(|e| panic!("library function '{ident}': {e}"));
         graphs.insert(name.to_string(), g);
+        if !folder.is_empty() {
+            palette.push(Entry { ident, path: format!("{folder}/{ident}"), label, category: category(folder, ident), inputs: ins });
+        }
     }
-    Lib { graphs, by_ident }
+    palette.sort_by_key(|e| (CATEGORIES.iter().position(|c| *c == e.category), e.label));
+    Lib { graphs, by_ident, palette }
 }
 
-/// (registered name = Designer identifier, inputs, expression). Keep the name exactly as Designer's function
-/// identifier so `resolve_path` matches `pkg:///Functions/.../<identifier>`.
+/// (folder in the library package, its functions: (registered name = Designer identifier, label, inputs,
+/// expression)). Keep the folder and the name exactly as the package has them, so `resolve_path` matches
+/// `pkg:///Functions/.../<identifier>` and an instance added in the editor names the function the file has. The
+/// labels are MaterialCraft's own; functions in no folder (`""`) are helpers of the others, not offered to users.
 #[rustfmt::skip]
-const TABLE: &[(&str, &[In], &str)] = &[
-    // Functions/Cycles
-    ("Wave", &[("Amplitude", "f1"), ("Frequency", "f1"), ("greaterThanZero", "b")], "w = Amplitude * sin(Frequency * $time); greaterThanZero ? Amplitude + w : w"),
-    // Functions/Math
-    ("Ln", &[("a", "f1")], "log(a) / exp(1)"),
-    ("Pi", &[], "pi"),
-    ("2Pi", &[], "tau"),
-    ("Pow", &[("x", "f1"), ("n", "f1")], "x <= 0 ? 0 : pow(x, n)"),
-    ("Roughness", &[("Roughness", "f1"), ("CurrentLevel", "i1"), ("TotalLevel", "i1"), ("GlobalOpacity", "f1")], "Roughness == 0 ? GlobalOpacity : (Roughness == 1 ? GlobalOpacity / float(TotalLevel) : GlobalOpacity * ((1 - Roughness) * (Roughness <= 0 ? 0 : pow(Roughness, float(CurrentLevel)))) / (1 - (Roughness <= 0 ? 0 : pow(Roughness, float(TotalLevel)))))"),
-    ("Equality_Float2", &[("A", "f2"), ("B", "f2")], "A == B"),
-    ("Equality_Float3", &[("A", "f3"), ("B", "f3")], "A == B"),
-    ("Equality_Boolean", &[("A", "b"), ("B", "b")], "A == B"),
-    ("Equality_Float4", &[("A", "f4"), ("B", "f4")], "A == B"),
-    ("NotEqual_Float2", &[("A", "f2"), ("B", "f2")], "A != B"),
-    ("NotEqual_Float3", &[("A", "f3"), ("B", "f3")], "A != B"),
-    ("NotEqual_Float4", &[("A", "f4"), ("B", "f4")], "A != B"),
-    ("NotEqual_Boolean", &[("A", "b"), ("B", "b")], "A != B"),
-    ("Curve_Function", &[("curve", "f1"), ("input", "f1")], "curve < 0 ? (input * (1 + curve) - curve * sqrt(1 - (1 - input) * (1 - input))) : ((1 - sqrt(1 - input * input)) * curve + input * (1 - curve))"),
-    ("merge_float4", &[("x", "f1"), ("y", "f1"), ("z", "f1"), ("w", "f1")], "vec4(x, y, z, w)"),
-    ("merge_float3", &[("x", "f1"), ("y", "f1"), ("z", "f1")], "vec3(x, y, z)"),
-    ("distance_vec3", &[("a", "f3"), ("b", "f3")], "distance(a, b)"),
-    ("distance_vec2", &[("a", "f2"), ("b", "f2")], "distance(a, b)"),
-    ("length_vec2", &[("v", "f2")], "length(v)"),
-    ("length_vec3", &[("v", "f3")], "length(v)"),
-    ("sign", &[("x", "f1")], "x < 0 ? 0 - 1 : 1"),
-    ("reflect", &[("i", "f3"), ("n", "f3")], "i - n * (dot(i, n) * 2)"),
-    ("oneminus", &[("x", "f1")], "1 - x"),
-    ("fmod", &[("a", "f1"), ("b", "f1")], "a - b * float(int(a / b))"),
-    ("frac", &[("input", "f1")], "fract(input)"),
-    ("cross_product", &[("a", "f3"), ("b", "f3")], "cross(a, b)"),
-    ("cross_product_vec2", &[("a", "f2"), ("b", "f2")], "a.x * b.y - a.y * b.x"),
-    ("step", &[("a", "f1"), ("x", "f1")], "step(a, x)"),
-    ("divide_float4", &[("input", "f4"), ("scalar", "f1")], "input / scalar"),
-    ("divide_float3", &[("input", "f3"), ("scalar", "f1")], "input / scalar"),
-    ("divide_float2", &[("input", "f2"), ("scalar", "f1")], "input / scalar"),
-    ("clamp", &[("input", "f1"), ("min", "f1"), ("max", "f1")], "clamp(input, min, max)"),
-    ("normalize_vec2", &[("input", "f2")], "normalize(input)"),
-    ("normalize_vec3", &[("input", "f3")], "normalize(input)"),
-    ("normalize_vec4", &[("input", "f4")], "normalize(input)"),
-    ("smoothstep", &[("a", "f1"), ("b", "f1"), ("x", "f1")], "t = saturate((x - a) / (b - a)); t * t * (3 - 2 * t)"),
-    ("saturate_float2", &[("input", "f2")], "saturate(input)"),
-    ("average_float1", &[("a", "f1"), ("b", "f1")], "(a + b) * 0.5"),
-    ("average_float2", &[("a", "f2"), ("b", "f2")], "(a + b) * 0.5"),
-    ("average_float3", &[("a", "f3"), ("b", "f3")], "(a + b) * 0.5"),
-    ("average_float4", &[("a", "f4"), ("b", "f4")], "(a + b) * 0.5"),
-    ("orthogonal_vec2", &[("input", "f2")], "vec2(input.y, 0 - input.x)"),
-    ("saturate", &[("input", "f1")], "saturate(input)"),
-    ("truncate_float1_decimals", &[("input", "f1"), ("decimals", "i1")], "p = pow(10, float(decimals)); decimals <= 0 ? input : floor(input * p) / p"),
-    ("round_float1", &[("input", "f1")], "floor(input + 0.5)"),
-    // Functions/Math/Parity
-    ("EvenCount", &[("Input", "f1")], "ceil(floor(Input) / 2)"),
-    ("OddCount", &[("Input", "f1")], "floor(floor(Input) / 2)"),
-    ("ParityTest", &[("Input", "f1")], "t = 0.25 * (2 * Input + 1); 0.5 > t - floor(t)"),
-    // Functions/Math/Trigo
-    ("deg_to_rad", &[("deg", "f1")], "deg * (pi / 180)"),
-    ("asin", &[("x", "f1")], "asin(x)"),
-    ("acos", &[("x", "f1")], "acos(x)"),
-    // Functions/Random
-    ("Uniform_[A,B[", &[("A", "f1"), ("B", "f1")], "rand(B - A) + A"),
-    ("Discrete_[A,B]", &[("A", "f1"), ("B", "f1"), ("Probability", "f1")], "rand(1) >= Probability ? A : B"),
-    ("Uniform_[-1,1[", &[], "rand(2) - 1"),
-    ("Uniform_F2_[A,B[", &[("A2", "f2"), ("B2", "f2")], "d = B2 - A2; vec2(rand(d.x), rand(d.y)) + A2"),
-    ("Uniform_F3_[A,B[", &[("A", "f3"), ("B", "f3")], "d = B - A; vec3(rand(d.x), rand(d.y), rand(d.z)) + A"),
-    ("Uniform_F4_[A,B[", &[("A", "f4"), ("B", "f4")], "d = B - A; vec4(rand(d.x), rand(d.y), rand(d.z), rand(d.w)) + A"),
-    ("Degrees_to_Turn", &[("input", "f1")], "input / 360"),
-    ("GlobalRandom", &[("Input", "f1"), ("Seed", "i1")], "fract(sin(Input * 12.9898 + float(Seed) * 78.233) * 43758.5453)"),
-    ("normal_distribution", &[("radius", "f1"), ("uniform_random", "f2")], "r = 0.25 * sqrt(0 - 2 * log(max(uniform_random.x, 0.0001))) * radius; t = uniform_random.y * tau; vec2(r * cos(t), r * sin(t))"),
-    // Functions/Ranges
-    ("[-1_1]_to_[0_1]", &[("Input", "f1")], "Input * 0.5 + 0.5"),
-    ("[0_1]_to_[-1_1]", &[("Input", "f1")], "Input * 2 - 1"),
-    ("[0_1]_to_[1_0]", &[("Input", "f1")], "1 - Input"),
-    ("negateFloat", &[("Input", "f1")], "0 - Input"),
-    ("Height_Balance_Fn", &[("Depth_Balance", "f1")], "vec4(max(Depth_Balance, 0), min(1 + Depth_Balance, 1), max(0 - Depth_Balance, 0), min(1 - Depth_Balance, 1))"),
-    ("[0,1]_to_[0,1,0]", &[("input", "f1")], "1 - abs(2 * input - 1)"),
-    ("[a,b]_to_[0,1]", &[("X", "f1"), ("A", "f1"), ("B", "f1")], "saturate((X - A) / (B - A))"),
-    ("triangle_wave", &[("input", "f1")], "1 - abs(1 - 2 * fract(input / 2))"),
-    ("sawtooth_wave", &[("x", "f1")], "m = mod(x, 1); m == 0 ? (abs(x) > 1 ? 1 : abs(x)) : m"),
-    // Functions/Transforms
-    ("Directional_Offset", &[("Direction", "f1"), ("Distance", "f1")], "r = Direction * tau; vec2(cos(r) * Distance, sin(r) * Distance)"),
-    ("MatrixMultiply", &[("MatrixA", "f4"), ("MatrixB", "f4")], "a0 = MatrixA.x; a1 = MatrixA.y; a2 = MatrixA.z; a3 = MatrixA.w; b0 = MatrixB.x; b1 = MatrixB.y; b2 = MatrixB.z; b3 = MatrixB.w; vec4(a0 * b0 + a1 * b2, a0 * b1 + a1 * b3, a2 * b0 + a3 * b2, a2 * b1 + a3 * b3)"),
-    ("RotationMatrix", &[("RotationW", "f1")], "r = RotationW * tau; vec4(cos(r), 0 - sin(r), sin(r), cos(r))"),
-    ("ScaleMatrix", &[("ScaleUV", "f2")], "vec4(100 / ScaleUV.x, 0, 0, 100 / ScaleUV.y)"),
-    ("TileMatrix", &[("tiles_xy", "f2")], "vec4(tiles_xy.x, 0, 0, tiles_xy.y)"),
-    ("rotate_vec2", &[("vec2", "f2"), ("angle", "f1"), ("pivot", "f2")], "p = vec2 - pivot; a = angle * tau; c = cos(a); s = sin(a); vec2(p.x * c + p.y * s, p.y * c - p.x * s) + pivot"),
-    ("matrix_invert", &[("matrix22", "f4")], "m0 = matrix22.x; m1 = matrix22.y; m2 = matrix22.z; m3 = matrix22.w; d = m0 * m3 - m1 * m2; vec4(m3 / d, (0 - m1) / d, (0 - m2) / d, m0 / d)"),
-    ("polar_to_carthesian", &[("input", "f2")], "x = input.x; y = input.y; e = pi * (y - 0.5); vec3(cos(e) * cos(x * tau), cos(e) * sin(x * tau), 0 - sin(e))"),
-    ("carthesian_to_polar", &[("input", "f3")], "x = input.x; y = input.y; z = input.z; vec2(mod(atan2(y, x) / tau, 1), 1 - (atan2(z, sqrt(x * x + y * y)) / pi + 0.5))"),
-    // Functions/Various
-    ("disorder", &[("disorder_radius", "f1"), ("disorder_angle", "f1")], "r = rand(disorder_radius); t = 6.28318501 * (rand(2) - 1); vec2(r * cos(t), r * sin(t))"),
-    ("non_square_output_size", &[("scale", "i1"), ("output_size", "i2"), ("non_square", "b")], "output_size"),
-    ("non_square_expansion_uv_scale", &[("position", "f2"), ("non_square_expansion", "b")], "sl = $sizelog2; sx = sl.x; sy = sl.y; d = max(sx, sy) - min(sx, sy); df = sx > sy ? vec2(d, 0) : vec2(0, d); p2 = vec2(exp2(df.x), exp2(df.y)); non_square_expansion ? (p2 * position - (vec2(1, 1) - p2) * 0.5) : position"),
-    // Functions/colorValues
-    ("directionToNormal", &[("Direction", "f1"), ("slopeAngle", "f1"), ("yUp", "b")], "off = yUp ? 0 : pi; dr = Direction * tau + off; sa = slopeAngle * tau; cx = cos(Direction * tau + pi); vec4(cx * sin(sa) * 0.5 + 0.5, sin(dr) * sin(sa) * 0.5 + 0.5, 1, 1)"),
-    ("RGBtoHSL", &[("RGB", "f3")], "vec3(RGB_hue_hexagonal(rgb), RGB_saturation_HSL(rgb), RGB_lightness_bihexcone(rgb))"),
-    ("HSLtoRGB", &[("HSL", "f3")], "h = HSL.x; s = HSL.y; L = HSL.z; C = (1 - abs(2 * L - 1)) * s; hp = h * 6; X = C * (1 - abs(mod(hp, 2) - 1)); m = L - C / 2; hp < 0 ? vec3(m, m, m) : (hp <= 1 ? (vec3(C, X, 0) + vec3(m, m, m)) : (hp <= 2 ? (vec3(X, C, 0) + vec3(m, m, m)) : (hp <= 3 ? (vec3(0, C, X) + vec3(m, m, m)) : (hp <= 4 ? (vec3(0, X, C) + vec3(m, m, m)) : (hp <= 5 ? (vec3(X, 0, C) + vec3(m, m, m)) : (hp < 6 ? (vec3(C, 0, X) + vec3(m, m, m)) : (vec3(m, m, m))))))))"),
-    ("Random_Color", &[("RGB", "f3"), ("RGB_Randomness", "f3")], "vec3(RGB.x + (rand(1) * 2 - 1) * RGB_Randomness.x, RGB.y + (rand(1) * 2 - 1) * RGB_Randomness.y, RGB.z + (rand(1) * 2 - 1) * RGB_Randomness.z)"),
-    ("Random_Luminosity", &[("RGB", "f3"), ("Luminosity_Randomness", "f1")], "off = (rand(1) * 2 - 1) * Luminosity_Randomness; vec3(RGB.x + off, RGB.y + off, RGB.z + off)"),
-    ("RGBtoHSV", &[("rgb", "f3")], "vec3(RGB_hue_hexagonal(rgb), RGB_saturation_HSV(rgb), RGB_lightness_hexcone(rgb))"),
-    ("RGBtoHSI", &[("rgb", "f3")], "vec3(RGB_hue_2_polar(rgb), RGB_saturation_HSI(rgb), RGB_lightness_average(rgb))"),
-    ("RGBtoHCL", &[("rgb", "f3")], "vec3(RGB_hue_hexagonal(rgb), RGB_chroma_hexagonal(rgb), RGB_lightness_luma_rec601(rgb))"),
-    ("RGB_lightness_average", &[("rgb", "f3")], "(rgb.x + rgb.y + rgb.z) / 3"),
-    ("RGB_lightness_hexcone", &[("rgb", "f3")], "max(rgb.x, max(rgb.y, rgb.z))"),
-    ("RGB_lightness_bihexcone", &[("rgb", "f3")], "(max(rgb.x, max(rgb.y, rgb.z)) + min(rgb.x, min(rgb.y, rgb.z))) * 0.5"),
-    ("RGB_lightness_luma_rec601", &[("rgb", "f3")], "dot(rgb, vec3(0.299, 0.587, 0.114))"),
-    ("RGB_lightness_luma_rec709", &[("rgb", "f3")], "dot(rgb, vec3(0.2126, 0.7152, 0.0722))"),
-    ("RGB_chroma_hexagonal", &[("rgb", "f3")], "max(rgb.x, max(rgb.y, rgb.z)) - min(rgb.x, min(rgb.y, rgb.z))"),
-    ("RGB_chroma_2_polar", &[("rgb", "f3")], "r = rgb.x; g = rgb.y; b = rgb.z; alpha = 0.5 * (2 * r - g - b); beta = (g - b) * sqrt(3) * 0.5; sqrt(alpha * alpha + beta * beta)"),
-    ("RGB_hue_hexagonal", &[("rgb", "f3")], "r = rgb.x; g = rgb.y; b = rgb.z; mx = max(r, max(g, b)); mn = min(r, min(g, b)); c = mx - mn; h = c == 0 ? 0 : (r >= mx ? mod((g - b) / c, 6) : (g >= mx ? (b - r) / c + 2 : (b >= mx ? (r - g) / c + 4 : 1))); h * 60 / 360"),
-    ("RGB_hue_2_polar", &[("rgb", "f3")], "r = rgb.x; g = rgb.y; b = rgb.z; alpha = 0.5 * (2 * r - g - b); beta = (g - b) * sqrt(3) * 0.5; h = atan2(beta, alpha) / pi * 0.5 + 1; mod(h, 1)"),
-    ("RGB_saturation_HSV", &[("rgb", "f3")], "(max(rgb.x, max(rgb.y, rgb.z)) - min(rgb.x, min(rgb.y, rgb.z))) / max(rgb.x, max(rgb.y, rgb.z))"),
-    ("RGB_saturation_HSL", &[("rgb", "f3")], "mx = max(rgb.x, max(rgb.y, rgb.z)); mn = min(rgb.x, min(rgb.y, rgb.z)); L = (mx + mn) * 0.5; (mx - mn) / (1 - abs(2 * L - 1))"),
-    ("RGB_saturation_HSI", &[("rgb", "f3")], "mn = min(rgb.x, min(rgb.y, rgb.z)); I = (rgb.x + rgb.y + rgb.z) / 3; (I - mn) / I"),
-    ("HSItoRGB", &[("hsi", "f3")], "H = hsi.x; S = hsi.y; I = hsi.z; lo = I * (1 - S); th = I * 3; a0 = H * tau; k0 = I * (1 + S * cos(a0) / cos(pi / 3 - a0)); a1 = (H - 1 / 3) * tau; k1 = I * (1 + S * cos(a1) / cos(pi / 3 - a1)); a2 = (H - 2 / 3) * tau; k2 = I * (1 + S * cos(a2) / cos(pi / 3 - a2)); (H >= 0 && H < 1 / 3) ? vec3(k0, th - k0 - lo, lo) : ((H >= 1 / 3 && H < 2 / 3) ? vec3(lo, k1, th - k1 - lo) : ((H >= 2 / 3 && H < 1) ? vec3(th - k2 - lo, lo, k2) : vec3(lo, lo, lo)))"),
-    ("HSVtoRGB", &[("hsv", "f3")], "h = hsv.x; s = hsv.y; v = hsv.z; C = s * v; hp = h * 6; X = C * (1 - abs(mod(hp, 2) - 1)); m = v - C; hp < 0 ? vec3(m, m, m) : (hp <= 1 ? (vec3(C, X, 0) + vec3(m, m, m)) : (hp <= 2 ? (vec3(X, C, 0) + vec3(m, m, m)) : (hp <= 3 ? (vec3(0, C, X) + vec3(m, m, m)) : (hp <= 4 ? (vec3(0, X, C) + vec3(m, m, m)) : (hp <= 5 ? (vec3(X, 0, C) + vec3(m, m, m)) : (hp < 6 ? (vec3(C, 0, X) + vec3(m, m, m)) : (vec3(m, m, m))))))))"),
-    ("HCLtoRGB", &[("hcl", "f3")], "h = hcl.x; C = hcl.y; L = hcl.z; hp = h * 6; X = C * (1 - abs(mod(hp, 2) - 1)); rgbp = hp < 0 ? vec3(0, 0, 0) : (hp <= 1 ? vec3(C, X, 0) : (hp <= 2 ? vec3(X, C, 0) : (hp <= 3 ? vec3(0, C, X) : (hp <= 4 ? vec3(0, X, C) : (hp <= 5 ? vec3(X, 0, C) : (hp < 6 ? vec3(C, 0, X) : (vec3(0, 0, 0)))))))); m = L - dot(rgbp, vec3(0.299, 0.587, 0.114)); rgbp + vec3(m, m, m)"),
-    ("linear_to_sRGB_luminance", &[("input", "f1")], "input <= 0.0031308 ? input * 12.92 : 1.055 * pow(input, 1 / 2.4) - 0.055"),
-    ("linear_to_sRGB_rgb", &[("input", "f3")], "vec3(linear_to_sRGB_luminance(input.x), linear_to_sRGB_luminance(input.y), linear_to_sRGB_luminance(input.z))"),
-    ("sRGB_to_linear_rgb", &[("input", "f3")], "vec3(sRGB_to_linear_luminance(input.x), sRGB_to_linear_luminance(input.y), sRGB_to_linear_luminance(input.z))"),
-    ("sRGB_to_linear_luminance", &[("input", "f1")], "input <= 0.04045 ? input / 12.92 : pow((input + 0.055) / 1.055, 2.4)"),
-    ("temperature_to_rgb", &[("temperature", "f1")], "t = temperature / 100; r = temperature_to_rgb_fit(t, 0.679299712, 0.0463962592, 10.5762053, -1.51725721); g = temperature_to_rgb_fit(t, -0.267794788, 1344.49194, 0.996967077, 2.72198915); bl = temperature_to_rgb_fit(t, -0.369759142, 865.372559, 2.09022808, 1.68704808); max(vec3(r, g, bl), vec3(0, 0, 0))"),
-    ("temperature_to_rgb_fit", &[("input", "f1"), ("a", "f1"), ("b", "f1"), ("c", "f1"), ("d", "f1")], "p = input <= 0 ? 0 : pow(input, d); (a * b + c * p) / (p + b)"),
-    ("acescg_to_linear_srgb", &[("input", "f3")], "vec3(dot(vec3(1.70490003, -0.624159992, -0.0809141025), input), dot(vec3(-0.129553005, 1.13837004, -0.00876800995), input), dot(vec3(-0.0241260994, -0.124632999, 1.14882004), input))"),
-    ("linear_srgb_to_acescg", &[("input", "f3")], "vec3(dot(vec3(0.613117993, 0.341181993, 0.0457873009), input), dot(vec3(0.0699340999, 0.91810298, 0.0119327996), input), dot(vec3(0.0204629991, 0.106769003, 0.87271601), input))"),
-    ("hsl_offset", &[("rgb", "f3"), ("hue", "f1"), ("saturation", "f1"), ("lightness", "f1")], "hsl = RGBtoHSL(rgb); HSLtoRGB(vec3(mod(hsl.x + hue, 1), hsl.y + saturation, hsl.z + lightness))"),
-    // Functions/easings/circ
-    ("ease_in_circ", &[("input", "f1")], "1 - sqrt(1 - pow(input, 2))"),
-    ("ease_out_circ", &[("input", "f1")], "sqrt(1 - pow(input - 1, 2))"),
-    ("ease_in_out_circ", &[("input", "f1")], "input < 0.5 ? (1 - sqrt(1 - pow(2 * input, 2))) / 2 : (sqrt(1 - pow(-2 * input + 2, 2)) + 1) / 2"),
-    // Functions/easings/cubic
-    ("ease_in_cubic", &[("input", "f1")], "input * input * input"),
-    ("ease_out_cubic", &[("input", "f1")], "1 - pow(1 - input, 3)"),
-    ("ease_in_out_cubic", &[("input", "f1")], "input < 0.5 ? 4 * input * input * input : 1 - pow(-2 * input + 2, 3) / 2"),
-    // Functions/easings/expo
-    ("ease_in_expo", &[("input", "f1")], "input == 0 ? 0 : pow(2, 10 * input - 10)"),
-    ("ease_out_expo", &[("input", "f1")], "input == 1 ? 1 : 1 - pow(2, -10 * input)"),
-    ("ease_in_out_expo", &[("input", "f1")], "input == 0 ? 0 : (input == 1 ? 1 : (input < 0.5 ? pow(2, 20 * input - 10) / 2 : (2 - pow(2, -20 * input + 10)) / 2))"),
-    // Functions/easings/quad
-    ("ease_in_quad", &[("input", "f1")], "input * input"),
-    ("ease_out_quad", &[("input", "f1")], "1 - (1 - input) * (1 - input)"),
-    ("ease_in_out_quad", &[("input", "f1")], "input < 0.5 ? 2 * input * input : 1 - pow(-2 * input + 2, 2) / 2"),
-    // Functions/easings/quart
-    ("ease_in_quart", &[("input", "f1")], "input * input * input * input"),
-    ("ease_out_quart", &[("input", "f1")], "1 - pow(1 - input, 4)"),
-    ("ease_in_out_quart", &[("input", "f1")], "input < 0.5 ? 8 * pow(input, 4) : 1 - pow(-2 * input + 2, 4) / 2"),
-    // Functions/easings/quint
-    ("ease_in_quint", &[("input", "f1")], "pow(input, 5)"),
-    ("ease_out_quint", &[("input", "f1")], "1 - pow(1 - input, 5)"),
-    ("ease_in_out_quint", &[("input", "f1")], "input < 0.5 ? 16 * pow(input, 5) : 1 - pow(-2 * input + 2, 5) / 2"),
-    // Functions/easings/sine
-    ("ease_in_sine", &[("input", "f1")], "1 - cos(input * pi / 2)"),
-    ("ease_out_sine", &[("input", "f1")], "sin(input * pi / 2)"),
-    ("ease_in_out_sine", &[("input", "f1")], "0 - (cos(pi * input) - 1) / 2"),
-    // Functions/switch/Float1
-    ("switch_float1_2_inputs", &[("input_selection", "i1"), ("value_1", "f1"), ("value_2", "f1")], "input_selection == 0 ? value_1 : (value_2)"),
-    ("switch_float1_4_inputs", &[("input_selection", "i1"), ("value_1", "f1"), ("value_2", "f1"), ("value_3", "f1"), ("value_4", "f1")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
-    ("switch_float1_8_inputs", &[("input_selection", "i1"), ("value_1", "f1"), ("value_2", "f1"), ("value_3", "f1"), ("value_4", "f1"), ("value_5", "f1"), ("value_6", "f1"), ("value_7", "f1"), ("value_8", "f1")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
-    // Functions/switch/Float2
-    ("switch_float2_2_inputs", &[("input_selection", "i1"), ("value_1", "f2"), ("value_2", "f2")], "input_selection == 0 ? value_1 : (value_2)"),
-    ("switch_float2_4_inputs", &[("input_selection", "i1"), ("value_1", "f2"), ("value_2", "f2"), ("value_3", "f2"), ("value_4", "f2")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
-    ("switch_float2_8_inputs", &[("input_selection", "i1"), ("value_1", "f2"), ("value_2", "f2"), ("value_3", "f2"), ("value_4", "f2"), ("value_5", "f2"), ("value_6", "f2"), ("value_7", "f2"), ("value_8", "f2")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
-    // Functions/switch/Float3
-    ("switch_float3_2_inputs", &[("input_selection", "i1"), ("value_1", "f3"), ("value_2", "f3")], "input_selection == 0 ? value_1 : (value_2)"),
-    ("switch_float3_4_inputs", &[("input_selection", "i1"), ("value_1", "f3"), ("value_2", "f3"), ("value_3", "f3"), ("value_4", "f3")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
-    ("switch_float3_8_inputs", &[("input_selection", "i1"), ("value_1", "f3"), ("value_2", "f3"), ("value_3", "f3"), ("value_4", "f3"), ("value_5", "f3"), ("value_6", "f3"), ("value_7", "f3"), ("value_8", "f3")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
-    // Functions/switch/Float4
-    ("switch_float4_2_inputs", &[("input_selection", "i1"), ("value_1", "f4"), ("value_2", "f4")], "input_selection == 0 ? value_1 : (value_2)"),
-    ("switch_float4_4_inputs", &[("input_selection", "i1"), ("value_1", "f4"), ("value_2", "f4"), ("value_3", "f4"), ("value_4", "f4")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
-    ("switch_float4_8_inputs", &[("input_selection", "i1"), ("value_1", "f4"), ("value_2", "f4"), ("value_3", "f4"), ("value_4", "f4"), ("value_5", "f4"), ("value_6", "f4"), ("value_7", "f4"), ("value_8", "f4")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
-    // Functions/switch/Integer1
-    ("switch_integer1_2_inputs", &[("input_selection", "i1"), ("value_1", "i1"), ("value_2", "i1")], "input_selection == 0 ? value_1 : (value_2)"),
-    ("switch_integer1_4_inputs", &[("input_selection", "i1"), ("value_1", "i1"), ("value_2", "i1"), ("value_3", "i1"), ("value_4", "i1")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
-    ("switch_integer1_8_inputs", &[("input_selection", "i1"), ("value_1", "i1"), ("value_2", "i1"), ("value_3", "i1"), ("value_4", "i1"), ("value_5", "i1"), ("value_6", "i1"), ("value_7", "i1"), ("value_8", "i1")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
-    // Functions/switch/Integer2
-    ("switch_integer2_2_inputs", &[("input_selection", "i1"), ("value_1", "i2"), ("value_2", "i2")], "input_selection == 0 ? value_1 : (value_2)"),
-    ("switch_integer2_4_inputs", &[("input_selection", "i1"), ("value_1", "i2"), ("value_2", "i2"), ("value_3", "i2"), ("value_4", "i2")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
-    ("switch_integer2_8_inputs", &[("input_selection", "i1"), ("value_1", "i2"), ("value_2", "i2"), ("value_3", "i2"), ("value_4", "i2"), ("value_5", "i2"), ("value_6", "i2"), ("value_7", "i2"), ("value_8", "i2")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
-    // Functions/switch/Integer3
-    ("switch_integer3_2_inputs", &[("input_selection", "i1"), ("value_1", "i3"), ("value_2", "i3")], "input_selection == 0 ? value_1 : (value_2)"),
-    ("switch_integer3_4_inputs", &[("input_selection", "i1"), ("value_1", "i3"), ("value_2", "i3"), ("value_3", "i3"), ("value_4", "i3")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
-    ("switch_integer3_8_inputs", &[("input_selection", "i1"), ("value_1", "i3"), ("value_2", "i3"), ("value_3", "i3"), ("value_4", "i3"), ("value_5", "i3"), ("value_6", "i3"), ("value_7", "i3"), ("value_8", "i3")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
-    // Functions/switch/Integer4
-    ("switch_integer4_2_inputs", &[("input_selection", "i1"), ("value_1", "i4"), ("value_2", "i4")], "input_selection == 0 ? value_1 : (value_2)"),
-    ("switch_integer4_4_inputs", &[("input_selection", "i1"), ("value_1", "i4"), ("value_2", "i4"), ("value_3", "i4"), ("value_4", "i4")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
-    ("switch_integer4_8_inputs", &[("input_selection", "i1"), ("value_1", "i4"), ("value_2", "i4"), ("value_3", "i4"), ("value_4", "i4"), ("value_5", "i4"), ("value_6", "i4"), ("value_7", "i4"), ("value_8", "i4")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
-    // Functions/typeConverters
-    ("booleanToFloat1", &[("Boolean", "b")], "Boolean ? 1 : 0"),
-    ("turnsToDegrees", &[("turns", "f1")], "turns * 360"),
+const TABLE: &[(&str, &[Func])] = &[
+    ("Functions/Cycles", &[
+        ("Wave", "Wave", &[("Amplitude", "f1"), ("Frequency", "f1"), ("greaterThanZero", "b")], "w = Amplitude * sin(Frequency * $time); greaterThanZero ? Amplitude + w : w"),
+    ]),
+    ("Functions/Math", &[
+        ("Ln", "Ln", &[("a", "f1")], "log(a) / exp(1)"),
+        ("Pi", "Pi", &[], "pi"),
+        ("2Pi", "2 Pi", &[], "tau"),
+        ("Pow", "Power (Positive Base)", &[("x", "f1"), ("n", "f1")], "x <= 0 ? 0 : pow(x, n)"),
+        ("Roughness", "Roughness per Level", &[("Roughness", "f1"), ("CurrentLevel", "i1"), ("TotalLevel", "i1"), ("GlobalOpacity", "f1")], "Roughness == 0 ? GlobalOpacity : (Roughness == 1 ? GlobalOpacity / float(TotalLevel) : GlobalOpacity * ((1 - Roughness) * (Roughness <= 0 ? 0 : pow(Roughness, float(CurrentLevel)))) / (1 - (Roughness <= 0 ? 0 : pow(Roughness, float(TotalLevel)))))"),
+        ("Equality_Float2", "Equal Float2", &[("A", "f2"), ("B", "f2")], "A == B"),
+        ("Equality_Float3", "Equal Float3", &[("A", "f3"), ("B", "f3")], "A == B"),
+        ("Equality_Boolean", "Equal Bool", &[("A", "b"), ("B", "b")], "A == B"),
+        ("Equality_Float4", "Equal Float4", &[("A", "f4"), ("B", "f4")], "A == B"),
+        ("NotEqual_Float2", "Not Equal Float2", &[("A", "f2"), ("B", "f2")], "A != B"),
+        ("NotEqual_Float3", "Not Equal Float3", &[("A", "f3"), ("B", "f3")], "A != B"),
+        ("NotEqual_Float4", "Not Equal Float4", &[("A", "f4"), ("B", "f4")], "A != B"),
+        ("NotEqual_Boolean", "Not Equal Bool", &[("A", "b"), ("B", "b")], "A != B"),
+        ("Curve_Function", "Curve", &[("curve", "f1"), ("input", "f1")], "curve < 0 ? (input * (1 + curve) - curve * sqrt(1 - (1 - input) * (1 - input))) : ((1 - sqrt(1 - input * input)) * curve + input * (1 - curve))"),
+        ("merge_float4", "Merge Float4", &[("x", "f1"), ("y", "f1"), ("z", "f1"), ("w", "f1")], "vec4(x, y, z, w)"),
+        ("merge_float3", "Merge Float3", &[("x", "f1"), ("y", "f1"), ("z", "f1")], "vec3(x, y, z)"),
+        ("distance_vec3", "Distance Float3", &[("a", "f3"), ("b", "f3")], "distance(a, b)"),
+        ("distance_vec2", "Distance Float2", &[("a", "f2"), ("b", "f2")], "distance(a, b)"),
+        ("length_vec2", "Length Float2", &[("v", "f2")], "length(v)"),
+        ("length_vec3", "Length Float3", &[("v", "f3")], "length(v)"),
+        ("sign", "Sign", &[("x", "f1")], "x < 0 ? 0 - 1 : 1"),
+        ("reflect", "Reflect", &[("i", "f3"), ("n", "f3")], "i - n * (dot(i, n) * 2)"),
+        ("oneminus", "One Minus", &[("x", "f1")], "1 - x"),
+        ("fmod", "Float Modulo", &[("a", "f1"), ("b", "f1")], "a - b * float(int(a / b))"),
+        ("frac", "Fraction", &[("input", "f1")], "fract(input)"),
+        ("cross_product", "Cross Product Float3", &[("a", "f3"), ("b", "f3")], "cross(a, b)"),
+        ("cross_product_vec2", "Cross Product Float2", &[("a", "f2"), ("b", "f2")], "a.x * b.y - a.y * b.x"),
+        ("step", "Step", &[("a", "f1"), ("x", "f1")], "step(a, x)"),
+        ("divide_float4", "Divide Float4 by Scalar", &[("input", "f4"), ("scalar", "f1")], "input / scalar"),
+        ("divide_float3", "Divide Float3 by Scalar", &[("input", "f3"), ("scalar", "f1")], "input / scalar"),
+        ("divide_float2", "Divide Float2 by Scalar", &[("input", "f2"), ("scalar", "f1")], "input / scalar"),
+        ("clamp", "Clamp", &[("input", "f1"), ("min", "f1"), ("max", "f1")], "clamp(input, min, max)"),
+        ("normalize_vec2", "Normalize Float2", &[("input", "f2")], "normalize(input)"),
+        ("normalize_vec3", "Normalize Float3", &[("input", "f3")], "normalize(input)"),
+        ("normalize_vec4", "Normalize Float4", &[("input", "f4")], "normalize(input)"),
+        ("smoothstep", "Smoothstep", &[("a", "f1"), ("b", "f1"), ("x", "f1")], "t = saturate((x - a) / (b - a)); t * t * (3 - 2 * t)"),
+        ("saturate_float2", "Saturate Float2", &[("input", "f2")], "saturate(input)"),
+        ("average_float1", "Average Float", &[("a", "f1"), ("b", "f1")], "(a + b) * 0.5"),
+        ("average_float2", "Average Float2", &[("a", "f2"), ("b", "f2")], "(a + b) * 0.5"),
+        ("average_float3", "Average Float3", &[("a", "f3"), ("b", "f3")], "(a + b) * 0.5"),
+        ("average_float4", "Average Float4", &[("a", "f4"), ("b", "f4")], "(a + b) * 0.5"),
+        ("orthogonal_vec2", "Orthogonal Float2", &[("input", "f2")], "vec2(input.y, 0 - input.x)"),
+        ("saturate", "Saturate", &[("input", "f1")], "saturate(input)"),
+        ("truncate_float1_decimals", "Truncate Decimals", &[("input", "f1"), ("decimals", "i1")], "p = pow(10, float(decimals)); decimals <= 0 ? input : floor(input * p) / p"),
+        ("round_float1", "Round", &[("input", "f1")], "floor(input + 0.5)"),
+    ]),
+    ("Functions/Math/Parity", &[
+        ("EvenCount", "Even Count", &[("Input", "f1")], "ceil(floor(Input) / 2)"),
+        ("OddCount", "Odd Count", &[("Input", "f1")], "floor(floor(Input) / 2)"),
+        ("ParityTest", "Parity Test", &[("Input", "f1")], "t = 0.25 * (2 * Input + 1); 0.5 > t - floor(t)"),
+    ]),
+    ("Functions/Math/Trigo", &[
+        ("deg_to_rad", "Degrees to Radians", &[("deg", "f1")], "deg * (pi / 180)"),
+        ("asin", "Arc Sine", &[("x", "f1")], "asin(x)"),
+        ("acos", "Arc Cosine", &[("x", "f1")], "acos(x)"),
+    ]),
+    ("Functions/Random", &[
+        ("Uniform_[A,B[", "Uniform Random", &[("A", "f1"), ("B", "f1")], "rand(B - A) + A"),
+        ("Discrete_[A,B]", "Discrete Random", &[("A", "f1"), ("B", "f1"), ("Probability", "f1")], "rand(1) >= Probability ? A : B"),
+        ("Uniform_[-1,1[", "Uniform Random -1..1", &[], "rand(2) - 1"),
+        ("Uniform_F2_[A,B[", "Uniform Random Float2", &[("A2", "f2"), ("B2", "f2")], "d = B2 - A2; vec2(rand(d.x), rand(d.y)) + A2"),
+        ("Uniform_F3_[A,B[", "Uniform Random Float3", &[("A", "f3"), ("B", "f3")], "d = B - A; vec3(rand(d.x), rand(d.y), rand(d.z)) + A"),
+        ("Uniform_F4_[A,B[", "Uniform Random Float4", &[("A", "f4"), ("B", "f4")], "d = B - A; vec4(rand(d.x), rand(d.y), rand(d.z), rand(d.w)) + A"),
+        ("Degrees_to_Turn", "Degrees to Turns", &[("input", "f1")], "input / 360"),
+        ("GlobalRandom", "Global Random", &[("Input", "f1"), ("Seed", "i1")], "fract(sin(Input * 12.9898 + float(Seed) * 78.233) * 43758.5453)"),
+        ("normal_distribution", "Normal Distribution", &[("radius", "f1"), ("uniform_random", "f2")], "r = 0.25 * sqrt(0 - 2 * log(max(uniform_random.x, 0.0001))) * radius; t = uniform_random.y * tau; vec2(r * cos(t), r * sin(t))"),
+        // pseudo-random values in [0, 1) from a seed: Hash <in><out>, the digits are the seed's and the result's
+        // component counts. MaterialCraft's own hash (see `mc_hash_mix`); each result component starts from its
+        // own offset, so the components differ.
+        ("hash11", "Hash 11", &[("input", "f1")], "mc_hash_mix(input)"),
+        ("hash14", "Hash 14", &[("input", "f1")], "vec4(mc_hash_mix(input), mc_hash_mix(input + 1.5446), mc_hash_mix(input + 3.5607), mc_hash_mix(input + 5.3721))"),
+        ("hash21", "Hash 21", &[("input", "f2")], "mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x))"),
+        ("hash22", "Hash 22", &[("input", "f2")], "vec2(mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x)), mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x + 1.5446)))"),
+        ("hash24", "Hash 24", &[("input", "f2")], "vec4(mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x)), mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x + 1.5446)), mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x + 3.5607)), mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x + 5.3721)))"),
+        ("hash31", "Hash 31", &[("input", "f3")], "mc_hash_mix(input.z + 7.31 * mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x)))"),
+        ("hash32", "Hash 32", &[("input", "f3")], "vec2(mc_hash_mix(input.z + 7.31 * mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x))), mc_hash_mix(input.z + 7.31 * mc_hash_mix(input.y + 7.31 * mc_hash_mix(input.x + 1.5446))))"),
+    ]),
+    ("Functions/Ranges", &[
+        ("[-1_1]_to_[0_1]", "Range -1..1 to 0..1", &[("Input", "f1")], "Input * 0.5 + 0.5"),
+        ("[0_1]_to_[-1_1]", "Range 0..1 to -1..1", &[("Input", "f1")], "Input * 2 - 1"),
+        ("[0_1]_to_[1_0]", "Range 0..1 to 1..0", &[("Input", "f1")], "1 - Input"),
+        ("negateFloat", "Negate Float", &[("Input", "f1")], "0 - Input"),
+        ("Height_Balance_Fn", "Height Balance", &[("Depth_Balance", "f1")], "vec4(max(Depth_Balance, 0), min(1 + Depth_Balance, 1), max(0 - Depth_Balance, 0), min(1 - Depth_Balance, 1))"),
+        ("[0,1]_to_[0,1,0]", "Range 0..1 to 0..1..0", &[("input", "f1")], "1 - abs(2 * input - 1)"),
+        ("[a,b]_to_[0,1]", "Range A..B to 0..1", &[("X", "f1"), ("A", "f1"), ("B", "f1")], "saturate((X - A) / (B - A))"),
+        ("triangle_wave", "Triangle Wave", &[("input", "f1")], "1 - abs(1 - 2 * fract(input / 2))"),
+        ("sawtooth_wave", "Sawtooth Wave", &[("x", "f1")], "m = mod(x, 1); m == 0 ? (abs(x) > 1 ? 1 : abs(x)) : m"),
+    ]),
+    ("Functions/Transforms", &[
+        ("Directional_Offset", "Directional Offset", &[("Direction", "f1"), ("Distance", "f1")], "r = Direction * tau; vec2(cos(r) * Distance, sin(r) * Distance)"),
+        ("MatrixMultiply", "Matrix Multiply", &[("MatrixA", "f4"), ("MatrixB", "f4")], "a0 = MatrixA.x; a1 = MatrixA.y; a2 = MatrixA.z; a3 = MatrixA.w; b0 = MatrixB.x; b1 = MatrixB.y; b2 = MatrixB.z; b3 = MatrixB.w; vec4(a0 * b0 + a1 * b2, a0 * b1 + a1 * b3, a2 * b0 + a3 * b2, a2 * b1 + a3 * b3)"),
+        ("RotationMatrix", "Rotation Matrix", &[("RotationW", "f1")], "r = RotationW * tau; vec4(cos(r), 0 - sin(r), sin(r), cos(r))"),
+        ("ScaleMatrix", "Scale Matrix", &[("ScaleUV", "f2")], "vec4(100 / ScaleUV.x, 0, 0, 100 / ScaleUV.y)"),
+        ("TileMatrix", "Tile Matrix", &[("tiles_xy", "f2")], "vec4(tiles_xy.x, 0, 0, tiles_xy.y)"),
+        ("rotate_vec2", "Rotate Float2", &[("vec2", "f2"), ("angle", "f1"), ("pivot", "f2")], "p = vec2 - pivot; a = angle * tau; c = cos(a); s = sin(a); vec2(p.x * c + p.y * s, p.y * c - p.x * s) + pivot"),
+        ("matrix_invert", "Matrix Invert", &[("matrix22", "f4")], "m0 = matrix22.x; m1 = matrix22.y; m2 = matrix22.z; m3 = matrix22.w; d = m0 * m3 - m1 * m2; vec4(m3 / d, (0 - m1) / d, (0 - m2) / d, m0 / d)"),
+        ("polar_to_carthesian", "Polar to Cartesian", &[("input", "f2")], "x = input.x; y = input.y; e = pi * (y - 0.5); vec3(cos(e) * cos(x * tau), cos(e) * sin(x * tau), 0 - sin(e))"),
+        ("carthesian_to_polar", "Cartesian to Polar", &[("input", "f3")], "x = input.x; y = input.y; z = input.z; vec2(mod(atan2(y, x) / tau, 1), 1 - (atan2(z, sqrt(x * x + y * y)) / pi + 0.5))"),
+    ]),
+    ("Functions/Various", &[
+        ("disorder", "Disorder", &[("disorder_radius", "f1"), ("disorder_angle", "f1")], "r = rand(disorder_radius); t = 6.28318501 * (rand(2) - 1); vec2(r * cos(t), r * sin(t))"),
+        ("non_square_output_size", "Non-Square Output Size", &[("scale", "i1"), ("output_size", "i2"), ("non_square", "b")], "output_size"),
+        ("non_square_expansion_uv_scale", "Non-Square UV Scale", &[("position", "f2"), ("non_square_expansion", "b")], "sl = $sizelog2; sx = sl.x; sy = sl.y; d = max(sx, sy) - min(sx, sy); df = sx > sy ? vec2(d, 0) : vec2(0, d); p2 = vec2(exp2(df.x), exp2(df.y)); non_square_expansion ? (p2 * position - (vec2(1, 1) - p2) * 0.5) : position"),
+    ]),
+    ("Functions/colorValues", &[
+        ("directionToNormal", "Direction to Normal", &[("Direction", "f1"), ("slopeAngle", "f1"), ("yUp", "b")], "off = yUp ? 0 : pi; dr = Direction * tau + off; sa = slopeAngle * tau; cx = cos(Direction * tau + pi); vec4(cx * sin(sa) * 0.5 + 0.5, sin(dr) * sin(sa) * 0.5 + 0.5, 1, 1)"),
+        ("RGBtoHSL", "RGB to HSL", &[("RGB", "f3")], "vec3(RGB_hue_hexagonal(rgb), RGB_saturation_HSL(rgb), RGB_lightness_bihexcone(rgb))"),
+        ("HSLtoRGB", "HSL to RGB", &[("HSL", "f3")], "h = HSL.x; s = HSL.y; L = HSL.z; C = (1 - abs(2 * L - 1)) * s; hp = h * 6; X = C * (1 - abs(mod(hp, 2) - 1)); m = L - C / 2; hp < 0 ? vec3(m, m, m) : (hp <= 1 ? (vec3(C, X, 0) + vec3(m, m, m)) : (hp <= 2 ? (vec3(X, C, 0) + vec3(m, m, m)) : (hp <= 3 ? (vec3(0, C, X) + vec3(m, m, m)) : (hp <= 4 ? (vec3(0, X, C) + vec3(m, m, m)) : (hp <= 5 ? (vec3(X, 0, C) + vec3(m, m, m)) : (hp < 6 ? (vec3(C, 0, X) + vec3(m, m, m)) : (vec3(m, m, m))))))))"),
+        ("Random_Color", "Random Color", &[("RGB", "f3"), ("RGB_Randomness", "f3")], "vec3(RGB.x + (rand(1) * 2 - 1) * RGB_Randomness.x, RGB.y + (rand(1) * 2 - 1) * RGB_Randomness.y, RGB.z + (rand(1) * 2 - 1) * RGB_Randomness.z)"),
+        ("Random_Luminosity", "Random Luminosity", &[("RGB", "f3"), ("Luminosity_Randomness", "f1")], "off = (rand(1) * 2 - 1) * Luminosity_Randomness; vec3(RGB.x + off, RGB.y + off, RGB.z + off)"),
+        ("RGBtoHSV", "RGB to HSV", &[("rgb", "f3")], "vec3(RGB_hue_hexagonal(rgb), RGB_saturation_HSV(rgb), RGB_lightness_hexcone(rgb))"),
+        ("RGBtoHSI", "RGB to HSI", &[("rgb", "f3")], "vec3(RGB_hue_2_polar(rgb), RGB_saturation_HSI(rgb), RGB_lightness_average(rgb))"),
+        ("RGBtoHCL", "RGB to HCL", &[("rgb", "f3")], "vec3(RGB_hue_hexagonal(rgb), RGB_chroma_hexagonal(rgb), RGB_lightness_luma_rec601(rgb))"),
+        ("RGB_lightness_average", "Lightness (Average)", &[("rgb", "f3")], "(rgb.x + rgb.y + rgb.z) / 3"),
+        ("RGB_lightness_hexcone", "Lightness (Hexcone)", &[("rgb", "f3")], "max(rgb.x, max(rgb.y, rgb.z))"),
+        ("RGB_lightness_bihexcone", "Lightness (Bi-Hexcone)", &[("rgb", "f3")], "(max(rgb.x, max(rgb.y, rgb.z)) + min(rgb.x, min(rgb.y, rgb.z))) * 0.5"),
+        ("RGB_lightness_luma_rec601", "Luma Rec. 601", &[("rgb", "f3")], "dot(rgb, vec3(0.299, 0.587, 0.114))"),
+        ("RGB_lightness_luma_rec709", "Luma Rec. 709", &[("rgb", "f3")], "dot(rgb, vec3(0.2126, 0.7152, 0.0722))"),
+        ("RGB_chroma_hexagonal", "Chroma (Hexagonal)", &[("rgb", "f3")], "max(rgb.x, max(rgb.y, rgb.z)) - min(rgb.x, min(rgb.y, rgb.z))"),
+        ("RGB_chroma_2_polar", "Chroma (Polar)", &[("rgb", "f3")], "r = rgb.x; g = rgb.y; b = rgb.z; alpha = 0.5 * (2 * r - g - b); beta = (g - b) * sqrt(3) * 0.5; sqrt(alpha * alpha + beta * beta)"),
+        ("RGB_hue_hexagonal", "Hue (Hexagonal)", &[("rgb", "f3")], "r = rgb.x; g = rgb.y; b = rgb.z; mx = max(r, max(g, b)); mn = min(r, min(g, b)); c = mx - mn; h = c == 0 ? 0 : (r >= mx ? mod((g - b) / c, 6) : (g >= mx ? (b - r) / c + 2 : (b >= mx ? (r - g) / c + 4 : 1))); h * 60 / 360"),
+        ("RGB_hue_2_polar", "Hue (Polar)", &[("rgb", "f3")], "r = rgb.x; g = rgb.y; b = rgb.z; alpha = 0.5 * (2 * r - g - b); beta = (g - b) * sqrt(3) * 0.5; h = atan2(beta, alpha) / pi * 0.5 + 1; mod(h, 1)"),
+        ("RGB_saturation_HSV", "Saturation (HSV)", &[("rgb", "f3")], "(max(rgb.x, max(rgb.y, rgb.z)) - min(rgb.x, min(rgb.y, rgb.z))) / max(rgb.x, max(rgb.y, rgb.z))"),
+        ("RGB_saturation_HSL", "Saturation (HSL)", &[("rgb", "f3")], "mx = max(rgb.x, max(rgb.y, rgb.z)); mn = min(rgb.x, min(rgb.y, rgb.z)); L = (mx + mn) * 0.5; (mx - mn) / (1 - abs(2 * L - 1))"),
+        ("RGB_saturation_HSI", "Saturation (HSI)", &[("rgb", "f3")], "mn = min(rgb.x, min(rgb.y, rgb.z)); I = (rgb.x + rgb.y + rgb.z) / 3; (I - mn) / I"),
+        ("HSItoRGB", "HSI to RGB", &[("hsi", "f3")], "H = hsi.x; S = hsi.y; I = hsi.z; lo = I * (1 - S); th = I * 3; a0 = H * tau; k0 = I * (1 + S * cos(a0) / cos(pi / 3 - a0)); a1 = (H - 1 / 3) * tau; k1 = I * (1 + S * cos(a1) / cos(pi / 3 - a1)); a2 = (H - 2 / 3) * tau; k2 = I * (1 + S * cos(a2) / cos(pi / 3 - a2)); (H >= 0 && H < 1 / 3) ? vec3(k0, th - k0 - lo, lo) : ((H >= 1 / 3 && H < 2 / 3) ? vec3(lo, k1, th - k1 - lo) : ((H >= 2 / 3 && H < 1) ? vec3(th - k2 - lo, lo, k2) : vec3(lo, lo, lo)))"),
+        ("HSVtoRGB", "HSV to RGB", &[("hsv", "f3")], "h = hsv.x; s = hsv.y; v = hsv.z; C = s * v; hp = h * 6; X = C * (1 - abs(mod(hp, 2) - 1)); m = v - C; hp < 0 ? vec3(m, m, m) : (hp <= 1 ? (vec3(C, X, 0) + vec3(m, m, m)) : (hp <= 2 ? (vec3(X, C, 0) + vec3(m, m, m)) : (hp <= 3 ? (vec3(0, C, X) + vec3(m, m, m)) : (hp <= 4 ? (vec3(0, X, C) + vec3(m, m, m)) : (hp <= 5 ? (vec3(X, 0, C) + vec3(m, m, m)) : (hp < 6 ? (vec3(C, 0, X) + vec3(m, m, m)) : (vec3(m, m, m))))))))"),
+        ("HCLtoRGB", "HCL to RGB", &[("hcl", "f3")], "h = hcl.x; C = hcl.y; L = hcl.z; hp = h * 6; X = C * (1 - abs(mod(hp, 2) - 1)); rgbp = hp < 0 ? vec3(0, 0, 0) : (hp <= 1 ? vec3(C, X, 0) : (hp <= 2 ? vec3(X, C, 0) : (hp <= 3 ? vec3(0, C, X) : (hp <= 4 ? vec3(0, X, C) : (hp <= 5 ? vec3(X, 0, C) : (hp < 6 ? vec3(C, 0, X) : (vec3(0, 0, 0)))))))); m = L - dot(rgbp, vec3(0.299, 0.587, 0.114)); rgbp + vec3(m, m, m)"),
+        ("linear_to_sRGB_luminance", "Linear to sRGB (Gray)", &[("input", "f1")], "input <= 0.0031308 ? input * 12.92 : 1.055 * pow(input, 1 / 2.4) - 0.055"),
+        ("linear_to_sRGB_rgb", "Linear to sRGB (Color)", &[("input", "f3")], "vec3(linear_to_sRGB_luminance(input.x), linear_to_sRGB_luminance(input.y), linear_to_sRGB_luminance(input.z))"),
+        ("sRGB_to_linear_rgb", "sRGB to Linear (Color)", &[("input", "f3")], "vec3(sRGB_to_linear_luminance(input.x), sRGB_to_linear_luminance(input.y), sRGB_to_linear_luminance(input.z))"),
+        ("sRGB_to_linear_luminance", "sRGB to Linear (Gray)", &[("input", "f1")], "input <= 0.04045 ? input / 12.92 : pow((input + 0.055) / 1.055, 2.4)"),
+        ("temperature_to_rgb", "Temperature to RGB", &[("temperature", "f1")], "t = temperature / 100; r = temperature_to_rgb_fit(t, 0.679299712, 0.0463962592, 10.5762053, -1.51725721); g = temperature_to_rgb_fit(t, -0.267794788, 1344.49194, 0.996967077, 2.72198915); bl = temperature_to_rgb_fit(t, -0.369759142, 865.372559, 2.09022808, 1.68704808); max(vec3(r, g, bl), vec3(0, 0, 0))"),
+        ("temperature_to_rgb_fit", "Temperature Curve Fit", &[("input", "f1"), ("a", "f1"), ("b", "f1"), ("c", "f1"), ("d", "f1")], "p = input <= 0 ? 0 : pow(input, d); (a * b + c * p) / (p + b)"),
+        ("acescg_to_linear_srgb", "ACEScg to Linear sRGB", &[("input", "f3")], "vec3(dot(vec3(1.70490003, -0.624159992, -0.0809141025), input), dot(vec3(-0.129553005, 1.13837004, -0.00876800995), input), dot(vec3(-0.0241260994, -0.124632999, 1.14882004), input))"),
+        ("linear_srgb_to_acescg", "Linear sRGB to ACEScg", &[("input", "f3")], "vec3(dot(vec3(0.613117993, 0.341181993, 0.0457873009), input), dot(vec3(0.0699340999, 0.91810298, 0.0119327996), input), dot(vec3(0.0204629991, 0.106769003, 0.87271601), input))"),
+        ("hsl_offset", "HSL Offset", &[("rgb", "f3"), ("hue", "f1"), ("saturation", "f1"), ("lightness", "f1")], "hsl = RGBtoHSL(rgb); HSLtoRGB(vec3(mod(hsl.x + hue, 1), hsl.y + saturation, hsl.z + lightness))"),
+    ]),
+    ("Functions/easings/circ", &[
+        ("ease_in_circ", "Ease In Circ", &[("input", "f1")], "1 - sqrt(1 - pow(input, 2))"),
+        ("ease_out_circ", "Ease Out Circ", &[("input", "f1")], "sqrt(1 - pow(input - 1, 2))"),
+        ("ease_in_out_circ", "Ease In Out Circ", &[("input", "f1")], "input < 0.5 ? (1 - sqrt(1 - pow(2 * input, 2))) / 2 : (sqrt(1 - pow(-2 * input + 2, 2)) + 1) / 2"),
+    ]),
+    ("Functions/easings/cubic", &[
+        ("ease_in_cubic", "Ease In Cubic", &[("input", "f1")], "input * input * input"),
+        ("ease_out_cubic", "Ease Out Cubic", &[("input", "f1")], "1 - pow(1 - input, 3)"),
+        ("ease_in_out_cubic", "Ease In Out Cubic", &[("input", "f1")], "input < 0.5 ? 4 * input * input * input : 1 - pow(-2 * input + 2, 3) / 2"),
+    ]),
+    ("Functions/easings/expo", &[
+        ("ease_in_expo", "Ease In Expo", &[("input", "f1")], "input == 0 ? 0 : pow(2, 10 * input - 10)"),
+        ("ease_out_expo", "Ease Out Expo", &[("input", "f1")], "input == 1 ? 1 : 1 - pow(2, -10 * input)"),
+        ("ease_in_out_expo", "Ease In Out Expo", &[("input", "f1")], "input == 0 ? 0 : (input == 1 ? 1 : (input < 0.5 ? pow(2, 20 * input - 10) / 2 : (2 - pow(2, -20 * input + 10)) / 2))"),
+    ]),
+    ("Functions/easings/quad", &[
+        ("ease_in_quad", "Ease In Quad", &[("input", "f1")], "input * input"),
+        ("ease_out_quad", "Ease Out Quad", &[("input", "f1")], "1 - (1 - input) * (1 - input)"),
+        ("ease_in_out_quad", "Ease In Out Quad", &[("input", "f1")], "input < 0.5 ? 2 * input * input : 1 - pow(-2 * input + 2, 2) / 2"),
+    ]),
+    ("Functions/easings/quart", &[
+        ("ease_in_quart", "Ease In Quart", &[("input", "f1")], "input * input * input * input"),
+        ("ease_out_quart", "Ease Out Quart", &[("input", "f1")], "1 - pow(1 - input, 4)"),
+        ("ease_in_out_quart", "Ease In Out Quart", &[("input", "f1")], "input < 0.5 ? 8 * pow(input, 4) : 1 - pow(-2 * input + 2, 4) / 2"),
+    ]),
+    ("Functions/easings/quint", &[
+        ("ease_in_quint", "Ease In Quint", &[("input", "f1")], "pow(input, 5)"),
+        ("ease_out_quint", "Ease Out Quint", &[("input", "f1")], "1 - pow(1 - input, 5)"),
+        ("ease_in_out_quint", "Ease In Out Quint", &[("input", "f1")], "input < 0.5 ? 16 * pow(input, 5) : 1 - pow(-2 * input + 2, 5) / 2"),
+    ]),
+    ("Functions/easings/sine", &[
+        ("ease_in_sine", "Ease In Sine", &[("input", "f1")], "1 - cos(input * pi / 2)"),
+        ("ease_out_sine", "Ease Out Sine", &[("input", "f1")], "sin(input * pi / 2)"),
+        ("ease_in_out_sine", "Ease In Out Sine", &[("input", "f1")], "0 - (cos(pi * input) - 1) / 2"),
+    ]),
+    ("Functions/switch/Float1", &[
+        ("switch_float1_2_inputs", "Switch Float (2 Inputs)", &[("input_selection", "i1"), ("value_1", "f1"), ("value_2", "f1")], "input_selection == 0 ? value_1 : (value_2)"),
+        ("switch_float1_4_inputs", "Switch Float (4 Inputs)", &[("input_selection", "i1"), ("value_1", "f1"), ("value_2", "f1"), ("value_3", "f1"), ("value_4", "f1")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
+        ("switch_float1_8_inputs", "Switch Float (8 Inputs)", &[("input_selection", "i1"), ("value_1", "f1"), ("value_2", "f1"), ("value_3", "f1"), ("value_4", "f1"), ("value_5", "f1"), ("value_6", "f1"), ("value_7", "f1"), ("value_8", "f1")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
+    ]),
+    ("Functions/switch/Float2", &[
+        ("switch_float2_2_inputs", "Switch Float2 (2 Inputs)", &[("input_selection", "i1"), ("value_1", "f2"), ("value_2", "f2")], "input_selection == 0 ? value_1 : (value_2)"),
+        ("switch_float2_4_inputs", "Switch Float2 (4 Inputs)", &[("input_selection", "i1"), ("value_1", "f2"), ("value_2", "f2"), ("value_3", "f2"), ("value_4", "f2")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
+        ("switch_float2_8_inputs", "Switch Float2 (8 Inputs)", &[("input_selection", "i1"), ("value_1", "f2"), ("value_2", "f2"), ("value_3", "f2"), ("value_4", "f2"), ("value_5", "f2"), ("value_6", "f2"), ("value_7", "f2"), ("value_8", "f2")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
+    ]),
+    ("Functions/switch/Float3", &[
+        ("switch_float3_2_inputs", "Switch Float3 (2 Inputs)", &[("input_selection", "i1"), ("value_1", "f3"), ("value_2", "f3")], "input_selection == 0 ? value_1 : (value_2)"),
+        ("switch_float3_4_inputs", "Switch Float3 (4 Inputs)", &[("input_selection", "i1"), ("value_1", "f3"), ("value_2", "f3"), ("value_3", "f3"), ("value_4", "f3")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
+        ("switch_float3_8_inputs", "Switch Float3 (8 Inputs)", &[("input_selection", "i1"), ("value_1", "f3"), ("value_2", "f3"), ("value_3", "f3"), ("value_4", "f3"), ("value_5", "f3"), ("value_6", "f3"), ("value_7", "f3"), ("value_8", "f3")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
+    ]),
+    ("Functions/switch/Float4", &[
+        ("switch_float4_2_inputs", "Switch Float4 (2 Inputs)", &[("input_selection", "i1"), ("value_1", "f4"), ("value_2", "f4")], "input_selection == 0 ? value_1 : (value_2)"),
+        ("switch_float4_4_inputs", "Switch Float4 (4 Inputs)", &[("input_selection", "i1"), ("value_1", "f4"), ("value_2", "f4"), ("value_3", "f4"), ("value_4", "f4")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
+        ("switch_float4_8_inputs", "Switch Float4 (8 Inputs)", &[("input_selection", "i1"), ("value_1", "f4"), ("value_2", "f4"), ("value_3", "f4"), ("value_4", "f4"), ("value_5", "f4"), ("value_6", "f4"), ("value_7", "f4"), ("value_8", "f4")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
+    ]),
+    ("Functions/switch/Integer1", &[
+        ("switch_integer1_2_inputs", "Switch Integer (2 Inputs)", &[("input_selection", "i1"), ("value_1", "i1"), ("value_2", "i1")], "input_selection == 0 ? value_1 : (value_2)"),
+        ("switch_integer1_4_inputs", "Switch Integer (4 Inputs)", &[("input_selection", "i1"), ("value_1", "i1"), ("value_2", "i1"), ("value_3", "i1"), ("value_4", "i1")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
+        ("switch_integer1_8_inputs", "Switch Integer (8 Inputs)", &[("input_selection", "i1"), ("value_1", "i1"), ("value_2", "i1"), ("value_3", "i1"), ("value_4", "i1"), ("value_5", "i1"), ("value_6", "i1"), ("value_7", "i1"), ("value_8", "i1")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
+    ]),
+    ("Functions/switch/Integer2", &[
+        ("switch_integer2_2_inputs", "Switch Integer2 (2 Inputs)", &[("input_selection", "i1"), ("value_1", "i2"), ("value_2", "i2")], "input_selection == 0 ? value_1 : (value_2)"),
+        ("switch_integer2_4_inputs", "Switch Integer2 (4 Inputs)", &[("input_selection", "i1"), ("value_1", "i2"), ("value_2", "i2"), ("value_3", "i2"), ("value_4", "i2")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
+        ("switch_integer2_8_inputs", "Switch Integer2 (8 Inputs)", &[("input_selection", "i1"), ("value_1", "i2"), ("value_2", "i2"), ("value_3", "i2"), ("value_4", "i2"), ("value_5", "i2"), ("value_6", "i2"), ("value_7", "i2"), ("value_8", "i2")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
+    ]),
+    ("Functions/switch/Integer3", &[
+        ("switch_integer3_2_inputs", "Switch Integer3 (2 Inputs)", &[("input_selection", "i1"), ("value_1", "i3"), ("value_2", "i3")], "input_selection == 0 ? value_1 : (value_2)"),
+        ("switch_integer3_4_inputs", "Switch Integer3 (4 Inputs)", &[("input_selection", "i1"), ("value_1", "i3"), ("value_2", "i3"), ("value_3", "i3"), ("value_4", "i3")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
+        ("switch_integer3_8_inputs", "Switch Integer3 (8 Inputs)", &[("input_selection", "i1"), ("value_1", "i3"), ("value_2", "i3"), ("value_3", "i3"), ("value_4", "i3"), ("value_5", "i3"), ("value_6", "i3"), ("value_7", "i3"), ("value_8", "i3")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
+    ]),
+    ("Functions/switch/Integer4", &[
+        ("switch_integer4_2_inputs", "Switch Integer4 (2 Inputs)", &[("input_selection", "i1"), ("value_1", "i4"), ("value_2", "i4")], "input_selection == 0 ? value_1 : (value_2)"),
+        ("switch_integer4_4_inputs", "Switch Integer4 (4 Inputs)", &[("input_selection", "i1"), ("value_1", "i4"), ("value_2", "i4"), ("value_3", "i4"), ("value_4", "i4")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (value_4)))"),
+        ("switch_integer4_8_inputs", "Switch Integer4 (8 Inputs)", &[("input_selection", "i1"), ("value_1", "i4"), ("value_2", "i4"), ("value_3", "i4"), ("value_4", "i4"), ("value_5", "i4"), ("value_6", "i4"), ("value_7", "i4"), ("value_8", "i4")], "input_selection == 0 ? value_1 : (input_selection == 1 ? value_2 : (input_selection == 2 ? value_3 : (input_selection == 3 ? value_4 : (input_selection == 4 ? value_5 : (input_selection == 5 ? value_6 : (input_selection == 6 ? value_7 : (value_8)))))))"),
+    ]),
+    ("Functions/typeConverters", &[
+        ("booleanToFloat1", "Bool to Float", &[("Boolean", "b")], "Boolean ? 1 : 0"),
+        ("turnsToDegrees", "Turns to Degrees", &[("turns", "f1")], "turns * 360"),
+    ]),
+    // the SDF functions: the identifiers are the public reference's page names, the inputs' its input names in lower
+    // case; defaults as it gives them. Z is up.
+    ("Functions/SDF/Primitives", &[
+        ("3d_sdf_capped_cone", "SDF Capped Cone", &[("radius_base", "f1=0.5"), ("radius_top", "f1=0.2"), ("height", "f1=1"), ("center_position", "f3=0,0,0"), ("P", "f3")], "q = P - center_position; mc_sdf_lathe(length(q.xy), q.z, radius_base, radius_top, height)"),
+        ("3d_sdf_capped_cone_2_points", "SDF Capped Cone (2 Points)", &[("position_base", "f3=0,0,0"), ("position_top", "f3=0,0,1"), ("radius_base", "f1=0.5"), ("radius_top", "f1=0.2"), ("P", "f3")], "mc_sdf_cone2(P, position_base, position_top, radius_base, radius_top)"),
+        ("3d_sdf_capped_torus", "SDF Capped Torus", &[("major_radius", "f1=0.5"), ("minor_radius", "f1=0.2"), ("angle", "f1=0.75"), ("angle_offset", "f1=0"), ("symmetrical", "b=1"), ("center_position", "f3=0,0,0.5"), ("P", "f3")], "q = P - center_position; a = mod(atan2(q.y, q.x) / tau - angle_offset, 1); w = mod(a + 0.5, 1) - 0.5; lo = symmetrical ? angle * -0.5 : 0; hi = symmetrical ? angle * 0.5 : angle; cut = symmetrical ? abs(w) < angle * 0.5 : a < angle; e0 = (angle_offset + lo) * tau; e1 = (angle_offset + hi) * tau; cut ? min(length(q - vec3(major_radius * cos(e0), major_radius * sin(e0), 0)), length(q - vec3(major_radius * cos(e1), major_radius * sin(e1), 0))) - minor_radius : length(vec2(length(q.xy) - major_radius, q.z)) - minor_radius"),
+        ("3d_sdf_capsule", "SDF Capsule", &[("start", "f3=0,0,0"), ("end", "f3=0,0,1"), ("radius", "f1=0.25"), ("start_end_at_tip", "b=0"), ("center_position", "f3=0,0,0"), ("P", "f3")], "d = normalize(end - start); a = start_end_at_tip ? start + d * radius : start; b = start_end_at_tip ? end - d * radius : end; mc_sdf_seg(P - center_position, a, b) - radius"),
+        ("3d_sdf_cone", "SDF Cone", &[("radius", "f1=0.5"), ("height", "f1=1"), ("center_position", "f3=0,0,0"), ("P", "f3")], "q = P - center_position; mc_sdf_lathe(length(q.xy), q.z, radius, 0, height)"),
+        ("3d_sdf_cube", "SDF Cube", &[("size", "f3=1,1,1"), ("rounding", "f1=0"), ("pivot_position_local", "f3=0,0,-0.5"), ("center_position", "f3=0,0,0"), ("P", "f3")], "s = size * 0.5; r = max(min(rounding, min(s.x, min(s.y, s.z))), 0); mc_sdf_box(P - center_position + pivot_position_local, s - r) - r"),
+        ("3d_sdf_cylinder", "SDF Cylinder", &[("height", "f1=1"), ("radius", "f1=0.5"), ("rounding", "f1=0"), ("pivot_position_local", "f3=0,0,-0.5"), ("center_position", "f3=0,0,0"), ("P", "f3")], "q = P - center_position + pivot_position_local; h = height * 0.5; r = max(min(rounding, min(radius, h)), 0); mc_sdf_extrude(length(q.xy) - radius + r, q.z, h - r) - r"),
+        ("3d_sdf_cylinder_2_points", "SDF Cylinder (2 Points)", &[("start", "f3=0,0,0"), ("end", "f3=0,0,1"), ("radius", "f1=0.25"), ("P", "f3")], "mc_sdf_cone2(P, start, end, radius, radius)"),
+        ("3d_sdf_ellipsoid", "SDF Ellipsoid", &[("radius", "f3=0.35,0.35,0.5"), ("center_position", "f3=0,0,0"), ("P", "f3")], "q = P - center_position; k0 = length(q / radius); k1 = length(q / (radius * radius)); k1 > 0 ? k0 * (k0 - 1) / k1 : 0 - min(radius.x, min(radius.y, radius.z))"),
+        ("3d_sdf_elongated_cylinder", "SDF Elongated Cylinder", &[("height", "f1=0.5"), ("radius", "f1=0.5"), ("rounding", "f1=0"), ("center_position", "f3=0,0,0"), ("elongation_distance", "f1=0.5"), ("P", "f3")], "q = P - center_position; e = elongation_distance * 0.5; h = height * 0.5; r = max(min(rounding, min(radius, h)), 0); x = q.x - clamp(q.x, 0 - e, e); mc_sdf_extrude(length(vec2(x, q.y)) - radius + r, q.z - h, h - r) - r"),
+        ("3d_sdf_ground_plane", "SDF Ground Plane", &[("height", "f1=0"), ("P", "f3")], "P.z - height"),
+        ("3d_sdf_helix", "SDF Helix", &[("major_radius", "f1=0.4"), ("minor_radius", "f1=0.1"), ("height", "f1=0.5"), ("windings", "f1=4"), ("center_position", "f3=0,0,0"), ("P", "f3")], "q = P - center_position; s = 0.5 / (floor(windings * 2) / 2); a = mod(atan2(q.y, q.x) / tau, 1); k = clamp(round(q.z / s - a), 0, ceil(height / s)); z = clamp(s * (a + k), 0, height); c = sqrt(1 + pow(s / (tau * major_radius), 2)); length(vec2(length(q.xy) - major_radius, (q.z - z) / c)) - minor_radius"),
+        ("3d_sdf_hexagonal_prism", "SDF Hexagonal Prism", &[("height", "f1=1"), ("radius", "f1=0.5"), ("rounding", "f1=0"), ("center_position", "f3=0,0,0"), ("P", "f3")], "q = P - center_position; h = height * 0.5; r = max(min(rounding, min(radius, h)), 0); a = (radius - r) * 0.8660254; k = vec2(-0.8660254, 0.5); u = abs(q.xy); f = u - k * (2 * min(dot(k, u), 0)); x = f.x - clamp(f.x, a * -0.57735027, a * 0.57735027); y = f.y - a; mc_sdf_extrude(length(vec2(x, y)) * (y < 0 ? -1 : 1), q.z - h, h - r) - r"),
+        ("3d_sdf_infinite_plane", "SDF Infinite Plane", &[("normal", "f3=0,0,1"), ("center_position", "f1=0"), ("P", "f3")], "dot(P, normalize(normal)) - center_position"),
+        ("3d_sdf_plane", "SDF Plane", &[("normal", "f3=0,0,1"), ("size", "f2=1,1"), ("thickness", "f1=0"), ("center_position", "f3=0,0,0"), ("P", "f3")], "n = normalize(normal); s = n.z < 0 ? -1 : 1; a = -1 / (s + n.z); b = n.x * n.y * a; u = vec3(1 + s * n.x * n.x * a, s * b, 0 - s * n.x); v = vec3(b, s + n.y * n.y * a, 0 - n.y); q = P - center_position; mc_sdf_box(vec3(dot(q, u), dot(q, v), dot(q, n)), vec3(size.x * 0.5, size.y * 0.5, 0)) - thickness"),
+        ("3d_sdf_pyramid", "SDF Pyramid", &[("height", "f1=1"), ("base_size", "f2=1,1"), ("base_position", "f3=0,0,0"), ("P", "f3")], "mc_sdf_pyramid(P - base_position, height, base_size.x * 0.5, base_size.y * 0.5)"),
+        ("3d_sdf_pyramid_square", "SDF Pyramid Square", &[("height", "f1=1"), ("base_size", "f1=1"), ("base_position", "f3=0,0,0"), ("P", "f3")], "mc_sdf_pyramid(P - base_position, height, base_size * 0.5, base_size * 0.5)"),
+        ("3d_sdf_rock", "SDF Rock", &[("max_facets", "i1=8"), ("smoothness", "f1=0"), ("randomness", "f1=0"), ("seed", "f1=0"), ("scale", "f1=0.5"), ("center_position", "f3=0,0,0.5"), ("P", "f3")], "sdf_rock(P - center_position, float(max_facets), smoothness, randomness, seed, scale)"),
+        ("3d_sdf_sphere", "SDF Sphere", &[("radius", "f1=0.5"), ("center_position", "f3=0,0,0"), ("P", "f3")], "length(P - center_position) - radius"),
+        ("3d_sdf_torus", "SDF Torus", &[("radius_major", "f1=0.5"), ("radius_minor", "f1=0.2"), ("center_position", "f3=0,0,0"), ("P", "f3")], "q = P - center_position; length(vec2(length(q.xy) - radius_major, q.z)) - radius_minor"),
+    ]),
+    ("Functions/SDF/Operators", &[
+        ("3d_sdf_op_intersection", "SDF Intersection", &[("sdf_1", "sdf"), ("sdf_2", "sdf")], "a = sdf(sdf_1); b = sdf(sdf_2); sdf_mix(a, b, a >= b ? 0 : 1, max(a, b))"),
+        ("3d_sdf_op_intersection_smooth", "SDF Intersection Smooth", &[("sdf_1", "sdf"), ("sdf_2", "sdf"), ("smoothness", "f1=0")], "a = sdf(sdf_1); b = sdf(sdf_2); k = max(smoothness, 0); h = k > 0 ? saturate(0.5 - 0.5 * (b - a) / k) : (a >= b ? 1 : 0); sdf_mix(a, b, 1 - h, lerp(b, a, h) + k * h * (1 - h))"),
+        ("3d_sdf_op_intersection_surface", "SDF Intersection Surface", &[("base_sdf", "sdf"), ("intersecting_sdf", "sdf"), ("thickness", "f1=0.02")], "a = sdf(base_sdf); b = sdf(intersecting_sdf); sdf_mix(a, b, 0, max(abs(a) - thickness, b))"),
+        ("3d_sdf_op_morph", "SDF Morph", &[("base_sdf", "sdf"), ("target_sdf", "sdf"), ("mix_factor", "f1=0")], "a = sdf(base_sdf); b = sdf(target_sdf); sdf_mix(a, b, mix_factor, lerp(a, b, mix_factor))"),
+        ("3d_sdf_op_repeat_mirror", "SDF Repeat Mirror", &[("sdf", "sdf"), ("amount_plus", "i3=2,0,0"), ("amount_minus", "i3=2,0,0"), ("spacing", "f3=2,2,2"), ("origin_position", "f3=0,0,0"), ("P", "f3")], "q = P - origin_position; i = clamp(round(q / spacing), -float(amount_minus), float(amount_plus)); sdf(sdf, (q - spacing * i) * (1 - 2 * mod(i, 2)) + origin_position)"),
+        ("3d_sdf_op_rounding", "SDF Rounding", &[("sdf", "sdf"), ("radius", "f1=0.05")], "sdf(sdf) - radius"),
+        ("3d_sdf_op_shell", "SDF Shell", &[("sdf", "sdf"), ("thickness", "f1=0.02")], "abs(sdf(sdf)) - thickness"),
+        ("3d_sdf_op_subtraction", "SDF Subtraction", &[("sdf_1", "sdf"), ("sdf_2", "sdf")], "a = sdf(sdf_1); b = sdf(sdf_2); sdf_mix(a, b, 0, max(a, -b))"),
+        ("3d_sdf_op_subtraction_smooth", "SDF Subtraction Smooth", &[("sdf_1", "sdf"), ("sdf_2", "sdf"), ("smoothness", "f1=0")], "a = sdf(sdf_1); b = sdf(sdf_2); c = -b; k = max(smoothness, 0); h = k > 0 ? saturate(0.5 - 0.5 * (c - a) / k) : (a >= c ? 1 : 0); sdf_mix(a, b, 0, lerp(c, a, h) + k * h * (1 - h))"),
+        ("3d_sdf_op_symmetry", "SDF Symmetry", &[("sdf", "sdf"), ("mirror_plane_position", "f3=0,0,0"), ("mirror_axis", "i3=1,0,0"), ("flip_axis", "i3=0,0,0"), ("pre_offset", "f3=0,0,0"), ("P", "f3")], "m = saturate(abs(float(mirror_axis))); f = 1 - 2 * saturate(abs(float(flip_axis))); r = 1 - 2 * m; q = (P - mirror_plane_position) * f; o = mirror_plane_position - pre_offset; d1 = sdf(sdf, q + o); d2 = m.x > 0 ? sdf_union(d1, sdf(sdf, q * vec3(r.x, 1, 1) + o)) : d1; d3 = m.y > 0 ? sdf_union(d2, sdf_union(sdf(sdf, q * vec3(1, r.y, 1) + o), sdf(sdf, q * vec3(r.x, r.y, 1) + o))) : d2; m.z > 0 ? sdf_union(d3, sdf_union(sdf_union(sdf(sdf, q * vec3(1, 1, r.z) + o), sdf(sdf, q * vec3(r.x, 1, r.z) + o)), sdf_union(sdf(sdf, q * vec3(1, r.y, r.z) + o), sdf(sdf, q * vec3(r.x, r.y, r.z) + o)))) : d3"),
+        ("3d_sdf_op_union", "SDF Union", &[("sdf_1", "sdf"), ("sdf_2", "sdf")], "a = sdf(sdf_1); b = sdf(sdf_2); sdf_union(a, b)"),
+        ("3d_sdf_op_union_chamfer", "SDF Union Chamfer", &[("sdf_1", "sdf"), ("sdf_2", "sdf"), ("radius", "f1=0")], "a = sdf(sdf_1); b = sdf(sdf_2); sdf_mix(a, b, a <= b ? 0 : 1, radius > 0 ? min(min(a, b), (a + b - radius) * 0.70710678) : min(a, b))"),
+        ("3d_sdf_op_union_smooth", "SDF Union Smooth", &[("sdf_1", "sdf"), ("sdf_2", "sdf"), ("smoothness", "f1=0")], "a = sdf(sdf_1); b = sdf(sdf_2); k = max(smoothness, 0); h = k > 0 ? saturate(0.5 + 0.5 * (b - a) / k) : (a <= b ? 1 : 0); sdf_mix(a, b, 1 - h, lerp(b, a, h) - k * h * (1 - h))"),
+    ]),
+    ("Functions/SDF/Transforms", &[
+        ("3d_sdf_transform_bend", "SDF Bend", &[("sdf", "sdf"), ("angle", "f1=0"), ("start", "f1=0"), ("end", "f1=0"), ("P", "f3")], "t = end > start ? saturate((P.z - start) / (end - start)) : (P.z < start ? 0 : 1); c = vec3(0, 0, start); sdf(sdf, mc_sdf_rotate(P - c, vec3(0, 1, 0), -angle * t) + c)"),
+        ("3d_sdf_transform_elongate", "SDF Elongate", &[("sdf", "sdf"), ("elongation", "f3=0,0,0"), ("center_position", "f3=0,0,0"), ("P", "f3")], "q = P - center_position; sdf(sdf, q - clamp(q, min(elongation, 0), max(elongation, 0)) + center_position)"),
+        ("3d_sdf_transform_flip", "SDF Flip", &[("sdf", "sdf"), ("mirror_axis", "i3=1,0,0"), ("P", "f3")], "sdf(sdf, P * (1 - 2 * saturate(abs(float(mirror_axis)))))"),
+        ("3d_sdf_transform_offset", "SDF Offset", &[("sdf", "sdf"), ("offset", "f3=0,0,0"), ("P", "f3")], "sdf(sdf, P - offset)"),
+        ("3d_sdf_transform_offset_p", "SDF Offset P", &[("offset", "f3=0,0,0"), ("P", "f3")], "P - offset"),
+        ("3d_sdf_transform_rotate", "SDF Rotate", &[("sdf", "sdf"), ("angle", "f1=0"), ("axis", "f3=0,1,0"), ("pivot_position", "f3=0,0,0"), ("P", "f3")], "sdf(sdf, mc_sdf_rotate(P - pivot_position, axis, -angle) + pivot_position)"),
+        ("3d_sdf_transform_rotate_p", "SDF Rotate P", &[("angle", "f1=0"), ("axis", "f3=0,1,0"), ("pivot_position", "f3=0,0,0"), ("P", "f3")], "mc_sdf_rotate(P - pivot_position, axis, -angle) + pivot_position"),
+        ("3d_sdf_transform_scale", "SDF Scale", &[("sdf", "sdf"), ("scale", "f1=1"), ("pivot_position", "f3=0,0,0"), ("P", "f3")], "sdf(sdf, (P - pivot_position) / scale + pivot_position) * scale"),
+        ("3d_sdf_transform_twist", "SDF Twist", &[("sdf", "sdf"), ("angle", "f1=0"), ("start", "f1=0"), ("end", "f1=0"), ("P", "f3")], "t = end > start ? saturate((P.z - start) / (end - start)) : (P.z < start ? 0 : 1); sdf(sdf, mc_sdf_rotate(P, vec3(0, 0, 1), -angle * t))"),
+    ]),
+    ("Functions/SDF/Material", &[
+        ("3d_sdf_set_color", "SDF Set Color", &[("sdf_scene", "sdf"), ("base_color", "f3=1,1,1")], "sdf_set_color(sdf(sdf_scene), base_color)"),
+        ("3d_sdf_set_id", "SDF Set Material ID", &[("sdf_scene", "sdf"), ("id", "i1=0")], "sdf_set_id(sdf(sdf_scene), id)"),
+        ("3d_sdf_set_material", "SDF Set Material", &[("sdf_scene", "sdf"), ("base_color", "f3=1,1,1"), ("metalness", "f1=0"), ("roughness", "f1=0.5")], "sdf_set_roughness(sdf_set_metalness(sdf_set_color(sdf(sdf_scene), base_color), metalness), roughness)"),
+        ("3d_sdf_set_metalness", "SDF Set Metalness", &[("sdf_scene", "sdf"), ("metalness", "f1=0")], "sdf_set_metalness(sdf(sdf_scene), metalness)"),
+        ("3d_sdf_set_roughness", "SDF Set Roughness", &[("sdf_scene", "sdf"), ("roughness", "f1=0.5")], "sdf_set_roughness(sdf(sdf_scene), roughness)"),
+    ]),
+    // helpers
+    ("", &[
+        // distance from p to the segment a..b
+        ("mc_sdf_seg", "SDF Segment", &[("p", "f3"), ("a", "f3"), ("b", "f3")], "pa = p - a; ba = b - a; length(pa - ba * saturate(dot(pa, ba) / dot(ba, ba)))"),
+        ("mc_sdf_seg2", "SDF Segment 2D", &[("p", "f2"), ("a", "f2"), ("b", "f2")], "pa = p - a; ba = b - a; length(pa - ba * saturate(dot(pa, ba) / dot(ba, ba)))"),
+        // a solid of revolution with straight sides, in its (radius, height) half plane: the nearest of its three
+        // edges, base radius ra at height 0, top radius rb at height top
+        ("mc_sdf_lathe", "SDF Lathe", &[("r", "f1"), ("h", "f1"), ("ra", "f1"), ("rb", "f1"), ("top", "f1")], "p = vec2(r, h); d = min(mc_sdf_seg2(p, vec2(0, 0), vec2(ra, 0)), min(mc_sdf_seg2(p, vec2(0, top), vec2(rb, top)), mc_sdf_seg2(p, vec2(ra, 0), vec2(rb, top)))); (h > 0 && h < top && r < ra + (rb - ra) * h / top) ? 0 - d : d"),
+        // the same solid around the axis a..b
+        ("mc_sdf_cone2", "SDF Lathe 2 Points", &[("p", "f3"), ("a", "f3"), ("b", "f3"), ("ra", "f1"), ("rb", "f1")], "pa = p - a; ba = b - a; l = length(ba); h = dot(pa, ba) / l; mc_sdf_lathe(sqrt(dot(pa, pa) - h * h), h, ra, rb, l)"),
+        // a box of half size b around the origin
+        ("mc_sdf_box", "SDF Box", &[("q", "f3"), ("b", "f3")], "d = abs(q) - b; length(max(d, 0)) + min(max(d.x, max(d.y, d.z)), 0)"),
+        // a 2D shape of distance d extruded by half height h around z = 0
+        ("mc_sdf_extrude", "SDF Extrude", &[("d", "f1"), ("z", "f1"), ("h", "f1")], "w = vec2(d, abs(z) - h); min(max(w.x, w.y), 0) + length(max(w, 0))"),
+        // unsigned distance to a triangle: to its plane above it, else to the nearest edge
+        ("mc_sdf_tri", "SDF Triangle", &[("p", "f3"), ("a", "f3"), ("b", "f3"), ("c", "f3")], "ab = b - a; bc = c - b; ca = a - c; n = cross(ab, c - a); (dot(cross(ab, n), p - a) <= 0 && dot(cross(bc, n), p - b) <= 0 && dot(cross(ca, n), p - c) <= 0) ? abs(dot(n, p - a)) / length(n) : min(mc_sdf_seg(p, a, b), min(mc_sdf_seg(p, b, c), mc_sdf_seg(p, c, a)))"),
+        // a pyramid of base half sizes a, b at z = 0: folded into one quadrant, the base and two faces are nearest
+        ("mc_sdf_pyramid", "SDF Pyramid Solid", &[("q", "f3"), ("h", "f1"), ("a", "f1"), ("b", "f1")], "u = vec3(abs(q.x), abs(q.y), q.z); top = vec3(0, 0, h); c = vec3(a, b, 0); d = min(mc_sdf_box(u, c), min(mc_sdf_tri(u, vec3(a, 0, 0), c, top), mc_sdf_tri(u, c, vec3(0, b, 0), top))); (u.z > 0 && u.x * h + u.z * a < a * h && u.y * h + u.z * b < b * h) ? 0 - d : d"),
+        // v rotated around an axis through the origin, in turns (right-handed)
+        ("mc_sdf_rotate", "SDF Rotate Vector", &[("v", "f3"), ("axis", "f3"), ("turns", "f1")], "k = normalize(axis); a = turns * tau; c = cos(a); v * c + cross(k, v) * sin(a) + k * (dot(k, v) * (1 - c))"),
+        // the mixing step of the Hash functions: a seed scattered by an irrational step, then three rounds of
+        // fract(x * (x + c) * k) that stretch every small difference past a whole period, so neighbouring seeds land
+        // far apart; constants chosen by testing the spread of integer, fractional and grid seeds
+        ("mc_hash_mix", "Hash Mix", &[("x", "f1")], "h0 = fract(x * 0.6180339 + 0.3561); h1 = fract(h0 * (h0 + 53.71) * 3.1173); h2 = fract(h1 * (h1 + 29.37) * 1.7311); fract(h2 * (h2 + 41.13) * 2.3917)"),
+    ]),
 ];
