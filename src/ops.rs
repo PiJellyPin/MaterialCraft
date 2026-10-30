@@ -763,6 +763,54 @@ pub fn ambient_occlusion(h: &Tex, radius: f32, intensity: f32) -> Tex {
     gray_combine(&g, &b, |g, b| (1.0 - (b - g) * intensity).clamp(0.0, 1.0))
 }
 
+/// The blur AO with the extras of the library AO graphs. `bands` weighs the fine (blur of radius / 4), middle
+/// (radius / 4 .. radius / 2) and large (radius / 2 .. radius) parts of the occlusion: -1 drops a part, +1 doubles it,
+/// all zero is [`ambient_occlusion`]. `shift` (whole pixels) is where the neighbourhood is read: towards a light, so
+/// the sides facing away from it darken. The GPU kernel (`opa::AO_BANDS`) does the same sums.
+pub fn ambient_occlusion_ex(h: &Tex, radius: f32, intensity: f32, bands: [f32; 3], shift: (i64, i64)) -> Tex {
+    let flat = bands.iter().all(|e| e.abs() < 1e-6);
+    if flat && shift == (0, 0) {
+        return ambient_occlusion(h, radius, intensity);
+    }
+    let g = to_gray(h);
+    let b = blur(&g, radius);
+    let (b2, b4) = if flat { (b.clone(), b.clone()) } else { (blur(&g, radius * 0.5), blur(&g, radius * 0.25)) };
+    let (w, hh) = (g.w, g.h);
+    let mut px = vec![[0.0f32; 4]; g.px.len()];
+    crate::tex::par_rows(&mut px, w.max(1), |start, piece| {
+        for (j, o) in piece.iter_mut().enumerate() {
+            let i = start + j;
+            let (x, y) = ((i % w) as i64, (i / w) as i64);
+            let k = ((y + shift.1).rem_euclid(hh as i64) as usize) * w + (x + shift.0).rem_euclid(w as i64) as usize;
+            let (v, v1, v2, v4) = (g.px[i][0], b.px[k][0], b2.px[k][0], b4.px[k][0]);
+            let occ = if flat { v1 - v } else { (1.0 + bands[0]) * (v4 - v) + (1.0 + bands[1]) * (v2 - v4) + (1.0 + bands[2]) * (v1 - v2) };
+            let a = (1.0 - occ * intensity).clamp(0.0, 1.0);
+            *o = [a, a, a, 1.0];
+        }
+    });
+    Tex { w, h: hh, px }
+}
+
+/// Whole-pixel offset towards a light at `angle` (turns, the same direction as Emboss), `amount` times twice the
+/// AO radius away.
+pub fn ao_light_shift(amount: f32, angle: f32, radius: f32) -> (i64, i64) {
+    let d = amount.max(0.0) * radius * 2.0;
+    let (s, c) = (angle * TAU).sin_cos();
+    ((c * d).round() as i64, (s * d).round() as i64)
+}
+
+/// Levels of an AO result as [`levels`] arguments (input low, high, gamma, output low, high), from an input
+/// low / midpoint / high and an output range; `None` when they leave it unchanged. The midpoint is where in the
+/// input range the value that becomes half way lies (0.5: the middle, no gamma), so it follows the low and high
+/// points: above the middle darkens, below it lightens.
+pub fn ao_levels(lo: f32, mid: f32, hi: f32, out_lo: f32, out_hi: f32) -> Option<(f32, f32, f32, f32, f32)> {
+    if lo.abs() < 1e-6 && (mid - 0.5).abs() < 1e-6 && (hi - 1.0).abs() < 1e-6 && out_lo.abs() < 1e-6 && (out_hi - 1.0).abs() < 1e-6 {
+        return None;
+    }
+    let t = mid.clamp(0.01, 0.99);
+    Some((lo, hi, t.ln() / 0.5f32.ln(), out_lo, out_hi))
+}
+
 pub fn curvature(h: &Tex, radius: f32, intensity: f32) -> Tex {
     let g = to_gray(h);
     let b = blur(&g, radius);

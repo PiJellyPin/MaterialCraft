@@ -155,6 +155,11 @@ fn every_gpu_node_matches_the_cpu_and_runs_resident() {
         ("node 3 ao in=@1 mode=1 quality=2 hbao_radius=1 height_depth=0.05", 1e-3, 2),
         ("node 3 ao in=@1 mode=1 quality=0 hbao_radius=0", 1e-3, 2),
         ("node 3 ao in=@1 mode=1 quality=1 use_world_units=1 height_depth_cm=10 surface_size=100", 1e-3, 2),
+        ("node 3 ao in=@1 mode=0 radius=40 intensity=4", 1e-2, 2),
+        ("node 3 ao in=@1 mode=0 radius=40 intensity=4 light_intensity=0.5 light_angle=0.3", 1e-2, 2),
+        ("node 3 ao in=@1 mode=0 radius=100 intensity=4 band_fine=1 band_mid=-0.5 band_large=0.5", 1e-2, 2),
+        ("node 3 ao in=@1 mode=0 radius=40 intensity=4 levels_low=0.1 levels_mid=0.6 levels_high=0.9 out_low=0.2 out_high=0.8", 1e-2, 2),
+        ("node 3 ao in=@1 mode=1 quality=1 levels_mid=0.3 out_low=0.1", 1e-3, 2),
     ];
     let mut failures = Vec::new();
     // Strict point-operation comparisons must account for the actual error of their upstream FBM.
