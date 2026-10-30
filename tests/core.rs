@@ -1468,3 +1468,13 @@ fn colorspace_conversion_roundtrips_and_keeps_alpha() {
     assert!(colorspace::is_color_output("basecolor") && !colorspace::is_color_output("normal"));
 }
 
+
+#[test]
+fn rgba_merge_takes_the_alpha_from_a_grey_map() {
+    // a grey map's own alpha is 1: the alpha slot reads its grey value
+    let g = Graph::parse("size 32\nnode 1 fbm scale=4 seed=5\nnode 2 merge r=@1 g=@1 b=@1 a=@1\noutput basecolor 2\n").unwrap();
+    let out = g.evaluate(None).unwrap();
+    let t = &out["basecolor"];
+    assert!(t.px.iter().all(|p| (p[3] - p[0]).abs() < 1e-5), "alpha follows the grey map");
+    assert!(t.px.iter().any(|p| p[3] < 0.9));
+}

@@ -156,3 +156,19 @@ fn the_2d_view_picture_is_made_on_the_device() {
         assert!((lo - wlo).abs() < 1e-6 && (hi - whi).abs() < 1e-6, "range {lo}..{hi} vs {wlo}..{whi}");
     }
 }
+
+#[test]
+fn rgba_merge_on_the_device_takes_the_alpha_from_a_grey_map() {
+    let Some(_guard) = setup() else { return };
+    let g = Graph::parse("size 64
+node 1 fbm scale=4 seed=5
+node 2 merge r=@1 g=@1 b=@1 a=@1
+output basecolor 2
+").unwrap();
+    let r = g.evaluate_all_cached_ex(64, &[2], &[2], 0, &Arc::new(NodeCache::new(64)), None, true, &mut |_| {});
+    let p = r.pending.get(&2).expect("deferred");
+    assert!(p.device().is_some(), "merged on the device");
+    let t = p.tex().unwrap();
+    assert!(t.px.iter().all(|q| (q[3] - q[0]).abs() < 2e-3), "alpha follows the grey map");
+    assert!(t.px.iter().any(|q| q[3] < 0.9));
+}
