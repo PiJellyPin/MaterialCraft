@@ -12,6 +12,7 @@ use materialcraft::tex::{self, Tex};
 use materialcraft::export::{self, Format};
 use materialcraft::gpu3d::{self, DevInputs, MapInputs};
 use materialcraft::{ops, png};
+use materialcraft::user_templates::{self, UserTemplate};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
@@ -246,6 +247,10 @@ enum Act {
     ClosePkg(usize),
     /// Start a new package from one of the New dialog's templates (index into `TEMPLATES`).
     NewFromTemplate(usize),
+    /// Start a new package from one of the user's own templates (its file).
+    NewFromUserTemplate(PathBuf),
+    /// Save a graph of an open package (index, graph name or None for its main graph) as a template of the New dialog.
+    SaveAsTemplate(usize, Option<String>),
     /// Export the maps of a graph of an open package (package index, graph name or None for its main graph).
     ExportMaps(usize, Option<String>),
     /// Save one graph of an open package as a package of its own (with the graphs and functions it needs).
@@ -452,6 +457,8 @@ struct App {
     confirm_close: Option<usize>,
     /// the rename box of the Explorer: (package index, graph, new name being typed)
     rename_graph: Option<(usize, String, String)>,
+    /// the "Save as template" box: (package index, graph or None for its main graph, template name being typed)
+    save_tmpl: Option<(usize, Option<String>, String)>,
     dirty: bool,
     /// the selected node changed and nothing else: only the 2D view needs another node's cached picture
     view_pending: bool,
@@ -603,6 +610,7 @@ impl App {
             unsaved_name: "Unsaved Package".into(),
             confirm_close: None,
             rename_graph: None,
+            save_tmpl: None,
             dirty: true,
             view_pending: false,
             view_only_next: false,
@@ -626,7 +634,7 @@ impl App {
             import_view: None,
             ctl: None,
             screen: if skip_home { Screen::Editor } else { Screen::Home },
-            new_dlg: NewDlg { open: false, sel: 1, name: "Graph".into(), size: 2048, height: 0, depth16: false, dest: None },
+            new_dlg: NewDlg { open: false, sel: 1, user: Vec::new(), name: "Graph".into(), size: 2048, height: 0, depth16: false, dest: None },
             recent,
             home_filter: String::new(),
             home_page: 0,

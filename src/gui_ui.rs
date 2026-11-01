@@ -1039,6 +1039,11 @@ impl App {
             Act::NewOutput(usage, from) => self.new_output(&usage, from),
             Act::View3dNode(id) => self.toggle_view3d_node(id),
             Act::NewFromTemplate(i) => self.new_from_template(i),
+            Act::NewFromUserTemplate(p) => self.new_from_user_template(p),
+            Act::SaveAsTemplate(i, name) => {
+                let tname = name.clone().or_else(|| self.package_root(i).map(|r| materialcraft::sbs_native::graph_name(&r))).unwrap_or_default();
+                self.save_tmpl = Some((i, name, tname.rsplit('/').next().unwrap_or("").to_string()));
+            }
             Act::ExportMaps(i, name) => {
                 self.export.target = Some((i, name));
                 self.export.open = true;

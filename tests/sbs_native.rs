@@ -246,3 +246,41 @@ fn a_pass_through_reads_one_output_of_a_material_node() {
     assert!((px(102)[0] - 0.7).abs() < 1e-4, "glossiness follows roughness");
     assert_eq!(px(103), [0.5, 0.5, 1.0, 1.0]);
 }
+
+#[test]
+fn a_graph_saved_as_template_starts_new_projects() {
+    use materialcraft::user_templates;
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("user_templates_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(user_templates::list(&dir).is_empty(), "no folder yet: no templates");
+    let mut g = sbs_native::new_package("brick_base", 64);
+    sbs_native::add_output(&mut g, "baseColor", Some("albedo"), [0.0, 0.0]);
+    sbs_native::add_output(&mut g, "roughness", None, [0.0, 80.0]);
+    let mut n = Node { kind: "sbs:uniform".into(), ..Default::default() };
+    n.strs.insert("outputcolor".into(), PVal::Const { ty: PTy::F(4), raw: "1 0 0 1".into(), rel: None }.enc());
+    g.nodes.insert(7, n);
+
+    assert!(user_templates::save(&dir, "  ", &g, "brick_base").is_err(), "a template needs a name");
+    let p = user_templates::save(&dir, "My Bricks/v2", &g, "brick_base").unwrap();
+    assert_eq!(p.file_name().unwrap(), "My Bricks_v2.sbs", "unsafe characters leave the file name");
+    let list = user_templates::list(&dir);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].name, "My Bricks_v2");
+    assert_eq!(user_templates::outputs(&list[0]).unwrap(), ["albedo", "roughness"]);
+
+    // a new project: a copy with the graph renamed, the nodes and outputs kept
+    let copy = user_templates::instantiate(&list[0], "Wall 01").unwrap();
+    assert_eq!(sbs_native::graph_name(&copy), "Wall_01");
+    assert_eq!(copy.nodes.values().filter(|n| n.kind == "sbs:uniform").count(), 1);
+    assert_eq!(copy.output_idents(), ["albedo", "roughness"]);
+    // or a graph added to a package that is open
+    let mut other = sbs_native::new_package("other", 64);
+    let (first, added, _) = sbs_native::add_package(&mut other, copy).unwrap();
+    assert_eq!((first.as_str(), added), ("Wall_01", 1));
+    assert!(other.subgraphs.contains_key("Wall_01"));
+
+    // saving under the same name replaces the template
+    user_templates::save(&dir, "My Bricks/v2", &g, "brick_base").unwrap();
+    assert_eq!(user_templates::list(&dir).len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
