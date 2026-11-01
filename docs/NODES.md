@@ -447,7 +447,11 @@ Spline, path and splatter data travel between these nodes as images in MaterialC
 | `x_shadows` | Shadows | `shadows/shadows` | Input | output |
 | `x_smart_auto_tile` | Smart Auto Tile | `smart_auto_tile/smart_auto_tile` | baseColor, normal, height, mask | baseColor, normal, height, pattern |
 | `x_srgb_to_acescg` | Srgb To Acescg | `color_space_conversion/srgb_to_acescg` | input | output |
+| `x_triplanar` | Triplanar | `triplanar/triplanar` | position, ws_normal, input | output |
+| `x_triplanar_2` | Triplanar 2 | `triplanar/triplanar_2` | position, ws_normal, input | output |
 | `x_triplanar_3` | Triplanar 3 | `triplanar/triplanar_3` | position, ws_normal, input_x, input_y, input_z | output |
+| `x_triplanar_grayscale` | Triplanar Grayscale | `triplanar/triplanar_grayscale` | position, ws_normal, input | output |
+| `x_triplanar_grayscale_2` | Triplanar Grayscale 2 | `triplanar/triplanar_grayscale_2` | position, ws_normal, input | output |
 | `x_triplanar_grayscale_3` | Triplanar Grayscale 3 | `triplanar/triplanar_grayscale_3` | position, ws_normal, input_x, input_y, input_z | output |
 | `x_uv_mapper_color` | UV Mapper Color | `uv_mapper/uv_mapper_color` | uv, input | output |
 | `x_uv_mapper_grayscale` | UV Mapper Grayscale | `uv_mapper/uv_mapper_grayscale` | uv, input | output |
