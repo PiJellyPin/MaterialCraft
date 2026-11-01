@@ -102,7 +102,9 @@ fn tile_random(cx: &Cx, colour: bool) -> Tex {
     let (scale, scale_r) = (cx.f("shape_scale").clamp(0.0, 1.0), cx.f("shape_scale_random").clamp(0.0, 1.0));
     let (rot, rot_r) = (cx.f("shape_rotation"), cx.f("shape_rotation_random"));
     let keep_apart = cx.b("shape_rotation_constraint");
-    let (off, off_r) = (cx.f("position_offset"), cx.f("position_offset_random"));
+    // offsets are in tiles; far beyond the picture they only waste work, and an absurd value would overflow the
+    // pixel box below
+    let (off, off_r) = (cx.f("position_offset").clamp(-64.0, 64.0), cx.f("position_offset_random").clamp(-64.0, 64.0));
     let (pos_r, touching) = (cx.f("position_random").clamp(0.0, 1.0), cx.b("position_random_constraints"));
     let (mask_r, mask_inv) = (cx.f("mask_random").clamp(0.0, 1.0), cx.b("mask_invert"));
     let (par, par_k) = (cx.i("pattern_color_parametrisation"), cx.f("pattern_color_parametrisation_intensity"));
