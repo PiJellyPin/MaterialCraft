@@ -190,6 +190,27 @@ enum Ic {
     GraphIcon,
 }
 
+/// Transparency checkerboard over `r` (only its part inside `clip`); the squares are fixed on screen size and start at
+/// the picture's corner, so they move with it.
+fn checker(p: &egui::Painter, r: Rect, clip: Rect) {
+    let vis = r.intersect(clip);
+    if !vis.is_positive() {
+        return;
+    }
+    const S: f32 = 10.0;
+    p.rect_filled(vis, 0.0, Color32::from_gray(62));
+    let (i0, i1) = (((vis.min.x - r.min.x) / S).floor() as i64, ((vis.max.x - r.min.x) / S).ceil() as i64);
+    let (j0, j1) = (((vis.min.y - r.min.y) / S).floor() as i64, ((vis.max.y - r.min.y) / S).ceil() as i64);
+    for j in j0..j1 {
+        for i in i0..i1 {
+            if (i + j) % 2 == 0 {
+                let c = Rect::from_min_size(pos2(r.min.x + i as f32 * S, r.min.y + j as f32 * S), vec2(S, S)).intersect(vis);
+                p.rect_filled(c, 0.0, Color32::from_gray(98));
+            }
+        }
+    }
+}
+
 fn draw_icon(p: &egui::Painter, c: Pos2, ic: Ic, col: Color32) {
     let st = Stroke::new(1.4_f32, col);
     let r = |dx: f32, dy: f32, w: f32, h: f32| Rect::from_min_size(pos2(c.x + dx, c.y + dy), vec2(w, h));
@@ -1483,12 +1504,21 @@ impl App {
         let aspect = if self.tex2d_size.0 > 0 && self.tex2d_size.1 > 0 { self.tex2d_size.1 as f32 / self.tex2d_size.0 as f32 } else { 1.0 };
         let img_size = if aspect <= 1.0 { vec2(side, side * aspect) } else { vec2(side / aspect, side) };
         let img = Rect::from_center_size(rect.center() + self.pan2d, img_size);
-        if let Some(t) = &self.tex2d {
+        // with the Alpha toggle off a picture with alpha is shown opaque; on, over a checkerboard
+        let alpha = self.alpha2d && self.tex2d_opaque.is_some();
+        let shown = if alpha { self.tex2d.as_ref() } else { self.tex2d_opaque.as_ref().or(self.tex2d.as_ref()) };
+        if let Some(t) = shown {
             let uv = if self.tile_preview { Rect::from_min_max(pos2(-0.5, -0.5), pos2(1.5, 1.5)) } else { Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)) };
             if self.tile_preview {
                 let big = Rect::from_center_size(img.center(), img.size() * 2.0);
+                if alpha {
+                    checker(&painter, big, rect);
+                }
                 painter.image(t.id(), big, Rect::from_min_max(pos2(0.0, 0.0), pos2(2.0, 2.0)), Color32::WHITE);
             } else {
+                if alpha {
+                    checker(&painter, img, rect);
+                }
                 painter.image(t.id(), img, uv, Color32::WHITE);
             }
             painter.rect_stroke(img, 0.0, Stroke::new(1.0_f32, Color32::from_gray(70)), egui::StrokeKind::Inside);
@@ -1516,6 +1546,14 @@ impl App {
                 let before = self.tile_preview;
                 if icon_btn(ui, Ic::Grid, "Tile 2x2 preview", true).clicked() {
                     self.tile_preview = !before;
+                }
+                if self.tex2d_opaque.is_some()
+                    && ui
+                        .selectable_label(self.alpha2d, egui::RichText::new("Alpha").small())
+                        .on_hover_text("This result has an alpha channel. On: transparent pixels show a checkerboard. Off: the colours are shown fully opaque.")
+                        .clicked()
+                {
+                    self.alpha2d = !self.alpha2d;
                 }
                 let shown = if self.prev_size == 0 { format!("{}px (graph)", self.preview_full()) } else { format!("{}px", self.prev_size) };
                 egui::ComboBox::from_id_salt("psize").width(110.0).selected_text(shown).show_ui(ui, |ui| {

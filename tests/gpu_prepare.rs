@@ -61,26 +61,41 @@ fn device_maps_equal_host_maps() {
     let up = |t: &Tex| gpu::upload(t).unwrap();
     let (gb, gn, gr, gm, ga, ge, gh) = (up(&base), up(&normal), up(&rough), up(&metal), up(&ao), up(&emis), up(&height));
     // everything present
-    let host = prepare(&MapInputs { base: Some(&base), normal: Some(&normal), rough: Some(&rough), metal: Some(&metal), ao: Some(&ao), emissive: Some(&emis), height: Some(&height) });
-    let dev = prepare_dev(&DevInputs { base: Some(&gb), normal: Some(&gn), flip_normal_g: false, rough: Some(&gr), rough_invert: false, metal: Some(&gm), ao: Some(&ga), emissive: Some(&ge), height: Some(&gh) }).expect("device maps");
+    let host = prepare(&MapInputs { base: Some(&base), normal: Some(&normal), rough: Some(&rough), metal: Some(&metal), ao: Some(&ao), emissive: Some(&emis), height: Some(&height), opacity: None });
+    let dev = prepare_dev(&DevInputs { base: Some(&gb), normal: Some(&gn), flip_normal_g: false, rough: Some(&gr), rough_invert: false, metal: Some(&gm), ao: Some(&ga), emissive: Some(&ge), height: Some(&gh), opacity: None }).expect("device maps");
     same(&host, &read_packed(&dev).expect("packed on device"));
     // a DirectX normal map is flipped and glossiness becomes roughness
     let flipped = ops::flip_green(&normal);
     let inv = ops::invert(&rough);
-    let host = prepare(&MapInputs { base: Some(&base), normal: Some(&flipped), rough: Some(&inv), metal: None, ao: None, emissive: None, height: None });
-    let dev = prepare_dev(&DevInputs { base: Some(&gb), normal: Some(&gn), flip_normal_g: true, rough: Some(&gr), rough_invert: true, metal: None, ao: None, emissive: None, height: None }).expect("device maps");
+    let host = prepare(&MapInputs { base: Some(&base), normal: Some(&flipped), rough: Some(&inv), metal: None, ao: None, emissive: None, height: None, opacity: None });
+    let dev = prepare_dev(&DevInputs { base: Some(&gb), normal: Some(&gn), flip_normal_g: true, rough: Some(&gr), rough_invert: true, metal: None, ao: None, emissive: None, height: None, opacity: None }).expect("device maps");
     same(&host, &read_packed(&dev).expect("packed on device"));
     // missing maps take the same defaults
-    let host = prepare(&MapInputs { base: None, normal: None, rough: None, metal: Some(&metal), ao: None, emissive: None, height: Some(&height) });
-    let dev = prepare_dev(&DevInputs { base: None, normal: None, flip_normal_g: false, rough: None, rough_invert: false, metal: Some(&gm), ao: None, emissive: None, height: Some(&gh) }).expect("device maps");
+    let host = prepare(&MapInputs { base: None, normal: None, rough: None, metal: Some(&metal), ao: None, emissive: None, height: Some(&height), opacity: None });
+    let dev = prepare_dev(&DevInputs { base: None, normal: None, flip_normal_g: false, rough: None, rough_invert: false, metal: Some(&gm), ao: None, emissive: None, height: Some(&gh), opacity: None }).expect("device maps");
     same(&host, &read_packed(&dev).expect("packed on device"));
     // nothing but a height map
-    let host = prepare(&MapInputs { base: None, normal: None, rough: None, metal: None, ao: None, emissive: None, height: Some(&height) });
-    let dev = prepare_dev(&DevInputs { base: None, normal: None, flip_normal_g: false, rough: None, rough_invert: false, metal: None, ao: None, emissive: None, height: Some(&gh) }).expect("device maps");
+    let host = prepare(&MapInputs { base: None, normal: None, rough: None, metal: None, ao: None, emissive: None, height: Some(&height), opacity: None });
+    let dev = prepare_dev(&DevInputs { base: None, normal: None, flip_normal_g: false, rough: None, rough_invert: false, metal: None, ao: None, emissive: None, height: Some(&gh), opacity: None }).expect("device maps");
     same(&host, &read_packed(&dev).expect("packed on device"));
+    // opacity: the opacity map's luminance goes to the base colour's alpha, else the base colour keeps its own alpha
+    let op = colour(n, 17);
+    let go = up(&op);
+    let host = prepare(&MapInputs { base: Some(&base), normal: None, rough: None, metal: None, ao: None, emissive: None, height: None, opacity: Some(&op) });
+    let dev = prepare_dev(&DevInputs { base: Some(&gb), normal: None, flip_normal_g: false, rough: None, rough_invert: false, metal: None, ao: None, emissive: None, height: None, opacity: Some(&go) }).expect("device maps");
+    let (hp, dp) = (host, read_packed(&dev).expect("packed on device"));
+    same(&hp, &dp);
+    assert!(hp.base.chunks_exact(4).any(|p| p[3] < 250), "the opacity map reaches the alpha");
+    let see = Tex::from_fn(n, n, |u, v| [u, v, 0.5, noise::perlin(u, v, 3, 3, 21)]);
+    let gs = up(&see);
+    let host = prepare(&MapInputs { base: Some(&see), normal: None, rough: None, metal: None, ao: None, emissive: None, height: None, opacity: None });
+    let dev = prepare_dev(&DevInputs { base: Some(&gs), normal: None, flip_normal_g: false, rough: None, rough_invert: false, metal: None, ao: None, emissive: None, height: None, opacity: None }).expect("device maps");
+    let (hp, dp) = (host, read_packed(&dev).expect("packed on device"));
+    same(&hp, &dp);
+    assert!(hp.base.chunks_exact(4).any(|p| p[3] < 250), "the base colour's own alpha is kept");
     // maps of different sizes are the host code's job (it resamples them)
     let small = gpu::upload(&colour(24, 2)).unwrap();
-    assert!(prepare_dev(&DevInputs { base: Some(&gb), normal: Some(&small), flip_normal_g: false, rough: None, rough_invert: false, metal: None, ao: None, emissive: None, height: None }).is_none());
+    assert!(prepare_dev(&DevInputs { base: Some(&gb), normal: Some(&small), flip_normal_g: false, rough: None, rough_invert: false, metal: None, ao: None, emissive: None, height: None, opacity: None }).is_none());
 }
 
 #[test]
@@ -140,4 +155,20 @@ fn the_2d_view_picture_is_made_on_the_device() {
         let (wlo, whi) = t.px.iter().fold((f32::MAX, f32::MIN), |m, p| (m.0.min(p[0]).min(p[1]).min(p[2]), m.1.max(p[0]).max(p[1]).max(p[2])));
         assert!((lo - wlo).abs() < 1e-6 && (hi - whi).abs() < 1e-6, "range {lo}..{hi} vs {wlo}..{whi}");
     }
+}
+
+#[test]
+fn rgba_merge_on_the_device_takes_the_alpha_from_a_grey_map() {
+    let Some(_guard) = setup() else { return };
+    let g = Graph::parse("size 64
+node 1 fbm scale=4 seed=5
+node 2 merge r=@1 g=@1 b=@1 a=@1
+output basecolor 2
+").unwrap();
+    let r = g.evaluate_all_cached_ex(64, &[2], &[2], 0, &Arc::new(NodeCache::new(64)), None, true, &mut |_| {});
+    let p = r.pending.get(&2).expect("deferred");
+    assert!(p.device().is_some(), "merged on the device");
+    let t = p.tex().unwrap();
+    assert!(t.px.iter().all(|q| (q[3] - q[0]).abs() < 2e-3), "alpha follows the grey map");
+    assert!(t.px.iter().any(|q| q[3] < 0.9));
 }

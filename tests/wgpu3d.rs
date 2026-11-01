@@ -25,7 +25,7 @@ fn viewer_draws_and_caches() {
     let metal = Tex::solid(n, n, [0.0, 0.0, 0.0, 1.0]);
     let ao = Tex::solid(n, n, [1.0; 4]);
     let height = Tex::gray_fn(n, n, |u, v| noise::perlin(u, v, 4, 4, 5));
-    let maps = gpu3d::prepare(&MapInputs { base: Some(&base), normal: Some(&normal), rough: Some(&rough), metal: Some(&metal), ao: Some(&ao), emissive: None, height: Some(&height) });
+    let maps = gpu3d::prepare(&MapInputs { base: Some(&base), normal: Some(&normal), rough: Some(&rough), metal: Some(&metal), ao: Some(&ao), emissive: None, height: Some(&height), opacity: None });
     let shared = gpu3d::new_shared();
     shared.lock().unwrap().set_maps(maps);
     let mut view = View { shape: 2, relief: 0, yaw: 0.35, pitch: 0.5, dist: 3.2, ..View::default() };
@@ -46,7 +46,7 @@ fn viewer_draws_and_caches() {
     // agreement with the software renderer: loose, the lighting models are not identical
     view.yaw = 0.35;
     let g = frame(&shared, w, h, &view).unwrap();
-    let m = Maps { base: &base, normal: &normal, rough: &rough, metal: &metal, ao: &ao, emissive: None, height: Some(&height), env: None };
+    let m = Maps { base: &base, normal: &normal, rough: &rough, metal: &metal, ao: &ao, emissive: None, height: Some(&height), opacity: None, env: None };
     let cpu = render3d::render(&m, &view, w, h);
     let (mut sum, mut cnt) = (0.0f64, 0usize);
     for (p, q) in g.rgba.chunks(4).zip(cpu.px.iter()) {

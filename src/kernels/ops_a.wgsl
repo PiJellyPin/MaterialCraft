@@ -332,12 +332,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             if (P(0u) > 0.5) { o = vec4<f32>(p.xyz, lum(ib[i])); }
         }
         case 15u: {
-            // RGBA merge: channel 0 of a, channel 1 of b, channel 2 of c, channel 3 of d, when connected
+            // RGBA merge: channel 0 of a, channel 1 of b, channel 2 of c and the luminance of d (its grey value, not
+            // its own alpha), when connected
             o = vec4<f32>(
                 select(0.0, ia[i].x, P(0u) > 0.5),
                 select(0.0, ib[i].y, P(1u) > 0.5),
                 select(0.0, ic[i].z, P(2u) > 0.5),
-                select(1.0, idd[i].w, P(3u) > 0.5));
+                select(1.0, lum(idd[i]), P(3u) > 0.5));
         }
         case 16u: {
             // channel shuffle: sources p0..3 (0-3 channels of a, 4-7 of b, 8 zero, 9 one), inversions p4..7

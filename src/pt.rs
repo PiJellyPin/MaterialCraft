@@ -43,6 +43,8 @@ pub struct PathTracer<'a> {
     sm: SceneMesh,
     bvh: Bvh,
     ids: Vec<u32>,
+    /// the material has transparent texels (see `raster::opacity`)
+    alpha: bool,
     env: Arc<Env>,
     sampler: EnvSampler,
     w: usize,
@@ -121,7 +123,8 @@ impl<'a> PathTracer<'a> {
             None => raster::env_of(maps, view),
         };
         let sampler = env.sampler();
-        PathTracer { maps, view: view.clone(), sm, bvh, ids, env, sampler, w: w.max(1), h: h.max(1) }
+        let alpha = raster::has_opacity(maps);
+        PathTracer { maps, view: view.clone(), sm, bvh, ids, alpha, env, sampler, w: w.max(1), h: h.max(1) }
     }
 
     /// Radiance arriving along one camera path.
@@ -137,8 +140,20 @@ impl<'a> PathTracer<'a> {
         let mut prev_pdf = 0.0f32;
         let mut prev_was_nee = false;
         for bounce in 0..=MAX_BOUNCES {
-            let hit = self.bvh.closest(o, d, 1e-4, 1e30, &Filter::ALL);
-            let Some(hit) = hit else {
+            // transparent texels let the ray through (with the probability of their transparency)
+            let mut hit = self.bvh.closest(o, d, 1e-4, 1e30, &Filter::ALL);
+            let mut passed = 0.0f32;
+            for _ in 0..16 {
+                match hit {
+                    Some(h) if self.see_through(h.tri, h.u, h.v, rng) => {
+                        passed += h.t;
+                        o = add(o, mul(d, h.t));
+                        hit = self.bvh.closest(o, d, 1e-4, 1e30, &Filter::ALL);
+                    }
+                    _ => break,
+                }
+            }
+            let Some(mut hit) = hit else {
                 let bg = if bounce == 0 {
                     raster::background(v, ev, d, py)
                 } else {
@@ -157,9 +172,11 @@ impl<'a> PathTracer<'a> {
                 }
                 break;
             };
+            hit.t += passed;
             if bounce == 0 {
                 first_depth = hit.t * dot(d, v.cam().fwd);
             }
+            hit.t -= passed;
             let tri = self.ids[hit.tri as usize] as usize;
             let vv = mul(d, -1.0);
             let mut s = surface(self.maps, v, &self.sm, tri, hit.u, hit.v, vv, false);
@@ -190,7 +207,7 @@ impl<'a> PathTracer<'a> {
                 }
                 if l.shadows {
                     let tmax = if dist.is_finite() { (dist - 0.01).max(0.01) } else { 1e30 };
-                    if self.bvh.any(o_shadow, dir, 1e-4, tmax, &Filter::ALL) {
+                    if self.blocked(o_shadow, dir, tmax, rng) {
                         continue;
                     }
                 }
@@ -203,7 +220,7 @@ impl<'a> PathTracer<'a> {
             let (de, pdf_e) = self.sampler.sample(rng.next(), rng.next());
             let dw = ev.from_env(de);
             let nee_ok = pdf_e > 0.0 && dot(s.n, dw) > 0.0 && dot(s.ng, dw) > 0.0;
-            if nee_ok && !self.bvh.any(o_shadow, dw, 1e-4, 1e30, &Filter::ALL) {
+            if nee_ok && !self.blocked(o_shadow, dw, 1e30, rng) {
                 let li = mul(self.env.background(de), ev.gain);
                 let f = direct(&s, vv, dw, [1.0; 3]); // BSDF x cos
                 let pb = bsdf_pdf(&s, vv, dw);
@@ -248,6 +265,30 @@ impl<'a> PathTracer<'a> {
             d = nd;
         }
         (radiance, first_depth)
+    }
+
+    /// Does the ray pass a hit point of the BVH's triangle `tri` (transparent texels, by their transparency)?
+    fn see_through(&self, tri: u32, b1: f32, b2: f32, rng: &mut Rng) -> bool {
+        self.alpha && rng.next() >= raster::opacity(self.maps, &self.sm, self.ids[tri as usize] as usize, b1, b2)
+    }
+
+    /// Is the light along a shadow ray blocked before `tmax` (transparent texels let part of it through)?
+    fn blocked(&self, o: V, d: V, tmax: f32, rng: &mut Rng) -> bool {
+        if !self.alpha {
+            return self.bvh.any(o, d, 1e-4, tmax, &Filter::ALL);
+        }
+        let (mut o, mut left) = (o, tmax);
+        for _ in 0..16 {
+            match self.bvh.closest(o, d, 1e-4, left, &Filter::ALL) {
+                None => return false,
+                Some(h) if self.see_through(h.tri, h.u, h.v, rng) => {
+                    o = add(o, mul(d, h.t));
+                    left -= h.t;
+                }
+                Some(_) => return true,
+            }
+        }
+        true
     }
 
     /// Add `spp` samples to every pixel.

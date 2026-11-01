@@ -31,6 +31,7 @@ For installation, see [README.md](../README.md); for automation, see
 | Change a parameter | Select a node and use Properties. See [the node reference](NODES.md) for its parameters. |
 | Inspect a result | Select a node to view its result in 2D View. The material outputs feed 3D View. |
 | Check a tile seam | 2D View > Tile 2x2 preview. |
+| Check transparency | A result with alpha shows a checkerboard in 2D View; 2D View > Alpha toggles it. An opacity output (or the base color's alpha) cuts the 3D model out. |
 | Change working resolution | Canvas toolbar > Parent Size, or Properties > GRAPH SETTINGS > Output Size. Unlink width and height for a non-square graph. |
 | Organize a graph | Select nodes and press C for a comment frame, or use Tools > Auto-layout. |
 | Reuse selected nodes | Edit > Create subgraph from selection; double-click the resulting subgraph to edit it. |
@@ -253,6 +254,8 @@ The default workspace places Explorer and Library on the left, Graph in the cent
 
 - Displays the selected node's image, dimensions, zoom, and value range.
 - Fit to view or double-click to fit; Tile 2x2 preview checks edges.
+- When the image has an alpha channel, transparent pixels show a checkerboard. Alpha (next to Tile 2x2) switches
+  between that and the colors shown fully opaque.
 - Values outside 0..1 produce an HDR warning. Use a floating-point export format to retain that range.
 - Edit spline adds controls for paths, closure, smoothing, snapping, point width/height, and tangent mode.
   Done leaves spline editing; edits participate in undo/redo.
@@ -260,6 +263,8 @@ The default workspace places Explorer and Library on the left, Graph in the cent
 ### 3D View
 
 The material outputs feed the preview. Add a height output to use height-based relief.
+Transparency comes from an opacity output (its luminance), else from the base color's alpha: transparent texels are
+cut out and partial opacity is dithered (the path tracer lets rays through instead). Fixed scene materials stay opaque.
 
 | Menu | Controls |
 |---|---|

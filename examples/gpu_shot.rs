@@ -55,7 +55,7 @@ struct TexSet {
 
 fn compare(path: &str, set: &TexSet, view: &View, gl: &[[f32; 4]], w: usize, h: usize) {
     use materialcraft::render3d::{self, Maps};
-    let maps = Maps { base: &set.base, normal: &set.normal, rough: &set.rough, metal: &set.metal, ao: &set.ao, emissive: set.emissive.as_ref(), height: set.height.as_ref(), env: None };
+    let maps = Maps { base: &set.base, normal: &set.normal, rough: &set.rough, metal: &set.metal, ao: &set.ao, emissive: set.emissive.as_ref(), height: set.height.as_ref(), opacity: None, env: None };
     let t0 = std::time::Instant::now();
     let img = render3d::render(&maps, view, w, h);
     let dt = t0.elapsed().as_secs_f32();
@@ -122,7 +122,7 @@ fn main() {
         let (base, normal, rough, ao, height) = bricks(1024);
         TexSet { base, normal, rough, metal: Tex::solid(4, 4, [0.0, 0.0, 0.0, 1.0]), ao, emissive: None, height: Some(height) }
     };
-    let maps = gpu3d::prepare(&MapInputs { base: Some(&set.base), normal: Some(&set.normal), rough: Some(&set.rough), metal: Some(&set.metal), ao: Some(&set.ao), emissive: set.emissive.as_ref(), height: set.height.as_ref() });
+    let maps = gpu3d::prepare(&MapInputs { base: Some(&set.base), normal: Some(&set.normal), rough: Some(&set.rough), metal: Some(&set.metal), ao: Some(&set.ao), emissive: set.emissive.as_ref(), height: set.height.as_ref(), opacity: None });
     let gpu = gpu3d::new_shared();
     gpu.lock().unwrap().set_maps(maps);
     let mut view = View { shape, relief, wireframe: wire, yaw: 0.35, pitch: 0.5, dist: if shape == 2 { 3.2 } else { 3.4 }, height_scale: 0.08, ..View::default() };

@@ -8,6 +8,7 @@ struct DU {
 @group(0) @binding(0) var<uniform> u: DU;
 @group(0) @binding(1) var maps_samp: sampler;
 @group(0) @binding(2) var height_tex: texture_2d<f32>;
+@group(0) @binding(3) var base_tex: texture_2d<f32>;
 
 struct VIn {
     @location(0) pos: vec3<f32>,
@@ -19,13 +20,32 @@ struct VIn {
     @location(6) obj: f32,
 }
 
+struct VOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) @interpolate(flat) obj: u32,
+}
+
 @vertex
-fn vs_main(v: VIn) -> @builtin(position) vec4<f32> {
+fn vs_main(v: VIn) -> VOut {
     let oi = u32(v.obj + 0.5);
     var p = v.pos;
     if (u.p.x != 0.0 && u.obj_a[oi].x < 0.5) {
         let h = textureSampleLevel(height_tex, maps_samp, v.uv, u.p.z).r;
         p = p + v.disp * (h - u.p.y) * u.p.x * v.misc.z;
     }
-    return u.vp * vec4<f32>(p, 1.0);
+    var o: VOut;
+    o.clip = u.vp * vec4<f32>(p, 1.0);
+    o.uv = v.uv;
+    o.obj = oi;
+    return o;
+}
+
+// the transparent part of a graph material (base colour alpha below one half) casts no shadow
+@fragment
+fn fs_main(in: VOut) {
+    let a = textureSample(base_tex, maps_samp, in.uv).a;
+    if (u.obj_a[in.obj].x < 0.5 && a < 0.5) {
+        discard;
+    }
 }

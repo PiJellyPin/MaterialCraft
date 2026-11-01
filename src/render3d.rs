@@ -17,6 +17,8 @@ pub struct Maps<'a> {
     pub ao: &'a Tex,
     pub emissive: Option<&'a Tex>,
     pub height: Option<&'a Tex>,
+    /// opacity map (luminance); without one the base colour's alpha is the opacity
+    pub opacity: Option<&'a Tex>,
     /// lighting environment; `None` uses the built-in studio
     pub env: Option<&'a Env>,
 }
@@ -878,7 +880,10 @@ struct Pv {
     a: [f32; 3], // barycentric weights of the ORIGINAL triangle at this (possibly clipped) vertex
 }
 
-fn raster(band: &mut [Frag], y_start: usize, w: usize, tri: u32, v: [Pv; 3]) {
+/// Decides whether a fragment (triangle, barycentrics, pixel) is drawn: the cut-out of transparent texels.
+pub(crate) type Keep<'a> = Option<&'a (dyn Fn(u32, f32, f32, usize, usize) -> bool + Sync)>;
+
+fn raster(band: &mut [Frag], y_start: usize, w: usize, tri: u32, v: [Pv; 3], keep: Keep) {
     let rows = band.len() / w;
     let y_end = y_start + rows;
     let (x0, x1, x2) = (v[0].s[0], v[1].s[0], v[2].s[0]);
@@ -922,14 +927,16 @@ fn raster(band: &mut [Frag], y_start: usize, w: usize, tri: u32, v: [Pv; 3]) {
                 let s = 1.0 / iz;
                 let b1 = (k0 * v[0].a[1] + k1 * v[1].a[1] + k2 * v[2].a[1]) * s;
                 let b2 = (k0 * v[0].a[2] + k1 * v[1].a[2] + k2 * v[2].a[2]) * s;
-                *f = Frag { z, tri, b1, b2 };
+                if keep.map(|k| k(tri, b1, b2, x, y)).unwrap_or(true) {
+                    *f = Frag { z, tri, b1, b2 };
+                }
             }
         }
     }
 }
 
 /// Clip a triangle that crosses the near plane and rasterise the (1 or 2) resulting triangles.
-fn raster_clipped(band: &mut [Frag], y_start: usize, w: usize, cam: &Cam, tri: u32, vv: [V; 3]) {
+fn raster_clipped(band: &mut [Frag], y_start: usize, w: usize, cam: &Cam, tri: u32, vv: [V; 3], keep: Keep) {
     let attrs = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
     let mut poly: Vec<(V, [f32; 3])> = Vec::with_capacity(4);
     for k in 0..3 {
@@ -950,11 +957,11 @@ fn raster_clipped(band: &mut [Frag], y_start: usize, w: usize, cam: &Cam, tri: u
     }
     let pv: Vec<Pv> = poly.iter().map(|(p, a)| Pv { s: cam.project(*p), a: *a }).collect();
     for k in 1..pv.len() - 1 {
-        raster(band, y_start, w, tri, [pv[0], pv[k], pv[k + 1]]);
+        raster(band, y_start, w, tri, [pv[0], pv[k], pv[k + 1]], keep);
     }
 }
 
-pub(crate) fn rasterize(mesh: &Mesh, cam: &Cam) -> Vec<Frag> {
+pub(crate) fn rasterize(mesh: &Mesh, cam: &Cam, keep: Keep) -> Vec<Frag> {
     let (w, h) = (cam.w, cam.h);
     let none = Frag { z: f32::INFINITY, tri: NO_TRI, b1: 0.0, b2: 0.0 };
     let mut frags = vec![none; w * h];
@@ -987,9 +994,10 @@ pub(crate) fn rasterize(mesh: &Mesh, cam: &Cam) -> Vec<Frag> {
                     w,
                     ti as u32,
                     [Pv { s: p0, a: [1.0, 0.0, 0.0] }, Pv { s: p1, a: [0.0, 1.0, 0.0] }, Pv { s: p2, a: [0.0, 0.0, 1.0] }],
+                    keep,
                 );
             } else if view[i0][2] >= NEAR || view[i1][2] >= NEAR || view[i2][2] >= NEAR {
-                raster_clipped(band, y_start, w, cam, ti as u32, [view[i0], view[i1], view[i2]]);
+                raster_clipped(band, y_start, w, cam, ti as u32, [view[i0], view[i1], view[i2]], keep);
             }
         }
     });

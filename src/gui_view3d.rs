@@ -75,6 +75,7 @@ fn build_maps<'a>(maps: &'a BTreeMap<String, Arc<Tex>>, f: &'a Fallbacks) -> Map
         ao: get("ambient_occlusion").unwrap_or(&f.one),
         emissive: get("emissive"),
         height: get("height"),
+        opacity: get("opacity"),
         env: None,
     }
 }

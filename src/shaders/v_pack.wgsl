@@ -5,7 +5,7 @@ struct PK {
     w: u32,
     h: u32,
     stride: u32,     // u32 words per padded row
-    mode: u32,       // 0 rgb8, 1 rough/metal/ao, 2 luminance as 16-bit floats, 3 rgb8 of a normal map
+    mode: u32,       // 0 rgb8 (alpha: opacity of source 1, else source 0's alpha), 1 rough/metal/ao, 2 luminance as 16-bit floats, 3 rgb8 of a normal map
     flip_g: u32,
     has: u32,        // bit 0..2: source 0..2 present
     inv_r: u32,      // roughness is a glossiness map
@@ -69,7 +69,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         if (u.flip_g != 0u && (u.has & 1u) != 0u) {
             c.y = 1.0 - c.y;
         }
-        dst[o] = pack4x8unorm(vec4<f32>(c.x, c.y, c.z, 1.0));
+        var alpha = 1.0;
+        if (u.mode == 0u) {
+            if ((u.has & 2u) != 0u) {
+                alpha = clamp(lum(s1[i]), 0.0, 1.0);
+            } else {
+                alpha = c.w;
+            }
+            if (alpha != alpha) { alpha = 1.0; }
+        }
+        dst[o] = pack4x8unorm(vec4<f32>(c.x, c.y, c.z, alpha));
         return;
     }
     var r = u.dflt.x;

@@ -411,9 +411,25 @@ struct FOut {
     @location(1) z: vec4<f32>,
 }
 
+// ordered dither threshold of a pixel (4 x 4 Bayer): partial opacity becomes a screen-door pattern, which needs no
+// sorting and keeps depth, shadows and the post effects right
+fn bayer(p: vec2<f32>) -> f32 {
+    var m = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+    let x = u32(p.x) % 4u;
+    let y = u32(p.y) % 4u;
+    return (m[y * 4u + x] + 0.5) / 16.0;
+}
+
 @fragment
 fn fs_main(in: VOut, @builtin(front_facing) front: bool) -> FOut {
     var o: FOut;
+    // opacity: the base colour's alpha (graph materials only)
+    let dx = dpdx(in.uv) * u.b.w;
+    let dy = dpdy(in.uv) * u.b.w;
+    let alpha = textureSampleGrad(base_tex, maps_samp, in.uv, dx, dy).a;
+    if (u.obj_a[in.obj].x < 0.5 && alpha < bayer(in.clip.xy)) {
+        discard;
+    }
     o.c = shade(in, front);
     o.z = enc_z(in.clip.z);
     return o;
