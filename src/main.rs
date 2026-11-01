@@ -12,7 +12,7 @@ use std::process::ExitCode;
 const HELP: &str = "materialcraft - procedural material authoring (pure Rust)
 
 USAGE:
-Files: MaterialCraft works on Substance packages (.sbs): one file holds every graph and function of a project, and
+Files: MaterialCraft works on .sbs packages: one file holds every graph and function of a project, and
 it is saved with only what was changed rewritten. Wherever a graph is read, `package.sbs#name` picks one graph of a
 package (the first graph without it).
 

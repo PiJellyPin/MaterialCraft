@@ -179,7 +179,7 @@ fn read_line<R: BufRead>(r: &mut R) -> std::io::Result<Option<String>> {
 
 // ------------------------------------------------------------------------------------------ MCP server
 
-const INSTRUCTIONS: &str = "MaterialCraft builds procedural PBR materials as graphs of nodes in a Substance package (.sbs). Work like this:\n\
+const INSTRUCTIONS: &str = "MaterialCraft builds procedural PBR materials as graphs of nodes in an .sbs package. Work like this:\n\
 1. node_types (search by words) and node_describe show what a node does, its inputs, outputs and every parameter with default, range, choices (numbered settings: set them by number or by name, e.g. \"pattern\": \"Bell\") and units (angles are turns: 0.25 = 90 degrees). Ranges are slider ranges: larger values are accepted.\n\
 2. Build with `batch`: one call, all-or-nothing, one undo step. Give nodes a `name` in node_add and use that name instead of the numeric id in later steps. Connect with node_add `inputs` ({slot: node}) or node_connect.\n\
 3. A material needs outputs: output_add with usage basecolor, normal, roughness, metallic, height, ambient_occlusion, opacity, emissive. Opacity and emissive are supported.\n\
