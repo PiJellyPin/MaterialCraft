@@ -165,7 +165,8 @@ fn leaks(cx: &Cx, curv: Option<&Tex>, lc: &(dyn Fn(f32) -> f32 + Sync)) -> Tex {
     });
     let a = cx.f("angle") * TAU;
     let dir = [a.cos(), -a.sin()];
-    let length = cx.f("lenght").max(0.0) * 0.05;
+    // in tiles; longer than a few tiles only repeats what the picture already shows
+    let length = cx.f("lenght").clamp(0.0, 64.0) * 0.05;
     let bias = cx.f("bias").clamp(0.0, 1.0);
     let finest = 0.75 / s.max(hs) as f32;
     let mut step = length * 0.5;
@@ -311,10 +312,12 @@ fn moss(cx: &Cx) -> Tex {
             }),
             "normal" => {
                 let bump = Tex::from_fn(s, hs, |u, v| grey(cover.sample(u, v)[0] * (0.5 + tufts(u, v) * 0.5)));
-                let b = ops::normal_from_height(&bump, 0.12, cx.i("normal_format") == 0);
+                // the base normal, the bump and the result all follow the chosen format
+                let dx = cx.i("normal_format") == 0;
+                let b = ops::normal_from_height(&bump, 0.12, dx);
                 Tex::from_fn(s, hs, |u, v| {
-                    let (x, y) = (dec_n(t.sample(u, v), false), dec_n(b.sample(u, v), false));
-                    enc_n([x[0] + y[0], x[1] + y[1], x[2]], false)
+                    let (x, y) = (dec_n(t.sample(u, v), dx), dec_n(b.sample(u, v), dx));
+                    enc_n([x[0] + y[0], x[1] + y[1], x[2]], dx)
                 })
             }
             // moss is rough and does not shine: its value depends on what the channel holds
