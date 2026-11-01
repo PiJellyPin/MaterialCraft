@@ -415,6 +415,8 @@ impl App {
                 nr.clone().on_hover_text(e);
             }
             let (kind, gname) = (s.kind.clone(), s.graph_name.clone());
+            let is_material = s.kind != "sbs:output" && material_outs(&s.outs) >= 2;
+            let shown_3d = self.view3d_node == Some(id);
             nr.context_menu(|ui| {
                 if ui.button("Copy").clicked() {
                     acts.push(Act::Copy);
@@ -467,7 +469,26 @@ impl App {
                         }
                     }
                 });
+                if is_material {
+                    let label = if shown_3d { "Show graph outputs in 3D view" } else { "Show in 3D view" };
+                    if ui.button(label).clicked() {
+                        acts.push(Act::View3dNode(id));
+                        ui.close();
+                    }
+                }
             });
+
+            // a material node (several maps the 3D view reads): a "3D" button above the card shows it in the 3D view
+            if is_material && !s.dot && z >= 0.35 {
+                let br = Rect::from_min_size(card.right_top() + vec2(-24.0, -15.0) * z, vec2(24.0, 13.0) * z);
+                let bresp = ui.interact(br, Id::new(("view3d", id)), Sense::click());
+                let fill = if shown_3d { Color32::from_rgb(60, 200, 170) } else if bresp.hovered() { Color32::from_gray(70) } else { Color32::from_gray(45) };
+                painter.rect(br, 3.0 * z, fill, Stroke::new(1.0_f32, Color32::from_gray(if shown_3d { 230 } else { 120 })), egui::StrokeKind::Inside);
+                painter.text(br.center(), Align2::CENTER_CENTER, "3D", FontId::proportional(9.0 * z), if shown_3d { Color32::BLACK } else { Color32::from_gray(220) });
+                if bresp.on_hover_text(if shown_3d { "The 3D view shows this node: click to go back to the graph outputs" } else { "Show this node's outputs in the 3D view" }).clicked() {
+                    acts.push(Act::View3dNode(id));
+                }
+            }
 
             // ports
             if s.kind != "sbs:output" && s.outs.len() >= 2 {
@@ -941,6 +962,7 @@ impl App {
                 }
             }
             Act::NewOutput(usage, from) => self.new_output(&usage, from),
+            Act::View3dNode(id) => self.toggle_view3d_node(id),
             Act::NewFromTemplate(i) => self.new_from_template(i),
             Act::ExportMaps(i, name) => {
                 self.export.target = Some((i, name));

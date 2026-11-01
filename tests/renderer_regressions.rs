@@ -114,3 +114,34 @@ fn photometric_optimizations_preserve_reference_pixels() {
         assert!(t.px.iter().all(|p| *p == pixel));
     }
 }
+
+#[test]
+fn pbr_base_material_derives_its_channels_from_the_workflow() {
+    let outs = nodes10::info("x_pbr_base_material").unwrap().outs;
+    let run = |nums: &[(&str, f32)], ins: &BTreeMap<String, Arc<Tex>>, out: &str| {
+        let mut n = Node::default();
+        n.nums = nums.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+        n.nums.insert("_out".into(), outs.iter().position(|o| *o == out).unwrap() as f32);
+        nodes10::compute("x_pbr_base_material", 1, &n, ins, 4, 4, 0).unwrap().unwrap().at(1, 1)
+    };
+    let none = BTreeMap::new();
+    // metallic / roughness: half metal, so the diffuse loses half the base colour and the specular moves towards it
+    let mr = [("basecolor_0", 0.8), ("basecolor_1", 0.4), ("basecolor_2", 0.2), ("metallic", 0.5), ("roughness", 0.3)];
+    let d = run(&mr, &none, "diffuse");
+    assert!((d[0] - 0.4).abs() < 1e-5 && (d[1] - 0.2).abs() < 1e-5 && (d[2] - 0.1).abs() < 1e-5, "{d:?}");
+    assert!((run(&mr, &none, "glossiness")[0] - 0.7).abs() < 1e-5);
+    let sp = run(&mr, &none, "specular");
+    assert!(sp[0] > sp[1] && sp[1] > sp[2], "the specular of a metal is coloured: {sp:?}");
+    // a dielectric reflects 4% (sRGB about 0.22) whatever its colour
+    let sp = run(&[("metallic", 0.0)], &none, "specular");
+    assert!((sp[0] - 0.2232).abs() < 0.01 && (sp[0] - sp[2]).abs() < 1e-5, "{sp:?}");
+    // specular / glossiness: the roughness is the inverse of the glossiness, the diffuse its own colour
+    let sg = [("pbr_workflow", 1.0), ("glossiness", 0.8), ("diffuse_color_0", 0.1), ("diffuse_color_1", 0.2), ("diffuse_color_2", 0.3)];
+    assert!((run(&sg, &none, "roughness")[0] - 0.2).abs() < 1e-5);
+    assert_eq!(run(&sg, &none, "diffuse"), [0.1, 0.2, 0.3, 1.0]);
+    // a connected map is read only while its switch is on, and then per pixel by the derived channels
+    let ins = BTreeMap::from([("metallic_input".to_string(), Arc::new(Tex::solid(4, 4, nodes10::grey(1.0))))]);
+    assert_eq!(run(&[("metallic", 0.0)], &ins, "metallic")[0], 0.0);
+    assert_eq!(run(&[("metallic", 0.0), ("user_metallic", 1.0)], &ins, "metallic")[0], 1.0);
+    assert_eq!(run(&[("metallic", 0.0), ("user_metallic", 1.0)], &ins, "diffuse"), [0.0, 0.0, 0.0, 1.0]);
+}

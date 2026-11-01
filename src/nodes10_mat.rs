@@ -1312,31 +1312,54 @@ fn pbr_base_material(cx: &Cx) -> Tex {
     let (hpos, hrange) = (cx.f("height_position"), cx.f("height_range"));
     let height = Tex::from_fn(s, hs, |u, v| grey(height_in.map(|t| (hpos - 0.5) + g(t, u, v) * hrange * 2.0 + (0.5 - hrange)).unwrap_or(hpos).clamp(0.0, 1.0)));
     let nfh = cx.f("normal_from_height_intensity");
+    // per pixel: the connected maps where the node uses them, else the settings
+    let (base_in, metal_in) = (use_in("user_basecolor", "basecolor_input"), use_in("user_metallic", "metallic_input"));
+    let (diffuse_in, spec_in) = (use_in("user_diffuse", "diffuse_input"), use_in("user_specular", "specular_input"));
+    let (rough_in, gloss_in) = (use_in("user_roughness", "roughness_input"), use_in("user_glossiness", "glossiness_input"));
+    let base_at = |u: f32, v: f32| base_in.map(|t| t.sample(u, v)).unwrap_or(base_col);
+    let metal_at = |u: f32, v: f32| metal_in.map(|t| g(t, u, v)).unwrap_or(metal_v).clamp(0.0, 1.0);
+    let rough_at = |u: f32, v: f32| rough_in.map(|t| g(t, u, v)).unwrap_or_else(|| rough + (grunge(u, v) - 0.5) * rga).clamp(0.0, 1.0);
+    let gloss_at = |u: f32, v: f32| gloss_in.map(|t| g(t, u, v)).unwrap_or_else(|| gloss + (grunge(u, v) - 0.5) * gga).clamp(0.0, 1.0);
+    let (diffuse_col, spec_col) = (cx.col("diffuse_color"), cx.col("specular"));
+    let diffuse_at = |u: f32, v: f32| diffuse_in.map(|t| t.sample(u, v)).unwrap_or(diffuse_col);
+    let spec_at = |u: f32, v: f32| spec_in.map(|t| t.sample(u, v)).unwrap_or(spec_col);
+    // dielectric reflectance (linear F0): 2% .. 6%, 4% in the middle of the range
+    let f0 = lerp(0.02, 0.06, cx.f("specular_range").clamp(0.0, 1.0));
+    // 0: metallic / roughness, the other channels derived from it; 1: specular / glossiness, the other way round
+    let spec_gloss = cx.i("pbr_workflow") == 1;
     let f = |c: &'static str| -> Tex {
         match c {
-            "diffuse" => match use_in("user_diffuse", "diffuse_input") {
+            "diffuse" if spec_gloss => Tex::from_fn(s, hs, diffuse_at),
+            "diffuse" => match diffuse_in {
                 Some(t) => t.clone(),
-                None => {
-                    let d = cx.col("diffuse_color");
-                    let k = 1.0 - metal_v;
-                    Tex::solid(s, hs, [d[0] * k + base_col[0] * k * 0.0, d[1] * k, d[2] * k, 1.0])
-                }
+                None => Tex::from_fn(s, hs, |u, v| {
+                    let (b, k) = (base_at(u, v), 1.0 - metal_at(u, v));
+                    [b[0] * k, b[1] * k, b[2] * k, 1.0]
+                }),
             },
-            "basecolor" => use_in("user_basecolor", "basecolor_input").cloned().unwrap_or_else(|| Tex::solid(s, hs, base_col)),
+            "basecolor" if spec_gloss && base_in.is_none() => Tex::from_fn(s, hs, |u, v| {
+                let (d, sp, m) = (diffuse_at(u, v), spec_at(u, v), metal_at(u, v));
+                [lerp(d[0], sp[0], m), lerp(d[1], sp[1], m), lerp(d[2], sp[2], m), 1.0]
+            }),
+            "basecolor" => Tex::from_fn(s, hs, base_at),
             "normal" => match use_in("user_normal", "normal_input") {
                 Some(t) => t.clone(),
                 None => ops::normal_from_height(&height, nfh * 0.1, true),
             },
-            "specular" => use_in("user_specular", "specular_input").cloned().unwrap_or_else(|| Tex::solid(s, hs, cx.col("specular"))),
-            "glossiness" => match use_in("user_glossiness", "glossiness_input") {
+            "specular" if spec_gloss => Tex::from_fn(s, hs, spec_at),
+            "specular" => match spec_in {
                 Some(t) => t.clone(),
-                None => Tex::from_fn(s, hs, |u, v| grey((gloss + (grunge(u, v) - 0.5) * gga).clamp(0.0, 1.0))),
+                None => Tex::from_fn(s, hs, |u, v| {
+                    let (b, m) = (base_at(u, v), metal_at(u, v));
+                    let ch = |x: f32| to_srgb(lerp(f0, to_lin(x), m));
+                    [ch(b[0]), ch(b[1]), ch(b[2]), 1.0]
+                }),
             },
-            "roughness" => match use_in("user_roughness", "roughness_input") {
-                Some(t) => t.clone(),
-                None => Tex::from_fn(s, hs, |u, v| grey((rough + (grunge(u, v) - 0.5) * rga).clamp(0.0, 1.0))),
-            },
-            "metallic" => use_in("user_metallic", "metallic_input").cloned().unwrap_or_else(|| Tex::solid(s, hs, grey(metal_v))),
+            "glossiness" if spec_gloss => Tex::from_fn(s, hs, |u, v| grey(gloss_at(u, v))),
+            "glossiness" => Tex::from_fn(s, hs, |u, v| grey(gloss_in.map(|t| g(t, u, v)).unwrap_or_else(|| 1.0 - rough_at(u, v)))),
+            "roughness" if spec_gloss => Tex::from_fn(s, hs, |u, v| grey(rough_in.map(|t| g(t, u, v)).unwrap_or_else(|| 1.0 - gloss_at(u, v)))),
+            "roughness" => Tex::from_fn(s, hs, |u, v| grey(rough_at(u, v))),
+            "metallic" => Tex::from_fn(s, hs, |u, v| grey(metal_at(u, v))),
             "height" => height.clone(),
             "ambientocclusion" => use_in("user_ao", "ambientOcclusion_input").cloned().unwrap_or_else(|| Tex::solid(s, hs, grey(1.0))),
             _ => Tex::solid(s, hs, grey(1.0)),
