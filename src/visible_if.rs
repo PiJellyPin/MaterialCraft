@@ -81,9 +81,17 @@ enum Ex {
     Bin(&'static str, Box<Ex>, Box<Ex>),
 }
 
+/// Deeper nesting than this is refused: the parser and the evaluator recurse once per level, and a condition from a
+/// file must not be able to overflow the stack.
+const MAX_DEPTH: usize = 64;
+/// Longer conditions than this are refused outright.
+const MAX_LEN: usize = 4096;
+
 struct Parser {
     t: Vec<Tok>,
     i: usize,
+    /// current nesting of parentheses and unary operators
+    depth: usize,
 }
 
 impl Parser {
@@ -135,11 +143,21 @@ impl Parser {
         self.binary(&["*", "/", "%"], Parser::unary)
     }
 
+    fn enter(&mut self) -> Result<(), String> {
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return Err("the condition is nested too deeply".into());
+        }
+        Ok(())
+    }
+
     fn unary(&mut self) -> Result<Ex, String> {
         match self.peek_op(&["!", "-", "+"]) {
             Some(op) => {
                 self.i += 1;
+                self.enter()?;
                 let a = self.unary()?;
+                self.depth -= 1;
                 Ok(match op {
                     "!" => Ex::Not(Box::new(a)),
                     "-" => Ex::Neg(Box::new(a)),
@@ -176,7 +194,9 @@ impl Parser {
         match t {
             Tok::Num(x) => Ok(Ex::Num(x)),
             Tok::Op("(") => {
+                self.enter()?;
                 let a = self.or()?;
+                self.depth -= 1;
                 self.expect(")")?;
                 Ok(a)
             }
@@ -201,7 +221,10 @@ impl Parser {
 }
 
 fn parse(s: &str) -> Result<Ex, String> {
-    let mut p = Parser { t: tokenize(s)?, i: 0 };
+    if s.len() > MAX_LEN {
+        return Err("the condition is too long".into());
+    }
+    let mut p = Parser { t: tokenize(s)?, i: 0, depth: 0 };
     let e = p.or()?;
     if p.i != p.t.len() {
         return Err("unexpected text after the expression".into());
@@ -342,5 +365,22 @@ mod tests {
         assert!(visible("", &vals) && visible("   ", &vals));
         assert!(!visible("input.off", &vals));
         assert!(!visible("input.mode != 2", &vals));
+    }
+}
+
+#[cfg(test)]
+mod depth_tests {
+    use super::*;
+
+    #[test]
+    fn deep_nesting_is_refused_instead_of_overflowing_the_stack() {
+        let deep = format!("{}1{}", "(".repeat(20_000), ")".repeat(20_000));
+        assert!(eval(&deep, &|_| None).is_err());
+        let bangs = format!("{}true", "!".repeat(20_000));
+        assert!(eval(&bangs, &|_| None).is_err());
+        // and a reasonable one still works
+        let fine = format!("{}1{}", "(".repeat(30), ")".repeat(30));
+        assert_eq!(eval(&fine, &|_| None), Ok(true));
+        assert!(eval(&"1+".repeat(5000), &|_| None).is_err());
     }
 }
