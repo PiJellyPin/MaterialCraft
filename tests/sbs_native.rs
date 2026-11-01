@@ -284,3 +284,27 @@ fn a_graph_saved_as_template_starts_new_projects() {
     assert_eq!(user_templates::list(&dir).len(), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_graph_a_package_opens_on_can_be_deleted() {
+    let mut g = sbs_native::new_package("first", 64);
+    sbs_native::add_output(&mut g, "baseColor", None, [0.0, 0.0]);
+    // the only graph stays
+    assert!(g.remove_graph("first").is_err(), "a package keeps at least one graph");
+    let second = sbs_native::duplicate_graph(&mut g, None, Some("second")).unwrap();
+    sbs_native::duplicate_graph(&mut g, None, Some("third")).unwrap();
+    // not while another graph uses it
+    let mut user = Node { kind: "sbs:graph".into(), ..Default::default() };
+    user.strs.insert("#graph".into(), "first".into());
+    g.subgraphs.get_mut("third").unwrap().nodes.insert(50, user);
+    assert!(g.remove_graph("first").is_err(), "'third' still uses it");
+    g.subgraphs.get_mut("third").unwrap().nodes.remove(&50);
+    g.remove_graph("first").unwrap();
+    // the next graph is the one the package opens on, with the rest of the package
+    assert_eq!(g.meta.get("identifier").map(String::as_str), Some(second.as_str()));
+    assert_eq!(g.subgraphs.keys().cloned().collect::<Vec<_>>(), vec!["third".to_string()]);
+    assert_eq!(g.output_idents().len(), 1);
+    let back = open(&sbs_native::save_text(&g).unwrap());
+    assert_eq!(back.meta.get("identifier").map(String::as_str), Some("second"));
+    assert!(back.subgraphs.contains_key("third") && !back.subgraphs.contains_key("first"));
+}

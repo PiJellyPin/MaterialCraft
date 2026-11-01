@@ -1303,10 +1303,15 @@ impl App {
                                         self.acts.push(Act::RenameGraph(i, s.clone()));
                                         ui.close();
                                     }
-                                    if ui.button("Delete").on_hover_text("Only when no other graph uses it").clicked() {
-                                        self.acts.push(Act::DeleteGraph(i, s.clone()));
-                                        ui.close();
-                                    }
+                                }
+                                let tip = if sub.is_some() {
+                                    "Only when no other graph uses it (Ctrl+Z brings it back)"
+                                } else {
+                                    "The package then opens on its next graph. Only when no other graph uses it (Ctrl+Z brings it back)"
+                                };
+                                if ui.button("Delete").on_hover_text(tip).clicked() {
+                                    self.acts.push(Act::DeleteGraph(i, name.clone()));
+                                    ui.close();
                                 }
                             });
                         }
@@ -1428,13 +1433,16 @@ impl App {
                                 p.rect_filled(rect, 3.0, Color32::from_rgb(58, 58, 58));
                             }
                             let tr = Rect::from_min_size(rect.min + vec2(2.0, 2.0), vec2(64.0, 64.0));
-                            match self.lib_thumbs.get(&e.kind) {
-                                Some(t) => {
-                                    p.image(t.id(), tr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-                                }
-                                _ => {
-                                    p.rect_filled(tr, 3.0, kind_color(&e.kind).gamma_multiply(0.55));
-                                    draw_icon(p, tr.center(), entry_icon(&e.kind), Color32::WHITE);
+                            // core nodes show their icon, the others a picture of what they make
+                            if !core_icon(p, tr, &e.kind) {
+                                match self.lib_thumbs.get(&e.kind) {
+                                    Some(t) => {
+                                        p.image(t.id(), tr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                                    }
+                                    _ => {
+                                        p.rect_filled(tr, 3.0, kind_color(&e.kind).gamma_multiply(0.55));
+                                        draw_icon(p, tr.center(), entry_icon(&e.kind), Color32::WHITE);
+                                    }
                                 }
                             }
                             if self.favorites.contains(&e.label) {

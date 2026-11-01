@@ -1051,7 +1051,20 @@ impl App {
             Act::ExportGraphFile(i, name) => self.export_graph_file(i, name),
             Act::AddGraphFile(i) => self.add_graph_file(i),
             Act::RenameGraph(i, name) => self.rename_graph = Some((i, name.clone(), name)),
-            Act::DeleteGraph(i, name) => self.graph_edit(i, move |g| g.remove_graph(&name).map(|_| format!("Removed graph '{name}'"))),
+            Act::DeleteGraph(i, name) => {
+                let main = |a: &Self| a.parents.first().map(|p| &p.0).unwrap_or(&a.g).meta.get("identifier").cloned();
+                self.switch_pkg(i);
+                let was_main = main(self).as_deref() == Some(name.as_str());
+                let n = name.clone();
+                self.graph_edit(i, move |g| g.remove_graph(&n).map(|_| format!("Removed graph '{n}'")));
+                // the canvas showed the deleted graph: it now shows the one the package opens on
+                if was_main && main(self).as_deref() != Some(name.as_str()) {
+                    self.sel.clear();
+                    self.sel_links.clear();
+                    self.clear_views();
+                    self.fit_view();
+                }
+            }
             Act::DuplicateGraph(i, name) => self.graph_edit(i, move |g| g.duplicate_graph(name.as_deref(), None).map(|k| format!("Copied as '{k}'"))),
         }
     }
