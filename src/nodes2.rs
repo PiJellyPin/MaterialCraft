@@ -77,7 +77,7 @@ fn fft2(a: &mut Vec<[f32; 2]>, n: usize, inverse: bool) {
 }
 
 /// Integrate a tangent-space normal map back into a height map (periodic Poisson solve in the Fourier domain).
-fn normal_to_height(nm: &Tex, directx: bool, relief: f32, opacity: f32) -> Tex {
+pub(crate) fn normal_to_height(nm: &Tex, directx: bool, relief: f32, opacity: f32) -> Tex {
     let n = nm.w.next_power_of_two().min(4096).max(2);
     let src = if nm.w == n && nm.h == n { nm.clone() } else { ops::resize(nm, n) };
     let mut gx = vec![[0.0f32; 2]; n * n];
