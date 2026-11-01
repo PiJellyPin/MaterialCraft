@@ -408,15 +408,30 @@ pub(super) fn run(n: &Node, ins: &Ins, sz: (usize, usize), ctx: &Ctx, out_idx: u
             gpu::bent_normal_g(&dev("in")?, dirs, steps, rad, relief, f("directx", 0.0) > 0.5, out_idx == 1)
         }
         "ao" => {
-            if f("mode", 0.0) < 0.5 {
+            let ao = if f("mode", 0.0) < 0.5 {
                 // screen-space: the height against its own blur
                 let g = gpu::point_g(&dev("in")?, Point::ToGray)?;
-                let b = gpu::blur_g(&g, f("radius", 6.0) * rs)?;
-                return call(opa::AGAINST_BLUR, &[1.0, f("intensity", 2.0)], &[&g, &b]);
+                let r = f("radius", 6.0) * rs;
+                let b = gpu::blur_g(&g, r)?;
+                let bands = [f("band_fine", 0.0), f("band_mid", 0.0), f("band_large", 0.0)].map(|e| e.clamp(-1.0, 1.0));
+                let flat = bands.iter().all(|e| e.abs() < 1e-6);
+                let (sx, sy) = crate::ops::ao_light_shift(f("light_intensity", 0.0), f("light_angle", 0.0), r);
+                if flat && (sx, sy) == (0, 0) {
+                    call(opa::AGAINST_BLUR, &[1.0, f("intensity", 2.0)], &[&g, &b])?
+                } else {
+                    // the detail bands need the blurs of half and a quarter of the radius (none below 2.5: CPU)
+                    let (b2, b4) = if flat { (b.clone(), b.clone()) } else { (gpu::blur_g(&g, r * 0.5)?, gpu::blur_g(&g, r * 0.25)?) };
+                    call(opa::AO_BANDS, &[f("intensity", 2.0), bands[0], bands[1], bands[2], sx as f32, sy as f32, flat as u32 as f32], &[&g, &b, &b2, &b4])?
+                }
+            } else {
+                let scale = if f("use_world_units", 0.0) > 0.5 { f("height_depth_cm", 30.0) / f("surface_size", 300.0).max(1.0) } else { f("height_depth", 0.1) };
+                let dirs = [4u32, 8, 16][(f("quality", 1.0).round() as usize).min(2)];
+                gpu::hbao_g(&dev("in")?, f("hbao_radius", 1.0).clamp(0.0, 1.0) * 0.25, scale, dirs, f("hbao_intensity", 1.0))?
+            };
+            match crate::ops::ao_levels(f("levels_low", 0.0), f("levels_mid", 0.5), f("levels_high", 1.0), f("out_low", 0.0), f("out_high", 1.0)) {
+                Some((lo, hi, gm, ol, oh)) => gpu::levels_g(&ao, lo, hi, gm, ol, oh),
+                None => Some(ao),
             }
-            let scale = if f("use_world_units", 0.0) > 0.5 { f("height_depth_cm", 30.0) / f("surface_size", 300.0).max(1.0) } else { f("height_depth", 0.1) };
-            let dirs = [4u32, 8, 16][(f("quality", 1.0).round() as usize).min(2)];
-            gpu::hbao_g(&dev("in")?, f("hbao_radius", 1.0).clamp(0.0, 1.0) * 0.25, scale, dirs, f("hbao_intensity", 1.0))
         }
         "threshold" => gpu::point_g(&dev("in")?, Point::Threshold(f("threshold", 0.5), f("softness", 0.0), f("mode", 0.0).max(0.0) as u32)),
         "clamp" => gpu::point_g(&dev("in")?, Point::Clamp(f("low", 0.0), f("high", 1.0), f("apply_alpha", 0.0) > 0.5)),

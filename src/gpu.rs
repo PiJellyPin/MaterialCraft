@@ -380,6 +380,7 @@ pub mod opa {
     pub const HEIGHT_COMBINE: u32 = 23;
     pub const AGAINST_BLUR: u32 = 24;
     pub const FORMAT: u32 = 25;
+    pub const AO_BANDS: u32 = 26;
 }
 
 /// Operation numbers of the `Kern::OpsB` kernel (`src/kernels/parts/ops_b.wgsl`).
