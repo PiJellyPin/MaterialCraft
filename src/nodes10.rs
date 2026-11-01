@@ -88,6 +88,7 @@ pub const LIBS: &[(&str, &str, &str)] = &[
     ("x_linear_srgb_to_acescg", "color_space_conversion", "linear_srgb_to_acescg"),
     ("x_mask_to_paths_2", "paths_tools", "mask_to_paths_2"),
     ("x_material_adjustment_blend", "material_adjustment_blend", "material_adjustment_blend"),
+    ("x_material_blend", "material_blend", "material_blend"),
     ("x_material_clone_patch", "clone_patch", "material_clone_patch"),
     ("x_material_color_blend", "material_color_blend", "material_color_blend"),
     ("x_material_crop", "crop", "material_crop"),
