@@ -586,6 +586,16 @@ impl Loader {
                     n.strs.insert(dn, v.enc());
                 }
             }
+            // a call records which package it calls into, so a user function that happens to share a library
+            // function's name is not taken for the library one
+            if n.kind == "sbs:fn:instance" {
+                if let Some(PVal::Const { raw, .. }) = values(&n).get("instance") {
+                    if let (_, Some(dep)) = crate::sbs::split_path(raw) {
+                        let file = self.pkg.doc.root.child("dependencies").and_then(|d| d.elems().find(|x| x.v("uid").as_deref() == Some(dep.as_str()))).and_then(|x| x.v("filename")).unwrap_or_else(|| "?".into());
+                        n.strs.insert("#instance_file".into(), file);
+                    }
+                }
+            }
             g.nodes.insert(id, n);
         }
         for pn in &list {
@@ -2307,6 +2317,12 @@ pub fn label(n: &Node, g: &Graph) -> String {
 
 /// The library function a function call node (`sbs:fn:instance`) calls, when it is one MaterialCraft has built in.
 pub fn library_call(n: &Node) -> Option<&'static crate::libfuncs::Entry> {
+    // a call into another package (or this one: `?himself`) is not a library call, whatever the function is named
+    if let Some(file) = n.strs.get("#instance_file") {
+        if !file.trim().to_ascii_lowercase().ends_with("functions.sbs") {
+            return None;
+        }
+    }
     match values(n).get("instance") {
         Some(PVal::Const { raw, .. }) => crate::libfuncs::entry(&crate::sbs::split_path(raw).0),
         _ => None,

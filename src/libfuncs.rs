@@ -4,8 +4,8 @@
 //!
 //! These are MaterialCraft's own implementations of the standard maths — written here as expressions and turned
 //! into ordinary `f_*` function graphs — so a material that drives a parameter with one of these library functions
-//! renders without Adobe Substance 3D Designer installed. Each one is checked against Designer's own output (see
-//! `tests/libfuncs.rs`). Nothing from Designer's package is shipped; the library file, when present, is only a
+//! renders without Adobe Substance 3D Designer installed. Each one except the Hash functions is checked against
+//! Designer's own output (see `tests/libfuncs.rs`). Nothing from Designer's package is shipped; the library file, when present, is only a
 //! fallback for functions not implemented here.
 //!
 //! The editor offers them in a function graph's Library panel ([`palette`]): a tile adds a call to the function

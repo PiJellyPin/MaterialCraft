@@ -521,3 +521,16 @@ fn visible_if_conditions_are_kept_and_follow_the_instance_values() {
     let again = open(&sbs_native::save_text(&back).unwrap());
     assert_eq!(shown(&again), ids);
 }
+
+#[test]
+fn a_users_function_with_a_library_name_is_not_taken_for_the_library_one() {
+    let mut n = Node { kind: "sbs:fn:instance".into(), ..Default::default() };
+    n.strs.insert("instance".into(), PVal::Const { ty: PTy::S, raw: "pkg:///Functions/Math/clamp?dependency=1".into(), rel: None }.enc());
+    // the loader records which package a call goes into
+    n.strs.insert("#instance_file".into(), "?himself".into());
+    assert!(sbs_native::library_call(&n).is_none(), "a call into this package is the user's own function");
+    n.strs.insert("#instance_file".into(), "sbs://functions.sbs".into());
+    assert!(sbs_native::library_call(&n).is_some(), "a call into the library package is the library function");
+    n.strs.remove("#instance_file");
+    assert!(sbs_native::library_call(&n).is_some(), "a call made in the editor has no dependency yet");
+}
