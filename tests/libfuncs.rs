@@ -932,3 +932,28 @@ fn sdf_calls_added_in_the_editor_render_and_save() {
     check(&back, "after reopening");
     assert_eq!(native::save_text(&back).unwrap(), text, "saving again must not change the file");
 }
+
+#[test]
+fn chained_symmetries_hit_the_work_budget_instead_of_hanging() {
+    // every Symmetry evaluates its input up to 8 times in new spaces: a few chained ones are fine, a long chain is
+    // refused with an error rather than taking 8^N evaluations per point
+    let mut s = Scene::new();
+    let mut n = s.sphere(0.5, [0.0; 3]);
+    for _ in 0..3 {
+        let all = s.vec3(1.0, 1.0, 1.0);
+        n = s.call("3d_sdf_op_symmetry", &[("sdf", n), ("mirror_axis", all)]);
+    }
+    let few = s.out(n);
+    assert!(few.run_sdf(&FnEnv::new([64.0, 64.0]), [0.2, 0.1, 0.0]).is_ok(), "three levels fit the budget");
+    let mut s = Scene::new();
+    let mut n = s.sphere(0.5, [0.0; 3]);
+    for _ in 0..6 {
+        let all = s.vec3(1.0, 1.0, 1.0);
+        n = s.call("3d_sdf_op_symmetry", &[("sdf", n), ("mirror_axis", all)]);
+    }
+    let many = s.out(n);
+    let t = std::time::Instant::now();
+    let r = many.run_sdf(&FnEnv::new([64.0, 64.0]), [0.2, 0.1, 0.0]);
+    assert!(r.is_err(), "six levels (8^6 evaluations) are over the budget: {r:?}");
+    assert!(t.elapsed().as_secs() < 5, "and it gives up quickly");
+}

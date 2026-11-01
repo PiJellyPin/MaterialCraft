@@ -907,6 +907,9 @@ pub struct Prog {
 /// Evaluates input `k` of the running function where the caller connected it, at an SDF position.
 type Force<'t> = &'t mut (dyn FnMut(usize, Option<[f64; 3]>) -> Result<Option<(Value, SdfMaterial)>, String> + 't);
 
+/// How many SDF spaces one evaluation of a function may enter (see `State::sdf_work`).
+const SDF_WORK_BUDGET: u32 = 4096;
+
 struct State<'t> {
     memo: Vec<Option<(Value, u64)>>,
     epoch: u64,
@@ -921,6 +924,9 @@ struct State<'t> {
     /// the materials of the results in `memo` (only in a function that uses SDF shapes)
     mats: Vec<Option<SdfMaterial>>,
     force: Option<Force<'t>>,
+    /// SDF spaces entered in this run: a shape evaluated in a new space costs a fresh evaluation of everything
+    /// below it, so chained Symmetry / Repeat nodes multiply up; past the budget the run is an error, not a hang
+    sdf_work: u32,
 }
 
 const MAX_CALL_DEPTH: usize = 8;
@@ -1059,7 +1065,7 @@ impl Prog {
 
     fn state<'t>(&self, vars: Vec<(String, Value)>, sdf_p: Option<[f64; 3]>, force: Option<Force<'t>>) -> State<'t> {
         let mats = if self.uses_sdf { vec![None; self.nodes.len()] } else { Vec::new() };
-        State { memo: vec![None; self.nodes.len()], epoch: 0, vars, rng: 0, sdf_p, mat: SdfMaterial::default(), touched: 0, mats, force }
+        State { memo: vec![None; self.nodes.len()], epoch: 0, vars, rng: 0, sdf_p, mat: SdfMaterial::default(), touched: 0, mats, force, sdf_work: 0 }
     }
 
     /// Like [`Prog::run`], with variables that live across runs: `vars` is what `f_get` reads before anything is
@@ -1098,6 +1104,10 @@ impl Prog {
         if st.sdf_p == p {
             let v = self.eval(i, env, pos, st)?;
             return Ok((v, st.mat));
+        }
+        st.sdf_work += 1;
+        if st.sdf_work > SDF_WORK_BUDGET {
+            return Err(format!("the SDF graph evaluates its shapes more than {SDF_WORK_BUDGET} times per point (too many nested Symmetry, Repeat or transform nodes)"));
         }
         let memo = std::mem::replace(&mut st.memo, vec![None; self.nodes.len()]);
         let mats = std::mem::replace(&mut st.mats, vec![None; self.nodes.len()]);
