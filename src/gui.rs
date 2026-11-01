@@ -913,6 +913,11 @@ impl App {
     fn undo(&mut self) {
         if let Some(prev) = self.undo.pop() {
             self.redo.push(std::mem::replace(&mut self.g, prev));
+            // renames made after this point are taken back with the graph
+            let depth = self.undo.len();
+            let (keep, undone): (Vec<_>, Vec<_>) = std::mem::take(&mut self.parent_renames).into_iter().partition(|r| r.0 <= depth);
+            self.parent_renames = keep;
+            self.parent_renames_redo.extend(undone.into_iter().rev());
             self.after_restore();
         }
     }
@@ -920,8 +925,22 @@ impl App {
     fn redo(&mut self) {
         if let Some(next) = self.redo.pop() {
             self.undo.push(std::mem::replace(&mut self.g, next));
+            let depth = self.undo.len();
+            while self.parent_renames_redo.last().map(|r| r.0 <= depth).unwrap_or(false) {
+                if let Some(r) = self.parent_renames_redo.pop() {
+                    self.parent_renames.push(r);
+                }
+            }
             self.after_restore();
         }
+    }
+
+    /// Renames made at this level can no longer be undone (the level is being left): they join the committed list.
+    fn commit_parent_renames(&mut self) {
+        for (_, me, old, new) in std::mem::take(&mut self.parent_renames) {
+            self.inherited_renames.push((me, old, new));
+        }
+        self.parent_renames_redo.clear();
     }
 
     fn after_restore(&mut self) {
