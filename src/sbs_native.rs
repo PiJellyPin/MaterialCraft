@@ -3610,7 +3610,7 @@ fn preset_value(e: &XElem, input: Option<PTy>) -> Option<PVal> {
     if let Some(c) = const_in(e).or_else(|| val.and_then(const_in)) {
         return Some(c);
     }
-    let raw = val.and_then(|x| x.attr("v")).or_else(|| val.map(|x| x.text()))?;
+    let raw = val.and_then(|x| x.attr("v")).or_else(|| val.map(|x| x.text())).or_else(|| e.attr("value"))?;
     let ty = preset_field(e, "type").and_then(|t| t.trim().parse::<u32>().ok()).and_then(PTy::from_type_code).or(input)?;
     Some(PVal::Const { ty, raw: raw.trim().to_string(), rel: None })
 }
@@ -3743,20 +3743,28 @@ pub fn node_presets(n: &Node, lib: &BTreeMap<String, Graph>) -> Vec<Preset> {
 /// Returns how many values were set.
 pub fn apply_preset(n: &mut Node, lib: &BTreeMap<String, Graph>, index: usize) -> Result<usize, String> {
     let p = node_presets(n, lib).into_iter().nth(index).ok_or_else(|| format!("the node's graph has no preset {}", index + 1))?;
-    let known: BTreeSet<String> = n.strs.get("#graph").and_then(|g| lib.get(g)).map(|g| inputs_info(g).into_iter().map(|i| i.id).collect()).unwrap_or_default();
+    let known: BTreeMap<String, PTy> = n.strs.get("#graph").and_then(|g| lib.get(g)).map(|g| inputs_info(g).into_iter().map(|i| (i.id, i.ty)).collect()).unwrap_or_default();
     let vals = values(n);
     let mut count = 0;
     for (id, val) in p.values {
-        if !known.contains(&id) {
-            continue;
-        }
+        let Some(&want) = known.get(&id) else { continue };
         let PVal::Const { ty, raw, .. } = val else { continue };
         let rel = match vals.get(&id) {
             Some(PVal::Dyn { .. }) => continue,
             Some(PVal::Const { rel, .. }) => rel.clone(),
             None => Some("0".into()),
         };
-        set_value(n, &id, Some(PVal::Const { ty, raw, rel }));
+        // the value in the input's own type: a preset written for an older version of the graph may differ
+        let v = if ty == want {
+            PVal::Const { ty, raw, rel }
+        } else {
+            let nums = PVal::Const { ty, raw: raw.clone(), rel: None }.nums();
+            if nums.is_empty() {
+                continue;
+            }
+            PVal::of_nums(want, &nums, rel)
+        };
+        set_value(n, &id, Some(v));
         count += 1;
     }
     Ok(count)
