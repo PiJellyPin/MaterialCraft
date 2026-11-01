@@ -46,6 +46,8 @@ gradient_radial shape = Round|Square
 triangle_grid* color_output = Smooth heights|Flat triangles|Edge distance
 
 # filters
+# the library Blend numbers its modes as the built-in blend does (assumed)
+blend/blend Blending_Mode = Copy|Add|Subtract|Multiply|Add / Sub|Max (Lighten)|Min (Darken)|Switch|Divide|Overlay|Screen|Soft light
 crop* filtering = Bilinear|Nearest
 bevel bevel_mode = Round|Angular
 mirror* mirror_type = Mirror X axis|Mirror Y axis|Mirror corner

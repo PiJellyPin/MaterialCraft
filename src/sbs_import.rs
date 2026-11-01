@@ -433,7 +433,7 @@ const FX_IMAGE_SLOTS: [&str; 8] = ["in", "in2", "in3", "in4", "in5", "in6", "in7
 
 /// Blending modes of the built-in blend, in the order the editor that writes these files lists them, mapped to ours.
 /// (Verified against sample files when they are available; see the import report.)
-fn blend_mode(v: i32) -> Option<f32> {
+pub(crate) fn blend_mode(v: i32) -> Option<f32> {
     Some(match v {
         0 => 0.0,   // copy
         1 => 1.0,   // add

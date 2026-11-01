@@ -308,3 +308,65 @@ fn the_graph_a_package_opens_on_can_be_deleted() {
     assert_eq!(back.meta.get("identifier").map(String::as_str), Some("second"));
     assert!(back.subgraphs.contains_key("third") && !back.subgraphs.contains_key("first"));
 }
+
+/// One pixel of library blend node `kind` over two uniform colours, with `set` written on the node.
+fn lib_blend_px(kind: &str, fg: [f32; 4], bg: [f32; 4], set: &[(&str, PTy, &str)]) -> [f32; 4] {
+    let mut g = sbs_native::new_package("b", 16);
+    for (id, c) in [(1, fg), (2, bg)] {
+        let mut u = Node { kind: "sbs:uniform".into(), ..Default::default() };
+        let raw = format!("{} {} {} {}", c[0], c[1], c[2], c[3]);
+        u.strs.insert("outputcolor".into(), PVal::Const { ty: PTy::F(4), raw, rel: None }.enc());
+        g.nodes.insert(id, u);
+    }
+    let mut n = Node { kind: kind.into(), ..Default::default() };
+    n.ins.insert("Foreground".into(), 1);
+    n.ins.insert("Background".into(), 2);
+    for (k, ty, raw) in set {
+        n.strs.insert((*k).into(), PVal::Const { ty: *ty, raw: (*raw).into(), rel: None }.enc());
+    }
+    g.nodes.insert(3, n);
+    let r = g.evaluate_all_cached_ex(16, &[3], &[], 0, &std::sync::Arc::new(materialcraft::graph::NodeCache::new(16)), None, false, &mut |_| {});
+    r.kept.get(&3).unwrap_or_else(|| panic!("{kind}: {:?}", r.errors.get(&3))).px[0]
+}
+
+fn near(a: [f32; 4], b: [f32; 4]) -> bool {
+    a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 2e-3)
+}
+
+#[test]
+fn the_library_blend_follows_its_mode_and_alpha_switch() {
+    let (fg, bg) = ([0.6, 0.2, 0.1, 1.0], [0.3, 0.5, 0.7, 1.0]);
+    let px = |set: &[(&str, PTy, &str)]| lib_blend_px("sbs:lib:blend/blend", fg, bg, set);
+    // the modes are numbered as on the built-in blend; the library's default is 1, Add
+    assert!(near(px(&[]), [0.9, 0.7, 0.8, 1.0]), "{:?}", px(&[]));
+    assert!(near(px(&[("Blending_Mode", PTy::I(1), "0")]), fg), "copy");
+    assert!(near(px(&[("Blending_Mode", PTy::I(1), "3")]), [0.18, 0.1, 0.07, 1.0]), "multiply");
+    assert!(near(px(&[("Blending_Mode", PTy::I(1), "6")]), [0.3, 0.2, 0.1, 1.0]), "min");
+    assert!(near(px(&[("Blending_Mode", PTy::I(1), "0"), ("Opacity", PTy::F(1), "0.5")]), [0.45, 0.35, 0.4, 1.0]), "opacity");
+    // with alpha blending the foreground's alpha weighs it in, without it the alpha is ignored
+    let half = [0.6, 0.2, 0.1, 0.5];
+    let copy = ("Blending_Mode", PTy::I(1), "0");
+    let on = lib_blend_px("sbs:lib:blend/blend", half, bg, &[copy]);
+    assert!(near(on, [0.45, 0.35, 0.4, 0.5]), "{on:?}");
+    let off = lib_blend_px("sbs:lib:blend/blend", half, bg, &[copy, ("Alpha_Blending", PTy::B, "0")]);
+    assert!(near(off, [0.6, 0.2, 0.1, 1.0]), "{off:?}");
+}
+
+#[test]
+fn the_library_color_blend_keeps_the_background_brightness() {
+    let lum = |c: [f32; 4]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    let (fg, bg) = ([0.6, 0.4, 0.3, 1.0], [0.3, 0.5, 0.7, 1.0]);
+    let px = |fg: [f32; 4], set: &[(&str, PTy, &str)]| lib_blend_px("sbs:lib:blend/color", fg, bg, set);
+    // the foreground's hue and saturation (its channel differences) at the background's brightness
+    let c = px(fg, &[]);
+    assert!((lum(c) - lum(bg)).abs() < 2e-3, "{c:?}");
+    assert!((c[0] - c[1] - (fg[0] - fg[1])).abs() < 2e-3 && (c[1] - c[2] - (fg[1] - fg[2])).abs() < 2e-3, "{c:?}");
+    // Opacity mixes it with the background
+    let h = px(fg, &[("Opacity", PTy::F(1), "0.5")]);
+    assert!(near(h, [(c[0] + bg[0]) / 2.0, (c[1] + bg[1]) / 2.0, (c[2] + bg[2]) / 2.0, 1.0]), "{h:?}");
+    assert!(near(px(fg, &[("Opacity", PTy::F(1), "0")]), bg));
+    // a transparent foreground leaves the background with alpha blending, and blends anyway without it
+    let clear = [0.6, 0.4, 0.3, 0.0];
+    assert!(near(px(clear, &[]), [0.3, 0.5, 0.7, 0.0]), "{:?}", px(clear, &[]));
+    assert!(near(px(clear, &[("Alpha_Blending", PTy::B, "0")]), c), "{:?}", px(clear, &[("Alpha_Blending", PTy::B, "0")]));
+}

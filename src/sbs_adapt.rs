@@ -1984,11 +1984,24 @@ fn lib_blend(ad: &mut Ad, mode: f32) {
     ad.slot("Background", "bg");
     ad.slot("Mask", "mask");
 }
+/// Blend: the general one, its blending mode numbered as on the built-in blend.
+fn bl_blend(ad: &mut Ad) {
+    let n = ad.take_i("Blending_Mode");
+    let mode = crate::sbs_import::blend_mode(n).unwrap_or_else(|| {
+        ad.note(format!("blending mode {n} is not known; Copy is used"));
+        0.0
+    });
+    lib_blend(ad, mode)
+}
 fn bl_add(ad: &mut Ad) {
     lib_blend(ad, 1.0)
 }
 fn bl_add_sub(ad: &mut Ad) {
     lib_blend(ad, 20.0)
+}
+/// Color: hue and saturation of the foreground on the brightness of the background.
+fn bl_color(ad: &mut Ad) {
+    lib_blend(ad, 17.0)
 }
 fn bl_color_burn(ad: &mut Ad) {
     lib_blend(ad, 11.0)
@@ -2266,6 +2279,8 @@ fn pavement(ad: &mut Ad) {
 pub(crate) const ADAPTERS: &[Adapter] = &[
     Adapter { ids: &["blend/add"], kind: "blend", f: bl_add },
     Adapter { ids: &["blend/add_sub"], kind: "blend", f: bl_add_sub },
+    Adapter { ids: &["blend/blend"], kind: "blend", f: bl_blend },
+    Adapter { ids: &["blend/color"], kind: "blend", f: bl_color },
     Adapter { ids: &["blend/color_burn"], kind: "blend", f: bl_color_burn },
     Adapter { ids: &["blend/color_dodge"], kind: "blend", f: bl_color_dodge },
     Adapter { ids: &["blend/copy"], kind: "blend", f: bl_copy },
