@@ -106,6 +106,10 @@ pub struct Funcs<'a> {
 struct Fun<'a> {
     prog: Prog,
     env: FnEnv<'a>,
+    /// which parameter it drives, for error messages
+    param: String,
+    /// the first error a run gave: the node reports it once the picture is made instead of hiding it in a zero
+    err: std::sync::Mutex<Option<String>>,
 }
 
 impl Fun<'_> {
@@ -114,9 +118,33 @@ impl Fun<'_> {
             Ok(Value::Num(n)) if n.lanes == 1 => [n.v[0] as f32; 4],
             Ok(Value::Num(n)) => [n.v[0] as f32, n.v[1] as f32, n.v[2] as f32, n.v[3] as f32],
             Ok(Value::Bool(b)) => [b as i32 as f32; 4],
-            _ => [0.0; 4],
+            Ok(_) => {
+                self.fail("the function did not return a number");
+                [0.0; 4]
+            }
+            Err(e) => {
+                self.fail(&e);
+                [0.0; 4]
+            }
         }
     }
+
+    fn fail(&self, msg: &str) {
+        let mut e = self.err.lock().unwrap_or_else(|p| p.into_inner());
+        if e.is_none() {
+            *e = Some(format!("{}: {msg}", self.param));
+        }
+    }
+}
+
+/// The first error any of the node's functions gave while the picture was made.
+fn check<'a>(funs: impl IntoIterator<Item = &'a Option<Fun<'a>>>) -> Result<(), Error> {
+    for f in funs.into_iter().flatten() {
+        if let Some(e) = f.err.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+            return Err(Error::BadParam(0, e.clone()));
+        }
+    }
+    Ok(())
 }
 
 /// The function driving parameter `param` of the node, ready to run once per shape or per pixel.
@@ -129,7 +157,7 @@ fn fun<'a>(cx: &Cx<'a>, funcs: Funcs<'a>, param: &str, images: Vec<(&'a str, &'a
     if let Some(gin) = funcs.inputs {
         env.graph_inputs = gin;
     }
-    Ok(Some(Fun { prog, env }))
+    Ok(Some(Fun { prog, env, param: param.to_string(), err: std::sync::Mutex::new(None) }))
 }
 
 fn var(name: &str, x: f32) -> (String, Value) {
@@ -1008,6 +1036,7 @@ fn shape_splatter<'a>(cx: &Cx<'a>, funcs: Funcs<'a>) -> Result<Tex, Error> {
     let make = |i: usize, f: &dyn Fn(usize) -> [f32; 4]| -> Option<Tex> {
         cx.wants(i).then(|| Tex { w: s, h: hs, px: (0..s * hs).map(f).collect() })
     };
+    check(function.iter().chain([&scene.sdf_fn, &scene.pattern_fn]))?;
     Ok(cx.pick(vec![
         make(0, &|i| grey(heights[i])),
         make(1, &|i| px[i].colour),
@@ -1117,7 +1146,7 @@ fn mapper<'a>(cx: &Cx<'a>, funcs: Funcs<'a>, colour: bool) -> Result<Tex, Error>
         patterns[(i as usize % count).min(7)].map_or([1.0; 4], |t| inside(t, u, v))
     };
 
-    Ok(Tex::from_fn(s, hs, |u, v| {
+    let picture = Tex::from_fn(s, hs, |u, v| {
         let base = background.map_or(plain, |t| t.sample(u, v));
         let a = nearest(uvw, u, v);
         if a[3] <= 0.0 {
@@ -1127,7 +1156,7 @@ fn mapper<'a>(cx: &Cx<'a>, funcs: Funcs<'a>, colour: bool) -> Result<Tex, Error>
         let r = |k: i32| rnd(id, k, seed);
         let which = match pick {
             1 => index,
-            2 => lo + ((r(1) * (hi - lo + 1) as f32) as u32).min(hi - lo),
+            2 => lo + ((r(1) * (hi - lo).saturating_add(1) as f32) as u32).min(hi - lo),
             _ => material,
         };
         let turns = d2.map_or([0.0; 4], |t| nearest(t, u, v));
@@ -1219,7 +1248,9 @@ fn mapper<'a>(cx: &Cx<'a>, funcs: Funcs<'a>, colour: bool) -> Result<Tex, Error>
         } else {
             grey(out[0])
         }
-    }))
+    });
+    check(custom.iter())?;
+    Ok(picture)
 }
 
 // ------------------------------------------------------------------------------------------------ to mask

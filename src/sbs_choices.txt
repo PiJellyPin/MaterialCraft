@@ -82,7 +82,8 @@ material_composite/material_composite Height_Blending_Mode = Copy|Add|Subtract|M
 material_composite/material_composite Opacity_Blending_Mode = Copy|Add|Subtract|Multiply|Add / Sub|Max|Min (assumed)
 material_composite/material_composite Emissive_Blending_Mode = Copy|Add|Subtract|Multiply|Add / Sub|Max|Min (assumed)
 material_composite/material_composite Normal_Method = Replace|Add Detail (assumed)
-# the Shape Splatter v2 family and Grid Atlas: read from the public node reference; the numbers are inferred
+# the Shape Splatter v2 family and Grid Atlas: read from the public node reference; the numbers are inferred (assumed),
+# and so are the parameter identifiers in sbs_library.txt: none was checked against a real file
 shape_splatter_v2 position_distribution_mode = 2D grid|Poisson disc|Uniform|Custom function
 shape_splatter_v2 position_distribution_sequence = R2|Halton
 shape_splatter_v2 output_normal_format = DirectX|OpenGL
