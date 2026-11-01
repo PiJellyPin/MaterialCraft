@@ -471,10 +471,14 @@ impl App {
                     acts.push(Act::EnterSub(g.clone()));
                 }
             }
-            if nr.secondary_clicked() && !self.sel.contains(&id) {
-                self.sel = [id].into_iter().collect();
-                self.active = Some(id);
-                self.view_pending = true;
+            if nr.secondary_clicked() {
+                // the node's menu acts on the node, not on links selected earlier
+                self.sel_links.clear();
+                if !self.sel.contains(&id) {
+                    self.sel = [id].into_iter().collect();
+                    self.active = Some(id);
+                    self.view_pending = true;
+                }
             }
             if let Some(e) = &err {
                 nr.clone().on_hover_text(e);

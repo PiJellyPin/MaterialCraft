@@ -402,6 +402,14 @@ struct App {
     g: Graph,
     parents: Vec<(Graph, String)>,
     undo: Vec<Graph>,
+    /// Output renames made inside a subgraph that the graphs it was opened from still have to learn about:
+    /// (undo depth at the rename, this graph's name, old name, new name). They are applied to those graphs on the way
+    /// out, so that Ctrl+Z inside the subgraph can take a rename back without leaving the parents pointing at a name
+    /// that no longer exists.
+    parent_renames: Vec<(usize, String, String, String)>,
+    parent_renames_redo: Vec<(usize, String, String, String)>,
+    /// renames already committed by a deeper level or an earlier edit, still to be applied to the remaining parents
+    inherited_renames: Vec<(String, String, String)>,
     redo: Vec<Graph>,
     edit_open: bool,
     sel: BTreeSet<u32>,
@@ -581,6 +589,9 @@ impl App {
             tex2d_range: None,
             parents: Vec::new(),
             undo: Vec::new(),
+            parent_renames: Vec::new(),
+            parent_renames_redo: Vec::new(),
+            inherited_renames: Vec::new(),
             redo: Vec::new(),
             edit_open: false,
             sel: BTreeSet::new(),
@@ -926,6 +937,8 @@ impl App {
     fn clear_history(&mut self) {
         self.undo.clear();
         self.redo.clear();
+        self.parent_renames.clear();
+        self.parent_renames_redo.clear();
         self.sel.clear();
         self.active = None;
         self.sel_comment = None;
@@ -1401,6 +1414,7 @@ impl App {
         self.maps.clear();
         self.maps_pending.clear();
         self.tex2d = None;
+        self.tex2d_opaque = None;
         self.thumbs.clear();
         self.thumb_px.clear();
         self.node_err.clear();
@@ -1423,6 +1437,7 @@ impl App {
         auto_layout_if_unplaced(&mut w);
         let parent = std::mem::replace(&mut self.g, w);
         self.parents.push((parent, name.to_string()));
+        self.commit_parent_renames();
         if !self.graph_tabs.iter().any(|t| t == name) {
             self.graph_tabs.push(name.to_string());
         }
@@ -1447,6 +1462,14 @@ impl App {
                 parent.subgraphs.insert(k, v);
             }
             parent.subgraphs.insert(name, sub);
+            // outputs renamed down here: the graph we return to reads them by their new names
+            self.commit_parent_renames();
+            for (me, old, new) in &self.inherited_renames {
+                materialcraft::sbs_native::retarget_output(&mut parent, me, old, new);
+            }
+            if self.parents.is_empty() {
+                self.inherited_renames.clear();
+            }
             self.g = parent;
             self.clear_views();
             self.clear_history();
@@ -2111,9 +2134,11 @@ impl App {
                         self.set_view2d(ctx, pic2d_of(t), opts);
                     } else {
                         self.tex2d = None;
+                        self.tex2d_opaque = None;
                     }
                 } else {
                     self.tex2d = None;
+                    self.tex2d_opaque = None;
                 }
                 if !self.job_view_only {
                     self.apply_maps(&mut r);

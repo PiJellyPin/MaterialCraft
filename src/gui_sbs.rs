@@ -230,7 +230,6 @@ impl App {
         }
     }
 
-    /// The parameter panel of a native node.
     /// Rename the graph output of output node `id`; the nodes of the other graphs that read it by name follow.
     fn rename_output(&mut self, id: u32, new: &str) {
         self.snap();
@@ -241,8 +240,11 @@ impl App {
                 for g in self.g.subgraphs.values_mut() {
                     native::retarget_output(g, &me, &old, &new);
                 }
-                for (p, _) in self.parents.iter_mut() {
-                    native::retarget_output(p, &me, &old, &new);
+                // the graphs this one was opened from learn the new name on the way out (see `parent_renames`), so
+                // that undoing the rename here cannot leave them pointing at a name that no longer exists
+                if !self.parents.is_empty() {
+                    let depth = self.undo.len();
+                    self.parent_renames.push((depth, me.clone(), old.clone(), new.clone()));
                 }
                 self.status(format!("Output '{old}' renamed to '{new}'"), true);
                 self.dirty = true;
@@ -257,6 +259,7 @@ impl App {
         }
     }
 
+    /// The parameter panel of a native node.
     fn sd_node_props(&mut self, ui: &mut egui::Ui, id: u32) {
         let node = self.g.nodes[&id].clone();
         let title = native::label(&node, &self.g);
