@@ -66,7 +66,9 @@ Help > Keyboard shortcuts opens the in-app reference.
 | Ctrl+Y or Ctrl+Shift+Z | Redo |
 | Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+D | Copy / cut / paste / duplicate nodes |
 | Ctrl+A | Select all nodes |
-| Delete or Backspace | Delete the selection |
+| Delete or Backspace | Delete the selection (nodes and selected links) |
+| Click a link (Shift-click adds) | Select the link |
+| X | Swap connections: the two selected links, one selected link with the next input of its node, or the first two inputs of the selected node |
 | Tab over the graph | Search for a node at the cursor |
 | F | Frame all nodes |
 | C | Add a comment frame around the selection |
