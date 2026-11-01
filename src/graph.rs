@@ -168,7 +168,7 @@ pub const SPECS: &[Spec] = &[
     s!("radial_blur", ["in"], [], "spin blur around a centre: mode(0 spin,1 zoom) samples angle x y amount radius"),
     s!("anisotropic_blur", ["in"], [], "blur stretched in one direction: intensity anisotropy angle"),
     s!("symmetry", ["in"], [], "mirror the image around a line: axis(0 x,1 y,2 both,3 diagonal,4 anti-diagonal,5 eight-fold,6 both diagonals) offset flip transfer(0 copy,1 add,2 sub,3 mul,4 add sub,5 max,6 min)"),
-    s!("skew", ["in"], [], "shear that keeps tiling: skew_x skew_y (whole numbers) align(0 centre,1 top left,2 bottom right)"),
+    s!("skew", ["in"], [], "shear that keeps tiling: skew_x skew_y (in tiles; fractions allowed) align(0 centre,1 top left,2 bottom right)"),
     s!("auto_levels", ["in"], [], "stretch values to the full range: per_channel"),
     s!("channel_mixer", ["in"], [], "mix colour channels: rr rg rb gr gg gb br bg bb mono"),
     s!("alpha_merge", ["rgb"], ["alpha"], "put a grayscale image into the alpha channel"),

@@ -1968,7 +1968,8 @@ pub fn make_tile_patch_stamped(t: &Tex, p: &TilePatch) -> Tex {
     let disorder = p.disorder.clamp(0.0, 1.0);
     // cells around a pixel that a patch can reach: its largest radius plus the shift of its centre
     let reach = 0.5 * sx.max(sy) * msize * (1.0 + warp.abs()) + 0.5 * disorder + 0.5;
-    let k = (reach.ceil() as i32).clamp(1, 6);
+    // the biggest patches with the most warp reach about 11 cells; the grid is at most 64 cells across
+    let k = (reach.ceil() as i32).clamp(1, 12).min(n);
     struct St {
         cx: f32,
         cy: f32,
