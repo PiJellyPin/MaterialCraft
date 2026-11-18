@@ -170,7 +170,7 @@ impl App {
             }
         };
         self.sel = [id].into_iter().collect();
-        self.active = Some(id);
+        self.set_active(Some(id));
         self.sel_comment = None;
         self.dirty = true;
         id

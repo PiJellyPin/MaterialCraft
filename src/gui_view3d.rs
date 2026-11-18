@@ -95,14 +95,22 @@ fn view3d_taps(g: &mut Graph, nid: u32) -> Vec<(String, u32)> {
         if usage == "out" || taps.iter().any(|(u, _)| u == usage) {
             continue;
         }
-        let mut t = Node { kind: "sbs:passthrough".into(), ..Default::default() };
-        t.ins.insert("input".into(), nid);
-        t.in_out.insert("input".into(), o);
-        let id = native::free_id(g);
-        g.nodes.insert(id, t);
-        taps.push((usage.to_string(), id));
+        taps.push((usage.to_string(), output_tap(g, nid, o, false)));
     }
     taps
+}
+
+fn output_tap(g: &mut Graph, nid: u32, out: String, preserve_format: bool) -> u32 {
+    let mut t = Node { kind: "sbs:passthrough".into(), ..Default::default() };
+    t.ins.insert("input".into(), nid);
+    t.in_out.insert("input".into(), out);
+    if preserve_format {
+        // A 32-bit float tap leaves the source pixels at their existing precision.
+        t.strs.insert("format".into(), PVal::Const { ty: PTy::I(1), raw: "3".into(), rel: Some("0".into()) }.enc());
+    }
+    let id = native::free_id(g);
+    g.nodes.insert(id, t);
+    id
 }
 
 fn hash_of<T: std::hash::Hash>(t: &T) -> u64 {
