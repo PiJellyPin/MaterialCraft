@@ -420,6 +420,7 @@ struct App {
     active: Option<u32>,
     /// Named 2D preview output, or the node's default when absent.
     active_out: Option<String>,
+    view2d_lock: Option<(u32, Option<String>)>,
     sel_comment: Option<usize>,
     clip: Vec<(u32, Node)>,
     pan: Vec2,
@@ -602,6 +603,7 @@ impl App {
             sel_links: BTreeSet::new(),
             active,
             active_out: None,
+            view2d_lock: None,
             sel_comment: None,
             clip: Vec::new(),
             pan: vec2(30.0, 30.0),
@@ -954,6 +956,7 @@ impl App {
         if self.active.map(|a| !g.nodes.contains_key(&a)).unwrap_or(false) {
             self.set_active(None);
         }
+        self.clear_missing_view2d_lock();
         self.sel_comment = None;
         self.dirty = true;
     }
@@ -1241,6 +1244,7 @@ impl App {
         self.g.outputs.retain(|(_, s)| !sel.contains(s));
         self.g.exposed.retain(|e| !sel.contains(&e.node));
         self.set_active(None);
+        self.clear_missing_view2d_lock();
         self.dirty = true;
     }
 
@@ -1434,6 +1438,7 @@ impl App {
     /// The shown graph changed (switch, open, enter or leave a subgraph): drop the previews of the old one right away
     /// instead of leaving them on screen until the new evaluation finishes.
     fn clear_views(&mut self) {
+        self.set_view2d_lock(None);
         self.active_out = None;
         self.view3d_node = None;
         self.maps.clear();
@@ -1839,28 +1844,58 @@ impl App {
         }
     }
 
-    fn set_active_out(&mut self, out: Option<String>) {
-        if self.active_out != out {
-            self.active_out = out;
+    fn set_view2d_lock(&mut self, lock: Option<(u32, Option<String>)>) {
+        if self.view2d_lock != lock {
+            self.view2d_lock = lock;
             self.view_pending = true;
         }
     }
 
+    fn toggle_view2d_lock(&mut self, id: u32) {
+        if self.view2d_lock.as_ref().is_some_and(|(node, _)| *node == id) {
+            self.set_view2d_lock(None);
+        } else if self.g.graph_kind() == "texture" && self.g.nodes.contains_key(&id) {
+            let out = if self.active == Some(id) { self.active_out.clone() } else { None };
+            self.set_view2d_lock(Some((id, out)));
+        }
+    }
+
+    fn clear_missing_view2d_lock(&mut self) {
+        if self.view2d_lock.as_ref().is_some_and(|(id, _)| !self.g.nodes.contains_key(id)) {
+            self.set_view2d_lock(None);
+            self.tex2d = None;
+            self.tex2d_opaque = None;
+            self.tex2d_range = None;
+        }
+    }
+
+    fn set_preview_output(&mut self, id: u32, out: Option<String>) {
+        let slot = match &mut self.view2d_lock {
+            Some((node, slot)) if *node == id => slot,
+            _ if self.active == Some(id) => &mut self.active_out,
+            _ => return,
+        };
+        if *slot != out {
+            *slot = out;
+            self.view_pending |= self.view_node() == Some(id);
+        }
+    }
+
     fn view_output(&self) -> Option<&str> {
-        let out = self.active_out.as_deref()?;
-        let id = self.view_node().filter(|id| Some(*id) == self.active)?;
+        let (id, out) = self.view2d_target()?;
+        let out = out?;
         let node = self.g.nodes.get(&id)?;
         sd_outs(node, &self.g.subgraphs).iter().any(|o| o == out).then_some(out)
     }
 
-    /// Node whose result the 2D view shows: the selected node, or for function graphs and pattern programs the
-    /// helper that runs the whole graph.
+    /// Node whose result the 2D view shows: the node locked to it, else the selected node, or for function graphs and
+    /// pattern programs the helper that runs the whole graph.
     fn view_node(&self) -> Option<u32> {
-        if self.g.graph_kind() != "texture" {
-            Some(materialcraft::graph::PREVIEW_ID)
-        } else {
-            self.active
-        }
+        self.view2d_target().map(|(id, _)| id)
+    }
+
+    fn view2d_target(&self) -> Option<(u32, Option<&str>)> {
+        resolve_view2d_target(&self.g, self.active, self.active_out.as_deref(), self.view2d_lock.as_ref())
     }
 
     /// Run one evaluation pass in the background (see [`Pass`]). An interactive pass evaluates only the viewed node
@@ -2405,6 +2440,42 @@ fn apply_theme(ctx: &egui::Context) {
     ctx.set_theme(egui::ThemePreference::Dark);
     ctx.set_style_of(egui::Theme::Dark, style.clone());
     ctx.set_style_of(egui::Theme::Light, style);
+}
+
+fn resolve_view2d_target<'a>(
+    g: &Graph,
+    active: Option<u32>,
+    active_out: Option<&'a str>,
+    lock: Option<&'a (u32, Option<String>)>,
+) -> Option<(u32, Option<&'a str>)> {
+    // Function graphs and pattern programs show the helper that runs the whole graph.
+    if g.graph_kind() != "texture" {
+        return Some((materialcraft::graph::PREVIEW_ID, None));
+    }
+    if let Some((id, out)) = lock.filter(|(id, _)| g.nodes.contains_key(id)) {
+        return Some((*id, out.as_deref()));
+    }
+    active.filter(|id| g.nodes.contains_key(id)).map(|id| (id, active_out))
+}
+
+#[cfg(test)]
+#[test]
+fn view2d_lock_takes_precedence_over_selection() {
+    let mut g = Graph::default();
+    g.nodes.insert(1, Node::default());
+    g.nodes.insert(2, Node::default());
+    let lock = (1, Some("locked output".to_string()));
+
+    assert_eq!(resolve_view2d_target(&g, Some(2), Some("selected output"), Some(&lock)), Some((1, Some("locked output"))));
+    assert_eq!(resolve_view2d_target(&g, Some(2), Some("selected output"), None), Some((2, Some("selected output"))));
+    assert_eq!(resolve_view2d_target(&g, Some(1), Some("selected output"), Some(&(1, None))), Some((1, None)));
+
+    g.nodes.remove(&1);
+    assert_eq!(resolve_view2d_target(&g, Some(2), None, Some(&lock)), Some((2, None)));
+    assert_eq!(resolve_view2d_target(&g, Some(1), None, Some(&lock)), None);
+
+    g.meta.insert("kind".into(), "function".into());
+    assert_eq!(resolve_view2d_target(&g, Some(2), None, None), Some((materialcraft::graph::PREVIEW_ID, None)));
 }
 
 include!("gui_color.rs");

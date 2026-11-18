@@ -1488,11 +1488,14 @@ impl App {
     // ------------------------------------------------------------ 2D view
     fn view2d_panel(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing = vec2(6.0, 4.0);
-        let node = self.active.and_then(|id| self.g.nodes.get(&id).map(|n| (id, n)));
+        let target = self.view2d_target();
+        let node = target.and_then(|(id, _)| self.g.nodes.get(&id).map(|n| (id, n)));
+        let node_id = node.map(|(id, _)| id);
+        let locked = self.view2d_lock.is_some();
         let outs = node.filter(|_| self.g.graph_kind() == "texture").map(|(_, n)| sd_outs(n, &self.g.subgraphs)).unwrap_or_default();
         // A graph instance's default is chosen by the evaluator and can differ from its first socket.
         let first_is_default = node.is_some_and(|(_, n)| n.kind != "sbs:graph");
-        let out = self.active_out.as_ref().and_then(|out| outs.iter().find(|o| *o == out))
+        let out = target.and_then(|(_, out)| out).and_then(|out| outs.iter().find(|o| *o == out))
             .or_else(|| outs.first().filter(|_| first_is_default));
         let node = node.map(|(id, n)| (id, native::label(n, &self.g)));
         let title = match (node, out) {
@@ -1500,6 +1503,7 @@ impl App {
             (Some((id, k)), None) => format!("{k} #{id} - 2D VIEW"),
             (None, _) => "2D VIEW".into(),
         };
+        let title = if locked { format!("{title} [locked]") } else { title };
         if panel_header(ui, &title, true) {
             self.show[3] = false;
         }
@@ -1551,15 +1555,15 @@ impl App {
         }
         ui.horizontal(|ui| {
             ui.add_space(4.0);
-            if !outs.is_empty() {
+            if let Some(id) = node_id.filter(|_| !outs.is_empty()) {
                 let shown = out.map_or_else(|| "Default".to_string(), |out| usage_label(out));
                 egui::ComboBox::from_id_salt("preview_output").width(75.0).selected_text(egui::RichText::new(shown).small()).show_ui(ui, |ui| {
                     if !first_is_default && ui.selectable_label(out.is_none(), "Default").clicked() {
-                        self.set_active_out(None);
+                        self.set_preview_output(id, None);
                     }
                     for name in &outs {
                         if ui.selectable_label(out == Some(name), usage_label(name)).clicked() {
-                            self.set_active_out(Some(name.clone()));
+                            self.set_preview_output(id, Some(name.clone()));
                         }
                     }
                 });
@@ -1579,6 +1583,13 @@ impl App {
                 if icon_btn(ui, Ic::Frame, "Fit to view (double-click)", true).clicked() {
                     self.z2d = 1.0;
                     self.pan2d = Vec2::ZERO;
+                }
+                if let Some(id) = node_id {
+                    if ui.selectable_label(locked, egui::RichText::new("Pin").small())
+                        .on_hover_text(if locked { "Unlock 2D view" } else { "Lock in 2D view" }).clicked()
+                    {
+                        self.toggle_view2d_lock(id);
+                    }
                 }
                 let before = self.tile_preview;
                 if icon_btn(ui, Ic::Grid, "Tile 2x2 preview", true).clicked() {
@@ -2528,7 +2539,7 @@ impl eframe::App for App {
             self.maps_size = 0;
             self.spawn_eval(first, Pass::Interactive);
         } else if self.view_pending && self.job.is_none() {
-            // only the selection moved: show that node's picture from the cache, leave everything else alone
+            // only the 2D preview target changed: show its picture from the cache
             self.view_pending = false;
             self.view_only_next = true;
             let size = self.pass_size.max(self.first_tier());

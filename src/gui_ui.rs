@@ -428,7 +428,7 @@ impl App {
                 self.sel_comment = None;
                 if self.active != Some(id) {
                     self.set_active(Some(id));
-                    self.view_pending = true;
+                    self.view_pending |= self.view2d_lock.is_none();
                 }
             }
             if !middle_down && nr.dragged_by(PointerButton::Primary) && (self.connecting.is_none() && self.connecting_in.is_none()) {
@@ -459,8 +459,10 @@ impl App {
                     }
                 }
             }
+            let graph_instance = matches!(s.kind.as_str(), "sbs:graph" | "sbs:fxmaps");
+            let toggle_preview = nr.double_clicked() && !graph_instance && self.g.graph_kind() == "texture";
             if nr.clicked() {
-                if mods.shift || mods.command {
+                if !toggle_preview && (mods.shift || mods.command) {
                     if !self.sel.remove(&id) {
                         self.sel.insert(id);
                     }
@@ -471,11 +473,13 @@ impl App {
                 self.sel_comment = None;
                 if self.active != Some(id) {
                     self.set_active(Some(id));
-                    self.view_pending = true;
+                    self.view_pending |= self.view2d_lock.is_none();
                 }
             }
-            if nr.double_clicked() {
-                if let (Some(g), "sbs:graph" | "sbs:fxmaps") = (&s.graph_name, s.kind.as_str()) {
+            if toggle_preview {
+                self.toggle_view2d_lock(id);
+            } else if graph_instance && nr.double_clicked() {
+                if let Some(g) = &s.graph_name {
                     acts.push(Act::EnterSub(g.clone()));
                 }
             }
@@ -485,7 +489,7 @@ impl App {
                 if !self.sel.contains(&id) {
                     self.sel = [id].into_iter().collect();
                     self.set_active(Some(id));
-                    self.view_pending = true;
+                    self.view_pending |= self.view2d_lock.is_none();
                 }
             }
             if let Some(e) = &err {
@@ -550,6 +554,14 @@ impl App {
                         }
                     }
                 });
+                if self.g.graph_kind() == "texture" {
+                    let locked = self.view2d_lock.as_ref().is_some_and(|(node, _)| *node == id);
+                    let label = if locked { "Unlock 2D view" } else { "Lock in 2D view" };
+                    if ui.button(label).clicked() {
+                        self.toggle_view2d_lock(id);
+                        ui.close();
+                    }
+                }
                 if is_material {
                     let label = if shown_3d { "Show graph outputs in 3D view" } else { "Show in 3D view" };
                     if ui.button(label).clicked() {
@@ -585,7 +597,7 @@ impl App {
                         _ => pins.get(&id).copied().unwrap_or(materialcraft::graph::Pin::Gray),
                     };
                     painter.circle(op, 4.8 * z, if used { Color32::from_rgb(70, 210, 180) } else { pin_fill(opin) }, Stroke::new(1.0_f32, Color32::BLACK));
-                    if self.active == Some(id) && self.g.graph_kind() == "texture" && self.view_output().map_or(oi == 0 && s.kind != "sbs:graph", |out| out == oname) {
+                    if self.view_node() == Some(id) && self.view_output().map_or(oi == 0 && s.kind != "sbs:graph", |out| out == oname) {
                         painter.circle_stroke(op, 7.0 * z, Stroke::new(1.0, Color32::from_rgb(110, 225, 200)));
                     }
                     if z >= 0.45 {
@@ -600,9 +612,9 @@ impl App {
                         self.sel = [id].into_iter().collect();
                         self.sel_links.clear();
                         self.sel_comment = None;
-                        self.view_pending |= self.active != Some(id);
+                        self.view_pending |= self.view2d_lock.is_none() && self.active != Some(id);
                         self.set_active(Some(id));
-                        self.set_active_out(Some(oname.clone()));
+                        self.set_preview_output(id, Some(oname.clone()));
                     }
                 }
             } else if s.kind != "sbs:output" {
@@ -763,7 +775,7 @@ impl App {
                     }
                     if self.active.is_none() {
                         self.set_active(self.sel.iter().next().copied());
-                        self.view_pending = true;
+                        self.view_pending |= self.view2d_lock.is_none();
                     }
                     self.rubber = None;
                 }
@@ -937,7 +949,7 @@ impl App {
             Act::SelectAll => {
                 self.sel = self.g.nodes.keys().copied().collect();
                 self.set_active(self.sel.iter().next().copied());
-                self.view_pending = true;
+                self.view_pending |= self.view2d_lock.is_none();
             }
             Act::Comment => self.add_comment(),
             Act::EnterSub(n) => {
@@ -1519,6 +1531,7 @@ impl App {
                     ("Delete", "delete selection (nodes or links)"),
                     ("Click a link", "select it (Shift+click adds)"),
                     ("X", "swap connections: two selected links, or a node's first two inputs"),
+                    ("Double-click a texture node", "lock or unlock the 2D view"),
                     ("Double-click a graph node", "open its graph"),
                     ("Ctrl+S / Ctrl+O", "save / open"),
                 ] {
