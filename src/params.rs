@@ -639,7 +639,13 @@ pub fn pdefs_base(kind: &str) -> Vec<PD> {
             pf("mask_hue_range", "Mask hue range", 30.0, 0.0, 180.0), pf("mask_chroma_range", "Mask chroma range", 0.5, 0.0, 1.0), pf("mask_luma_range", "Mask luma range", 0.5, 0.0, 1.0),
             pf("mask_smoothness", "Mask smoothness", 0.3, 0.0, 2.0),
         ],
-        "height_blend" => vec![pf("opacity", "Opacity", 1.0, 0.0, 1.0), pf("contrast", "Height transition", 0.5, 0.0, 2.0), pe("output", "Output", 0, &["Height", "Blend mask"])],
+        "height_blend" => vec![
+            pf("height_position", "Height Position", 0.5, 0.0, 1.0),
+            pf("contrast", "Contrast", 0.5, 0.0, 1.0),
+            pe("mode", "Mode", 0, &["Balanced", "Bottom"]),
+            pf("opacity", "Opacity", 1.0, 0.0, 1.0),
+            pe("output", "First Output", 0, &["Height", "Blend mask"]),
+        ],
         "make_it_tile_photo" => vec![
             pf("width", "Mask size H", 0.6, 0.01, 1.0),
             pf("width_v", "Mask size V", 0.6, 0.01, 1.0),

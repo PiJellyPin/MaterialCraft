@@ -1796,12 +1796,13 @@ fn vector_warp(ad: &mut Ad) {
 fn height_blend(ad: &mut Ad) {
     ad.same("opacity", "opacity");
     ad.same("contrast", "contrast");
-    if (ad.take("height_position") - 0.5).abs() > 1e-4 {
-        ad.note("the height position is not reproduced");
+    ad.same("height_position", "height_position");
+    if ad.v("mode", 0) != 0.0 {
+        ad.note("the Bottom mode is approximated");
     }
-    if ad.take_i("mode") != 0 {
-        ad.note("the blend mode is approximated");
-    }
+    ad.same("mode", "mode");
+    ad.out("blended_height", "height");
+    ad.out("height_mask", "height_mask");
     ad.slot("height_top", "fg");
     ad.slot("height_bottom", "bg");
     ad.slot("mask", "mask");

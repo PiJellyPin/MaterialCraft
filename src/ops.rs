@@ -1829,15 +1829,21 @@ pub fn curvature_from_normal(n: &Tex, smooth_px: f32, intensity: f32) -> Tex {
 }
 
 /// Returns (height, blend factor).
-pub fn height_blend(bg: &Tex, fg: &Tex, mask: Option<&Tex>, opacity: f32, contrast: f32) -> (Tex, Tex) {
+pub fn height_blend(bg: &Tex, fg: &Tex, mask: Option<&Tex>, opacity: f32, contrast: f32, position: f32, bottom: bool) -> (Tex, Tex) {
     let mut h = bg.clone();
     let mut f = bg.clone();
+    let offset = position.clamp(0.0, 1.0) - 0.5;
+    let width = (1.0 - contrast.clamp(0.0, 1.0)) * 0.5;
+    let opacity = opacity.clamp(0.0, 1.0);
     for i in 0..h.px.len() {
-        let m = mask.and_then(|m| m.px.get(i)).map(|p| lum(*p)).unwrap_or(1.0) * opacity;
+        let m = mask.and_then(|m| m.px.get(i)).map(|p| lum(*p).clamp(0.0, 1.0)).unwrap_or(1.0);
         let (b, g) = (lum(bg.px[i]), lum(fg.px.get(i).copied().unwrap_or([0.0; 4])));
-        let score = (g + (m - 0.5) * 2.0) - b;
-        let k = (0.5 + score * contrast.max(0.05) * 2.0).clamp(0.0, 1.0) * sm(0.0, 0.08, m);
-        let out = b + (g - b) * k;
+        // Approximate Substance's Bottom mode by measuring the top height from the local bottom surface.
+        let top = g + offset + if bottom { b } else { 0.0 };
+        let delta = top - b;
+        let coverage = sm(-width, width, delta);
+        let k = coverage * opacity * m;
+        let out = b + (top.clamp(0.0, 1.0) - b) * k;
         h.px[i] = [out, out, out, 1.0];
         f.px[i] = [k, k, k, 1.0];
     }

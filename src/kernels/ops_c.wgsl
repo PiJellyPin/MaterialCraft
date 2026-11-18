@@ -541,15 +541,18 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             o = spA(su, sv);
         }
         case 9u: {
-            // height_blend: ia bg, ib fg, ic mask; has_mask, opacity, contrast, output (0 height, 1 mask)
+            // height_blend: ia bg, ib fg, ic mask; has_mask, opacity, contrast, mask_out, position, mode
             var m = 1.0;
-            if (P(0u) > 0.5) { m = lum(ic[i]); }
-            m = m * P(1u);
+            if (P(0u) > 0.5) { m = clamp(lum(ic[i]), 0.0, 1.0); }
             let b = lum(ia[i]);
             let g = lum(ib[i]);
-            let score = (g + (m - 0.5) * 2.0) - b;
-            let k = clamp(0.5 + score * max(P(2u), 0.05) * 2.0, 0.0, 1.0) * smoothc(0.0, 0.08, m);
-            if (P(3u) > 0.5) { o = grey(k); } else { o = grey(b + (g - b) * k); }
+            let offset = clamp(P(4u), 0.0, 1.0) - 0.5;
+            let top = g + offset + select(0.0, b, P(5u) >= 0.5);
+            let delta = top - b;
+            let width = (1.0 - clamp(P(2u), 0.0, 1.0)) * 0.5;
+            let coverage = smoothc(-width, width, delta);
+            let k = coverage * clamp(P(1u), 0.0, 1.0) * m;
+            if (P(3u) > 0.5) { o = grey(k); } else { o = grey(b + (clamp(top, 0.0, 1.0) - b) * k); }
         }
         case 10u: {
             // make_it_tile_photo: width_h, width_v, sharp_h, sharp_v, warp_h, warp_v; seed in n

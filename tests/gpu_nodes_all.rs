@@ -101,6 +101,8 @@ const CASES: &[(&str, usize, f32)] = &[
     ("leak_streaks in=@1 noise=@2 length=60 angle=0.25 intensity=1.5", 1, 5e-3),
     ("make_it_tile_mirror in=@1 mode=0", 1, 2e-3),
     ("height_blend bg=@1 fg=@2 mask=@5 opacity=0.9 contrast=0.6", 1, 2e-3),
+    ("height_blend bg=@1 fg=@2 height_position=0.7 contrast=0.9 mode=1", 1, 2e-3),
+    ("height_blend bg=@1 fg=@2 mask=@5 height_position=0.3 contrast=0.8 output=1", 1, 2e-3),
     ("make_it_tile_photo in=@1 width=0.5", 1, 2e-3),
     ("make_it_tile_photo in=@1 width=0.3 width_v=0.05 sharp=0.6 sharp_v=1 warp=0.8 warp_v=-0.5 seed=3", 1, 2e-3),
     ("dirt in=@6 amount=0.6 noise=@2", 3, 2e-3),

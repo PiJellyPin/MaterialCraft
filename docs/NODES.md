@@ -217,7 +217,7 @@ Nodes with several outputs: `path_sample` (position, width, height, side); `shap
 | Node | Inputs | Description and parameters |
 |---|---|---|
 | `curvature_smooth` | in | smooth curvature from a normal map |
-| `height_blend` | bg, fg, mask | blend two height maps: opacity contrast output |
+| `height_blend` | bg, fg, mask | blend two height maps (outputs: height, height_mask): height_position contrast mode opacity output |
 | `edge_wear` | in, noise | edge wear mask from a height map: amount width contrast |
 | `dirt` | in, noise | dirt mask from an ambient occlusion map: amount contrast |
 | `dust` | in, noise | dust mask from a normal map: amount contrast |
