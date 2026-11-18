@@ -108,27 +108,16 @@ impl App {
             "fxmap" => Fam::Pattern,
             _ => Fam::Texture,
         };
-        let mut v: Vec<Entry> = sdefs::palette(fam)
-            .into_iter()
-            .map(|d| Entry {
-                label: d.label.to_string(),
-                kind: d.kind.to_string(),
-                sub: None,
-                cat: d.category,
-                doc: match d.library {
-                    Some((p, g)) => format!("library graph {g} ({p})"),
-                    None => format!("{} node", d.sd),
-                },
-                nums: vec![],
-            })
-            .collect();
+        let mut v: Vec<Entry> = Self::palette_entries(fam).collect();
         // a function graph also calls the library functions (MaterialCraft's own implementations, saved as calls
         // to the library package, as the files it reads have them)
         if fam == Fam::Function {
-            for f in materialcraft::libfuncs::palette() {
-                let ins = f.inputs.iter().map(|(id, _)| *id).collect::<Vec<_>>().join(", ");
-                v.push(Entry { label: f.label.to_string(), kind: "sbs:fn:instance".into(), sub: Some(f.path.clone()), cat: f.category, doc: format!("library function {} ({ins})", f.path), nums: vec![] });
-            }
+            v.extend(Self::builtin_function_entries());
+            let me = native::graph_name(&self.g);
+            v.extend(self.package_function_entries().into_iter().filter(|e| {
+                let name = e.sub.as_deref().unwrap().trim_start_matches("pkg:///");
+                !native::graphs_needed(&self.g, name).contains(&me)
+            }));
         }
         v.push(Entry { label: "Comment".into(), kind: "comment".into(), sub: None, cat: "Utility", doc: "small note placed at the cursor".into(), nums: vec![] });
         v.push(Entry { label: "Frame".into(), kind: "frame".into(), sub: None, cat: "Utility", doc: "frame around the selected nodes".into(), nums: vec![] });
@@ -152,6 +141,40 @@ impl App {
             v.push(Entry { label: format!("graph: {name}"), kind: "sbs:graph".into(), sub: Some(name.clone()), cat: "Graphs", doc: format!("instance of graph '{name}'"), nums: vec![] });
         }
         v
+    }
+
+    fn palette_entries(fam: Fam) -> impl Iterator<Item = Entry> {
+        sdefs::palette(fam)
+            .into_iter()
+            .map(|d| Entry {
+                label: d.label.to_string(),
+                kind: d.kind.to_string(),
+                sub: None,
+                cat: d.category,
+                doc: match d.library {
+                    Some((p, g)) => format!("library graph {g} ({p})"),
+                    None => format!("{} node", d.sd),
+                },
+                nums: vec![],
+            })
+    }
+
+    fn builtin_function_entries() -> impl Iterator<Item = Entry> {
+        materialcraft::libfuncs::palette().iter().map(|f| {
+            let ins = f.inputs.iter().map(|(id, _)| *id).collect::<Vec<_>>().join(", ");
+            Entry { label: f.label.to_string(), kind: "sbs:fn:instance".into(), sub: Some(f.path.clone()), cat: f.category, doc: format!("library function {} ({ins})", f.path), nums: vec![] }
+        })
+    }
+
+    fn package_function_entries(&self) -> Vec<Entry> {
+        native::package_functions(&self.g).map(|(name, _)| Entry {
+            label: format!("Call {name}"),
+            kind: "sbs:fn:instance".into(),
+            sub: Some(format!("pkg:///{name}")),
+            cat: "Package functions",
+            doc: format!("Package function {name}"),
+            nums: vec![],
+        }).collect()
     }
 
     /// Add a node of a native kind at `pos`.
@@ -221,9 +244,9 @@ impl App {
 
     /// Write an `.sbs` package (the graph on screen and everything else of the package).
     fn save_sbs(&mut self, p: PathBuf) {
-        self.goto_root();
+        let Some(root) = self.package_root(self.pkg_active) else { return };
         let p = if is_sbs(&p) { p } else { p.with_extension("sbs") };
-        let text = match native::save_text(&self.g) {
+        let text = match native::save_text(&root) {
             Ok(t) => t,
             Err(e) => return self.status(format!("Save failed: {e}"), false),
         };
@@ -316,7 +339,7 @@ impl App {
         let mut sets: Vec<(String, Option<PVal>)> = Vec::new();
         let mut strs: Vec<(String, Option<String>)> = Vec::new();
         let mut enter: Option<String> = None;
-        let mut make_fn: Option<(String, PVal)> = None;
+        let mut make_fn: Option<(String, PVal, Option<String>)> = None;
         let mut usage: Option<String> = None;
         let mut expose: Option<(String, String)> = None;
         let mut unexpose: Option<String> = None;
@@ -587,8 +610,31 @@ impl App {
                                 if self.g.sd.as_ref().map(|s| s.role == native::Role::Graph).unwrap_or(false) && p.group != "Base" && tool(ui, "P", "Expose: make this a parameter of the graph, set by whoever uses it") {
                                     expose = Some((p.id.clone(), p.label.clone()));
                                 }
-                                if !matches!(p.ty, PTy::S | PTy::Path) && tool(ui, "fn", "Compute this value with a function") {
-                                    make_fn = Some((p.id.clone(), cur.clone()));
+                                if node.kind.starts_with("sbs:") && self.g.graph_kind() != "function" && !matches!(p.ty, PTy::S | PTy::Path) {
+                                    ui.menu_button("fn", |ui| {
+                                        if ui.button("New inline function").clicked() {
+                                            make_fn = Some((p.id.clone(), cur.clone(), None));
+                                            ui.close();
+                                        }
+                                        ui.menu_button("Package functions", |ui| {
+                                            let mut any = false;
+                                            for (name, g) in native::package_functions(&self.g) {
+                                                any = true;
+                                                let ready = g.sd.as_ref().and_then(|s| s.root).is_some_and(|id| g.nodes.contains_key(&id));
+                                                if ui.add_enabled(ready, egui::Button::new(&name))
+                                                    .on_hover_text("Uses default arguments. Open the inline function to connect other values.")
+                                                    .on_disabled_hover_text("Set the function’s result first.")
+                                                    .clicked()
+                                                {
+                                                    make_fn = Some((p.id.clone(), cur.clone(), Some(name)));
+                                                    ui.close();
+                                                }
+                                            }
+                                            if !any {
+                                                ui.label("No package functions yet");
+                                            }
+                                        });
+                                    }).response.on_hover_text("Compute this value with a function");
                                 }
                                 if p.value.is_some() && tool(ui, "↺", "Back to the default") {
                                     sets.push((p.id.clone(), None));
@@ -777,10 +823,18 @@ impl App {
                 }
             }
         }
-        if let Some((param, cur)) = make_fn {
+        if let Some((param, cur, target)) = make_fn {
             self.snap();
-            let owner = self.g.meta.get("identifier").cloned().unwrap_or_default();
-            if let Some(pkg) = self.g.sd.as_ref().map(|s| s.pkg.clone()) {
+            if let Some(target) = target {
+                match native::drive_with_package_function(&mut self.g, id, &param, &cur, &target) {
+                    Ok(_) => self.dirty = true,
+                    Err(e) => {
+                        self.undo.pop();
+                        self.status(e, false);
+                    }
+                }
+            } else if let Some(pkg) = self.g.sd.as_ref().map(|s| s.pkg.clone()) {
+                let owner = native::graph_name(&self.g);
                 let name = native::make_function(&mut self.g.subgraphs, pkg, &owner, id, &param, &cur);
                 if let Some(n) = self.g.nodes.get_mut(&id) {
                     native::set_value(n, &param, Some(PVal::Dyn { graph: name, rel: Some("0".into()) }));
@@ -1102,7 +1156,7 @@ impl App {
 impl App {
     /// The functions of an `.sbs` package: open them, or make a new one.
     fn sd_functions_panel(&mut self, ui: &mut egui::Ui) {
-        let list: Vec<String> = native::all_graphs(&self.g).into_iter().filter(|(_, g)| g.sd.as_ref().map(|s| s.role == native::Role::Function).unwrap_or(false)).map(|(k, _)| k).collect();
+        let list: Vec<String> = native::package_functions(&self.g).map(|(k, _)| k).collect();
         let mut open = None;
         let mut make = false;
         egui::CollapsingHeader::new(egui::RichText::new("FUNCTIONS").strong()).default_open(!list.is_empty()).show(ui, |ui| {
@@ -1122,26 +1176,10 @@ impl App {
             }
         });
         if let Some(n) = open {
-            self.acts.push(Act::EnterSub(n));
+            self.acts.push(self.package_graph_tab(&n));
         }
         if make {
-            let all = native::all_graphs(&self.g);
-            let mut k = 1;
-            let name = loop {
-                let c = format!("function_{k}");
-                if !all.contains_key(&c) && !self.parents.iter().any(|(p, _)| p.subgraphs.contains_key(&c)) {
-                    break c;
-                }
-                k += 1;
-            };
-            self.snap();
-            match native::create_graph(&mut self.g, &name, "function") {
-                Ok(()) => {
-                    self.dirty = true;
-                    self.status(format!("Created function '{name}'. Open it to add nodes; the node marked as the result gives its value."), true);
-                }
-                Err(e) => self.status(e, false),
-            }
+            self.acts.push(Act::NewFunctionIn(self.pkg_active));
         }
     }
 }

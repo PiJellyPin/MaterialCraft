@@ -298,7 +298,10 @@ impl Cx {
 
     fn function_name(&mut self, src: usize, path: &str) -> Option<String> {
         let path = path.trim_matches('/').to_string();
-        let f = self.srcs[src].pkg.functions.iter().find(|f| (if f.folder.is_empty() { f.identifier.clone() } else { format!("{}/{}", f.folder, f.identifier) }) == path || f.identifier == path)?.clone();
+        let functions = &self.srcs[src].pkg.functions;
+        let f = functions.iter().find(|f| {
+            if f.folder.is_empty() { f.identifier == path } else { format!("{}/{}", f.folder, f.identifier) == path }
+        }).or_else(|| functions.iter().find(|f| f.identifier == path))?.clone();
         let key = (src, path);
         if let Some(n) = self.fn_names.get(&key) {
             return Some(n.clone());
@@ -902,7 +905,9 @@ impl Cx {
                     let (fpath, dep) = sbs::split_path(&path);
                     // a Substance Designer library function (Functions/Math/clamp, ...) implemented natively, so the
                     // material renders without Designer installed; the file is only consulted for ones not built in
-                    if let Some(name) = crate::libfuncs::resolve_path(&fpath) {
+                    let dependency = dep.as_deref().and_then(|uid| self.srcs[fc.src].pkg.dependency(uid));
+                    let builtin = dep.is_none() || dependency.is_some_and(|d| d.filename.trim().to_ascii_lowercase().ends_with("functions.sbs") && d.filename.starts_with("sbs://"));
+                    if let Some(name) = crate::libfuncs::resolve_path(&fpath).filter(|_| builtin) {
                         self.ensure_libfuncs();
                         if let Some(l) = self.fn_out_lanes(name) {
                             inst_lanes.insert(fnode.uid.clone(), l);
@@ -915,6 +920,7 @@ impl Cx {
                         continue;
                     }
                     let called = match dep {
+                        _ if dependency.is_some_and(|d| d.filename.trim() == "?himself") => self.function_name(fc.src, &fpath),
                         None => self.function_name(fc.src, &fpath),
                         // a function in another package of the project; a Substance Designer library package
                         // (sbs://...) is not consulted — its functions are built in (see crate::libfuncs)

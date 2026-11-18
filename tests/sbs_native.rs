@@ -690,3 +690,66 @@ fn a_graph_node_applies_a_preset_of_its_graph() {
     let out = sbs_native::save_text(&mat).unwrap();
     assert!(out.contains("label=\"Halfway\" usertags=\"mine\"") && out.contains("<unknown keep=\"1\"/>") && out.contains("identifier=\"gone\""), "{out}");
 }
+
+#[test]
+fn package_function_creation_and_listing_round_trip() {
+    let mut g = sbs_native::new_package("Material", 32);
+    sbs_native::create_graph(&mut g, "Function", "function").unwrap();
+    assert!(sbs_native::create_graph(&mut g, "Function", "function").is_err());
+    assert!(sbs_native::create_graph(&mut g, "bad name", "function").is_err());
+    sbs_native::create_graph(&mut g, "Other", "graph").unwrap();
+
+    for root in [&g, &open(&sbs_native::save_text(&g).unwrap())] {
+        let functions: Vec<_> = sbs_native::package_functions(root).map(|(name, f)| {
+            assert!(sbs_native::listed(f));
+            assert!(f.subgraphs.is_empty());
+            name
+        }).collect();
+        assert_eq!(functions, ["Function"]);
+    }
+}
+
+#[test]
+fn package_function_rename_follows_calls_and_drives_parameter() {
+    let mut g = sbs_native::new_package("Material", 32);
+    let target = "Functions/Math/clamp";
+    sbs_native::create_graph(&mut g, target, "function").unwrap();
+    sbs_native::create_graph(&mut g, "Caller", "function").unwrap();
+    let current = PVal::of_nums(PTy::F(4), &[0.0, 0.0, 0.0, 1.0], Some("0".into()));
+    let mut get = sbs_native::new_node("sbs:fn:get_float4", None, [0.0, 0.0]);
+    sbs_native::set_value(&mut get, "get_float4", Some(PVal::Const { ty: PTy::S, raw: "tint".into(), rel: None }));
+    let f = g.subgraphs.get_mut(target).unwrap();
+    f.nodes.insert(1, get);
+    let sd = f.sd.as_mut().unwrap();
+    sd.root = Some(1);
+    let input = XDoc::parse(r#"<paraminput><identifier v="tint"/><defaultValue><constantValueFloat4 v="0.25 0.5 0.75 1"/></defaultValue></paraminput>"#).unwrap();
+    sd.inputs.push(input.root);
+
+    let caller = g.subgraphs.get_mut("Caller").unwrap();
+    caller.nodes.insert(1, sbs_native::new_node("sbs:fn:instance", Some(&format!("pkg:///{target}")), [0.0, 0.0]));
+    caller.nodes.insert(2, sbs_native::new_node("sbs:fn:instance", Some(target), [0.0, 0.0]));
+    caller.sd.as_mut().unwrap().root = Some(1);
+
+    g.nodes.insert(1, sbs_native::new_node("sbs:uniform", None, [0.0, 0.0]));
+    let inline = sbs_native::drive_with_package_function(&mut g, 1, "outputcolor", &current, target).unwrap();
+    assert!(!sbs_native::listed(&g.subgraphs[&inline]));
+    assert_eq!(sbs_native::slots(&g.subgraphs[&inline].nodes[&1], &g.subgraphs), ["tint"]);
+
+    // Exercise calls loaded with a self dependency, including a name shared with a builtin.
+    let mut g = open(&sbs_native::save_text(&g).unwrap());
+    let r = g.evaluate_all_cached_ex(16, &[1], &[], 0, &std::sync::Arc::new(materialcraft::graph::NodeCache::new(16)), None, false, &mut |_| {});
+    assert!(near(r.kept[&1].px[0], [0.25, 0.5, 0.75, 1.0]), "pixel {:?}, errors {:?}, import {}", r.kept[&1].px[0], r.errors, sbs_native::lower(&g).unwrap().report.to_text());
+    let new = sbs_native::rename_graph(&mut g, target, "Tint").unwrap();
+    assert_eq!(new, "Functions/Math/Tint");
+    let new = sbs_native::rename_graph(&mut g, &new, "Palette/Caller").unwrap();
+    let new = new.as_str();
+    let g = open(&sbs_native::save_text(&g).unwrap());
+    assert!(!g.subgraphs.contains_key(target));
+    assert_eq!(sbs_native::package_call_target(&g.subgraphs["Caller"].nodes[&1]).as_deref(), Some(new));
+    assert_eq!(sbs_native::package_call_target(&g.subgraphs[&inline].nodes[&1]).as_deref(), Some(new));
+    assert!(sbs_native::library_call(&g.subgraphs["Caller"].nodes[&2]).is_some());
+    assert!(sbs_native::graphs_needed(&g, "Material").contains(new));
+    assert!(sbs_native::graph_users(&g, new).contains(&inline));
+    let r = g.evaluate_all_cached_ex(16, &[1], &[], 0, &std::sync::Arc::new(materialcraft::graph::NodeCache::new(16)), None, false, &mut |_| {});
+    assert!(near(r.kept[&1].px[0], [0.25, 0.5, 0.75, 1.0]));
+}

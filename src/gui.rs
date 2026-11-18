@@ -721,6 +721,12 @@ impl App {
         }
     }
 
+    /// Open a reusable graph by its package name, including a function-only package's main graph.
+    fn package_graph_tab(&self, name: &str) -> Act {
+        let root = self.parents.first().map(|p| &p.0).unwrap_or(&self.g);
+        Act::OpenGraphTab(if name == native::graph_name(root) { String::new() } else { name.to_string() })
+    }
+
     fn close_graph_tab(&mut self, name: &str) {
         let current = self.parents.last().map(|(_, n)| n.clone()).unwrap_or_default();
         self.graph_tabs.retain(|t| t != name);
@@ -1467,20 +1473,7 @@ impl App {
 
     fn exit_sub(&mut self) {
         if let Some((mut parent, name)) = self.parents.pop() {
-            let mut sub = std::mem::take(&mut self.g);
-            materialcraft::sbs_native::adopt_package(&mut parent, &sub);
-            let mut libs = std::mem::take(&mut sub.subgraphs);
-            materialcraft::sbs_native::drop_owner(&mut libs, &parent);
-            // splines made or edited inside the subgraph live in the package
-            for (k, v) in std::mem::take(&mut sub.resources) {
-                parent.resources.insert(k, v);
-            }
-            // the view's copies of the other graphs are the newest: graphs opened from here (a function of one of
-            // its nodes) were edited in them
-            for (k, v) in libs {
-                parent.subgraphs.insert(k, v);
-            }
-            parent.subgraphs.insert(name, sub);
+            Self::put_back_subgraph(&mut parent, name, std::mem::take(&mut self.g));
             // outputs renamed down here: the graph we return to reads them by their new names
             self.commit_parent_renames();
             for (me, old, new) in &self.inherited_renames {
@@ -1494,6 +1487,16 @@ impl App {
             self.clear_history();
             self.fit_view();
         }
+    }
+
+    fn put_back_subgraph(parent: &mut Graph, name: String, mut sub: Graph) {
+        native::adopt_package(parent, &sub);
+        let mut libs = std::mem::take(&mut sub.subgraphs);
+        native::drop_owner(&mut libs, parent);
+        parent.resources.append(&mut sub.resources);
+        // The view's copies include edits to other graphs made while it was open.
+        parent.subgraphs.append(&mut libs);
+        parent.subgraphs.insert(name, sub);
     }
 
     fn goto_root(&mut self) {
@@ -1569,16 +1572,10 @@ impl App {
             let mut cur = self.g.clone();
             for (parent, name) in self.parents.iter().rev() {
                 let mut p = parent.clone();
-                let mut sub = cur;
-                let mut libs = std::mem::take(&mut sub.subgraphs);
-                materialcraft::sbs_native::drop_owner(&mut libs, &p);
-                for (k, v) in std::mem::take(&mut sub.resources) {
-                    p.resources.insert(k, v);
+                Self::put_back_subgraph(&mut p, name.clone(), cur);
+                for (me, old, new) in self.inherited_renames.iter().map(|(me, old, new)| (me, old, new)).chain(self.parent_renames.iter().map(|(_, me, old, new)| (me, old, new))) {
+                    native::retarget_output(&mut p, me, old, new);
                 }
-                for (k, v) in libs {
-                    p.subgraphs.insert(k, v);
-                }
-                p.subgraphs.insert(name.clone(), sub);
                 cur = p;
             }
             Some(cur)
