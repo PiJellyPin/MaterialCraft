@@ -312,6 +312,7 @@ struct EvalResult {
     /// the 2D view image and the GPU textures are converted on the worker thread so the editor never stalls on them
     img2d: Option<Pic2d>,
     img_for: Option<u32>,
+    img_out: Option<String>,
     gpu: Option<gpu3d::GpuMaps>,
     /// the normal map turned to the OpenGL convention the viewers light (made on the worker thread too)
     normal_gl: Option<std::sync::Arc<Tex>>,
@@ -363,6 +364,7 @@ struct Partial {
     gen: u64,
     img2d: Pic2d,
     img_for: u32,
+    img_out: Option<String>,
 }
 
 struct MtlxUi {
@@ -416,6 +418,8 @@ struct App {
     /// selected links, each named by the node it feeds and that node's input slot
     sel_links: BTreeSet<(u32, String)>,
     active: Option<u32>,
+    /// Named 2D preview output, or the node's default when absent.
+    active_out: Option<String>,
     sel_comment: Option<usize>,
     clip: Vec<(u32, Node)>,
     pan: Vec2,
@@ -597,6 +601,7 @@ impl App {
             sel: BTreeSet::new(),
             sel_links: BTreeSet::new(),
             active,
+            active_out: None,
             sel_comment: None,
             clip: Vec::new(),
             pan: vec2(30.0, 30.0),
@@ -747,7 +752,7 @@ impl App {
                 let id = self.sd_add_node("sbs:graph", Some(&first), pos, false);
                 self.undo.pop();
                 self.sel = [id].into_iter().collect();
-                self.active = Some(id);
+                self.set_active(Some(id));
                 self.dirty = true;
                 self.modified = true;
                 let more = if warnings.is_empty() { String::new() } else { format!(" ({})", warnings.join("; ")) };
@@ -834,7 +839,7 @@ impl App {
         self.thumb_px.clear();
         self.screen = Screen::Editor;
         self.fit_view();
-        self.active = self.g.nodes.keys().next().copied();
+        self.set_active(self.g.nodes.keys().next().copied());
     }
 
     /// Make open package `i` the one shown in the editor.
@@ -947,7 +952,7 @@ impl App {
         let g = &self.g;
         self.sel.retain(|i| g.nodes.contains_key(i));
         if self.active.map(|a| !g.nodes.contains_key(&a)).unwrap_or(false) {
-            self.active = None;
+            self.set_active(None);
         }
         self.sel_comment = None;
         self.dirty = true;
@@ -959,7 +964,7 @@ impl App {
         self.parent_renames.clear();
         self.parent_renames_redo.clear();
         self.sel.clear();
-        self.active = None;
+        self.set_active(None);
         self.sel_comment = None;
         self.dirty = true;
     }
@@ -1131,7 +1136,7 @@ impl App {
             n.ins.insert("inputNodeOutput".into(), from);
         }
         self.sel = [id].into_iter().collect();
-        self.active = Some(id);
+        self.set_active(Some(id));
         self.dirty = true;
     }
 
@@ -1235,7 +1240,7 @@ impl App {
         }
         self.g.outputs.retain(|(_, s)| !sel.contains(s));
         self.g.exposed.retain(|e| !sel.contains(&e.node));
-        self.active = None;
+        self.set_active(None);
         self.dirty = true;
     }
 
@@ -1391,7 +1396,7 @@ impl App {
             self.g.nodes.insert(map[&id], nn);
             new_sel.insert(map[&id]);
         }
-        self.active = new_sel.iter().next_back().copied();
+        self.set_active(new_sel.iter().next_back().copied());
         self.sel = new_sel;
         self.dirty = true;
     }
@@ -1429,6 +1434,7 @@ impl App {
     /// The shown graph changed (switch, open, enter or leave a subgraph): drop the previews of the old one right away
     /// instead of leaving them on screen until the new evaluation finishes.
     fn clear_views(&mut self) {
+        self.active_out = None;
         self.view3d_node = None;
         self.maps.clear();
         self.maps_pending.clear();
@@ -1826,6 +1832,27 @@ impl App {
         }
     }
 
+    fn set_active(&mut self, node: Option<u32>) {
+        if self.active != node {
+            self.active = node;
+            self.active_out = None;
+        }
+    }
+
+    fn set_active_out(&mut self, out: Option<String>) {
+        if self.active_out != out {
+            self.active_out = out;
+            self.view_pending = true;
+        }
+    }
+
+    fn view_output(&self) -> Option<&str> {
+        let out = self.active_out.as_deref()?;
+        let id = self.view_node().filter(|id| Some(*id) == self.active)?;
+        let node = self.g.nodes.get(&id)?;
+        sd_outs(node, &self.g.subgraphs).iter().any(|o| o == out).then_some(out)
+    }
+
     /// Node whose result the 2D view shows: the selected node, or for function graphs and pattern programs the
     /// helper that runs the whole graph.
     fn view_node(&self) -> Option<u32> {
@@ -1868,7 +1895,11 @@ impl App {
         self.job_started = std::time::Instant::now();
         let maps = maps && !view_only;
         let mut keep: Vec<u32> = if view_only { Vec::new() } else { outputs.iter().map(|o| o.1).collect() };
-        let active = self.view_node();
+        let view_node = self.view_node();
+        let img_out = self.view_output().map(str::to_owned);
+        // Like the 3D view, read a named output through a pass-through on the evaluation copy.
+        let tap = view_node.zip(img_out.as_ref()).map(|(id, out)| output_tap(&mut g, id, out.clone(), true));
+        let active = tap.or(view_node);
         if let Some(a) = active {
             keep.push(a);
         }
@@ -1887,10 +1918,10 @@ impl App {
         std::thread::spawn(move || {
             let started = std::time::Instant::now();
             let mut on_first = |p: &Pending| {
-                if let Some(a) = active {
+                if let Some(a) = view_node {
                     if !tex::stale(gen) {
                         if let Ok((img, _)) = view_of(p) {
-                            let _ = ptx.send(Partial { gen, img2d: img, img_for: a });
+                            let _ = ptx.send(Partial { gen, img2d: img, img_for: a, img_out: img_out.clone() });
                         }
                     }
                 }
@@ -2000,6 +2031,14 @@ impl App {
             if tex::stale(gen) {
                 return;
             }
+            if let Some(id) = tap {
+                r.kept.remove(&id);
+                r.thumbs.remove(&id);
+                r.sizes.remove(&id);
+                if let (Some(node), Some(err)) = (view_node, r.errors.remove(&id)) {
+                    r.errors.entry(node).or_insert(err);
+                }
+            }
             let _ = tx.send(EvalResult {
                 gen,
                 thumbs: r.thumbs,
@@ -2008,7 +2047,8 @@ impl App {
                 outputs,
                 sizes: r.sizes,
                 img2d,
-                img_for: active,
+                img_for: view_node,
+                img_out,
                 gpu,
                 normal_gl,
                 pending,
@@ -2048,7 +2088,7 @@ impl App {
                 latest = Some(p);
             }
             if let Some(p) = latest {
-                if p.gen == self.gen && self.view_node() == Some(p.img_for) {
+                if p.gen == self.gen && self.view_node() == Some(p.img_for) && self.view_output() == p.img_out.as_deref() {
                     // a picture smaller than the final one is shown smooth, not as blocks, until the full size arrives
                     let crisp = p.img2d.img.size[0] >= self.preview_full();
                     let opts = egui::TextureOptions {
@@ -2143,21 +2183,29 @@ impl App {
                     return;
                 }
                 self.pass_size = r.size;
-                self.tex2d_range = if self.view_node() == r.img_for { r.range2d } else { self.view_node().and_then(|a| r.kept.get(&a)).map(|t| {
-                    t.px.iter().fold((f32::MAX, f32::MIN), |m, p| (m.0.min(p[0]).min(p[1]).min(p[2]), m.1.max(p[0]).max(p[1]).max(p[2])))
-                }) };
-                if let Some(a) = self.view_node() {
-                    if let (Some(img), true) = (r.img2d.take(), r.img_for == Some(a)) {
+                let matched = self.view_node() == r.img_for && self.view_output() == r.img_out.as_deref();
+                if matched && r.img2d.is_some() {
+                    self.tex2d_range = r.range2d;
+                    if let Some(img) = r.img2d.take() {
                         self.set_view2d(ctx, img, opts);
-                    } else if let Some(t) = r.kept.get(&a) {
+                    }
+                } else if matched && self.view_output().is_some() {
+                    // a named output that produced no picture
+                    self.tex2d_range = None;
+                    self.tex2d = None;
+                    self.tex2d_opaque = None;
+                } else if self.view_output().is_none() {
+                    // the default output: the worker's picture is missing or is of another node, use the kept result
+                    let tex = self.view_node().and_then(|a| r.kept.get(&a));
+                    self.tex2d_range = tex.map(|t| {
+                        t.px.iter().fold((f32::MAX, f32::MIN), |m, p| (m.0.min(p[0]).min(p[1]).min(p[2]), m.1.max(p[0]).max(p[1]).max(p[2])))
+                    });
+                    if let Some(t) = tex {
                         self.set_view2d(ctx, pic2d_of(t), opts);
                     } else {
                         self.tex2d = None;
                         self.tex2d_opaque = None;
                     }
-                } else {
-                    self.tex2d = None;
-                    self.tex2d_opaque = None;
                 }
                 if !self.job_view_only {
                     self.apply_maps(&mut r);

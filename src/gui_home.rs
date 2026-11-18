@@ -1488,9 +1488,17 @@ impl App {
     // ------------------------------------------------------------ 2D view
     fn view2d_panel(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing = vec2(6.0, 4.0);
-        let title = match self.active.and_then(|a| self.g.nodes.get(&a).map(|n| (a, materialcraft::sbs_native::label(n, &self.g)))) {
-            Some((id, k)) => format!("{k} #{id} - 2D VIEW"),
-            None => "2D VIEW".into(),
+        let node = self.active.and_then(|id| self.g.nodes.get(&id).map(|n| (id, n)));
+        let outs = node.filter(|_| self.g.graph_kind() == "texture").map(|(_, n)| sd_outs(n, &self.g.subgraphs)).unwrap_or_default();
+        // A graph instance's default is chosen by the evaluator and can differ from its first socket.
+        let first_is_default = node.is_some_and(|(_, n)| n.kind != "sbs:graph");
+        let out = self.active_out.as_ref().and_then(|out| outs.iter().find(|o| *o == out))
+            .or_else(|| outs.first().filter(|_| first_is_default));
+        let node = node.map(|(id, n)| (id, native::label(n, &self.g)));
+        let title = match (node, out) {
+            (Some((id, k)), Some(out)) => format!("{k} #{id} : {out} - 2D VIEW"),
+            (Some((id, k)), None) => format!("{k} #{id} - 2D VIEW"),
+            (None, _) => "2D VIEW".into(),
         };
         if panel_header(ui, &title, true) {
             self.show[3] = false;
@@ -1543,6 +1551,19 @@ impl App {
         }
         ui.horizontal(|ui| {
             ui.add_space(4.0);
+            if !outs.is_empty() {
+                let shown = out.map_or_else(|| "Default".to_string(), |out| usage_label(out));
+                egui::ComboBox::from_id_salt("preview_output").width(75.0).selected_text(egui::RichText::new(shown).small()).show_ui(ui, |ui| {
+                    if !first_is_default && ui.selectable_label(out.is_none(), "Default").clicked() {
+                        self.set_active_out(None);
+                    }
+                    for name in &outs {
+                        if ui.selectable_label(out == Some(name), usage_label(name)).clicked() {
+                            self.set_active_out(Some(name.clone()));
+                        }
+                    }
+                });
+            }
             ui.small(format!("{} x {} (RGBA, {}bpc)", self.tex2d_size.0, self.tex2d_size.1, if self.g.meta.get("output_format").map(|s| s == "16").unwrap_or(false) { 16 } else { 8 }));
             if let Some((lo, hi)) = self.tex2d_range {
                 if lo <= hi {

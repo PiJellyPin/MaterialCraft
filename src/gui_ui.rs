@@ -427,7 +427,7 @@ impl App {
                 }
                 self.sel_comment = None;
                 if self.active != Some(id) {
-                    self.active = Some(id);
+                    self.set_active(Some(id));
                     self.view_pending = true;
                 }
             }
@@ -470,7 +470,7 @@ impl App {
                 }
                 self.sel_comment = None;
                 if self.active != Some(id) {
-                    self.active = Some(id);
+                    self.set_active(Some(id));
                     self.view_pending = true;
                 }
             }
@@ -484,7 +484,7 @@ impl App {
                 self.sel_links.clear();
                 if !self.sel.contains(&id) {
                     self.sel = [id].into_iter().collect();
-                    self.active = Some(id);
+                    self.set_active(Some(id));
                     self.view_pending = true;
                 }
             }
@@ -585,14 +585,24 @@ impl App {
                         _ => pins.get(&id).copied().unwrap_or(materialcraft::graph::Pin::Gray),
                     };
                     painter.circle(op, 4.8 * z, if used { Color32::from_rgb(70, 210, 180) } else { pin_fill(opin) }, Stroke::new(1.0_f32, Color32::BLACK));
+                    if self.active == Some(id) && self.g.graph_kind() == "texture" && self.view_output().map_or(oi == 0 && s.kind != "sbs:graph", |out| out == oname) {
+                        painter.circle_stroke(op, 7.0 * z, Stroke::new(1.0, Color32::from_rgb(110, 225, 200)));
+                    }
                     if z >= 0.45 {
                         painter.text(op + vec2(9.0 * z, 0.0), Align2::LEFT_CENTER, usage_label(oname), FontId::proportional(10.5 * z.max(0.7)), Color32::from_gray(175));
                     }
-                    let pr = ui.interact(Rect::from_center_size(op, Vec2::splat(14.0 * z)), Id::new(("out", id, oi)), Sense::drag());
+                    let pr = ui.interact(Rect::from_center_size(op, Vec2::splat(14.0 * z)), Id::new(("out", id, oi)), Sense::click_and_drag());
                     if !middle_down && pr.drag_started_by(PointerButton::Primary) {
                         self.connecting = Some(id);
                         self.connecting_out = Some(oname.clone());
                         self.relink_all = mods.shift && !self.children_of(id, Some(oname.as_str())).is_empty();
+                    } else if !middle_down && pr.clicked_by(PointerButton::Primary) {
+                        self.sel = [id].into_iter().collect();
+                        self.sel_links.clear();
+                        self.sel_comment = None;
+                        self.view_pending |= self.active != Some(id);
+                        self.set_active(Some(id));
+                        self.set_active_out(Some(oname.clone()));
                     }
                 }
             } else if s.kind != "sbs:output" {
@@ -752,7 +762,7 @@ impl App {
                         }
                     }
                     if self.active.is_none() {
-                        self.active = self.sel.iter().next().copied();
+                        self.set_active(self.sel.iter().next().copied());
                         self.view_pending = true;
                     }
                     self.rubber = None;
@@ -926,7 +936,7 @@ impl App {
             Act::SwapLinks => self.swap_links(),
             Act::SelectAll => {
                 self.sel = self.g.nodes.keys().copied().collect();
-                self.active = self.sel.iter().next().copied();
+                self.set_active(self.sel.iter().next().copied());
                 self.view_pending = true;
             }
             Act::Comment => self.add_comment(),

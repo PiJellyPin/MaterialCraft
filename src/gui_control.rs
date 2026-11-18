@@ -234,7 +234,7 @@ impl App {
             let fresh: BTreeSet<u32> = self.g.nodes.keys().copied().filter(|i| !before.contains(i)).collect();
             if let Some(last) = fresh.iter().next_back() {
                 self.sel = fresh.clone();
-                self.active = Some(*last);
+                self.set_active(Some(*last));
             }
             if was_small && self.g.nodes.len() > 1 {
                 self.need_fit = true;
