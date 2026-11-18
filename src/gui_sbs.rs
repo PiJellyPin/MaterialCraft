@@ -6,7 +6,7 @@
 // them: sockets and names of the nodes, the parameter panel, the node list, opening, saving and new packages.
 
 use materialcraft::sbs_defs::{self as sdefs, Fam, PTy};
-use materialcraft::sbs_native::{self as native, PVal};
+use materialcraft::sbs_native::{self as native, GradientStyle, PVal};
 
 /// Interned names for the editor's `&'static str` sockets (a package's own input names are only known at run time).
 fn intern(s: &str) -> &'static str {
@@ -56,23 +56,6 @@ fn sd_color(kind: &str) -> Color32 {
 }
 
 /// A float slider range for a parameter without one.
-/// The colour a gradient's keys give at `t` (linear between keys, flat past the ends).
-fn ramp_at(keys: &[(f32, [f32; 4])], t: f32) -> [f32; 4] {
-    let mut keys = keys.to_vec();
-    keys.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-    let Some(first) = keys.first() else { return [t, t, t, 1.0] };
-    if t <= first.0 {
-        return first.1;
-    }
-    for w in keys.windows(2) {
-        if t <= w[1].0 {
-            let f = if w[1].0 > w[0].0 { (t - w[0].0) / (w[1].0 - w[0].0) } else { 1.0 };
-            return [0, 1, 2, 3].map(|i| w[0].1[i] + (w[1].1[i] - w[0].1[i]) * f);
-        }
-    }
-    keys[keys.len() - 1].1
-}
-
 fn sd_range(p: &native::ParamInfo) -> (f32, f32) {
     match p.range {
         Some(r) => r,
@@ -434,54 +417,140 @@ impl App {
                 }
             });
         }
-        // ---- the colour keys of a Gradient Map
-        let mut new_keys: Option<Vec<(f32, [f32; 4])>> = None;
+        let mut new_keys = None;
+        let mut new_style = None;
         if node.kind == "sbs:gradient" {
-            let keys = native::gradient_keys(&node);
+            let mut keys = native::gradient_keys(&node);
+            let mut style = native::gradient_style(&node);
             egui::CollapsingHeader::new(egui::RichText::new("GRADIENT").strong()).id_salt(("sd_grad", id)).default_open(true).show(ui, |ui| {
-                // the ramp as it maps: black (left) to white (right)
-                let (r, _) = ui.allocate_exact_size(vec2(ui.available_width().min(260.0), 16.0), Sense::hover());
-                let steps = 64;
-                for i in 0..steps {
-                    let t = (i as f32 + 0.5) / steps as f32;
-                    let c = ramp_at(&keys, t);
-                    let x0 = r.left() + r.width() * i as f32 / steps as f32;
-                    let x1 = r.left() + r.width() * (i + 1) as f32 / steps as f32;
-                    let to8 = |v: f32| (v.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-                    ui.painter().rect_filled(egui::Rect::from_min_max(egui::pos2(x0, r.top()), egui::pos2(x1 + 0.5, r.bottom())), 0.0, Color32::from_rgb(to8(c[0]), to8(c[1]), to8(c[2])));
+                let label = |style| match style {
+                    GradientStyle::Linear => "Linear",
+                    GradientStyle::Smooth => "Smooth",
+                    GradientStyle::Constant => "Constant",
+                };
+                egui::ComboBox::from_id_salt(("sd_grad_style", id)).selected_text(label(style)).show_ui(ui, |ui| {
+                    for choice in [GradientStyle::Linear, GradientStyle::Smooth, GradientStyle::Constant] {
+                        if ui.selectable_value(&mut style, choice, label(choice)).changed() {
+                            new_style = Some(style);
+                        }
+                    }
+                });
+                let sample = |keys: &[_], t| materialcraft::ops::ramp_at(keys, t, style as u32, 1.0);
+
+                let (r, _) = ui.allocate_exact_size(vec2(ui.available_width().clamp(1.0, 260.0), 16.0), Sense::hover());
+                let (markers, response) = ui.allocate_exact_size(vec2(r.width(), 14.0), Sense::click_and_drag());
+                let select_id = response.id.with("selected");
+                let mut selected = ui.data(|d| d.get_temp::<usize>(select_id)).filter(|&k| k < keys.len());
+                let x_at = |p: f32| markers.left() + markers.width() * p.clamp(0.0, 1.0);
+                let nearest = |x: f32| {
+                    keys.iter().enumerate()
+                        .map(|(k, (p, _))| (k, (x_at(*p) - x).abs()))
+                        .filter(|&(_, d)| d <= 8.0)
+                        .min_by(|a, b| a.1.total_cmp(&b.1))
+                        .map(|(k, _)| k)
+                };
+                if response.clicked() {
+                    selected = response.interact_pointer_pos().and_then(|p| nearest(p.x));
                 }
-                let mut edited = keys.clone();
+                if response.drag_started() {
+                    selected = ui.input(|i| i.pointer.press_origin()).and_then(|p| nearest(p.x));
+                }
+
                 let mut changed = false;
-                let mut remove: Option<usize> = None;
-                for (k, (pos, col)) in edited.iter_mut().enumerate() {
-                    ui.horizontal(|ui| {
-                        changed |= ui.add(egui::Slider::new(pos, 0.0..=1.0)).on_hover_text("Position of the key along the ramp").changed();
-                        changed |= color_field(ui, Id::new(("ramp_key", k)), col, true).changed();
-                        if keys.len() > 1 && ui.small_button("x").on_hover_text("Remove this key").clicked() {
+                if response.dragged() {
+                    if let (Some(k), Some(pointer)) = (selected, response.interact_pointer_pos()) {
+                        let pos = ((pointer.x - markers.left()) / markers.width()).clamp(0.0, 1.0);
+                        if keys[k].0 != pos {
+                            let (_, col) = keys.remove(k);
+                            let at = keys.partition_point(|key| key.0 <= pos);
+                            keys.insert(at, (pos, col));
+                            selected = Some(at);
+                            changed = true;
+                        }
+                    }
+                }
+                let mut remove = None;
+                let mut swap = None;
+                let count = keys.len();
+                for k in 0..count {
+                    let lo = if k == 0 { 0.0 } else { keys[k - 1].0.clamp(0.0, 1.0) };
+                    let hi = if k + 1 == count { 1.0 } else { keys[k + 1].0.clamp(0.0, 1.0) };
+                    let (pos, col) = &mut keys[k];
+                    let row = ui.push_id(k, |ui| ui.horizontal(|ui| {
+                        changed |= ui.add(egui::DragValue::new(pos).range(lo..=hi).clamp_existing_to_range(false).speed(0.005).fixed_decimals(3))
+                            .on_hover_text("Position of the key. Drag its ramp marker to move past other keys.").changed();
+                        changed |= color_field(ui, select_id.with(k), col, true).changed();
+                        if ui.add_enabled(k > 0, egui::Button::new("↑").small()).on_hover_text("Swap colour with the previous key").clicked() {
+                            swap = Some((k, k - 1));
+                        }
+                        if ui.add_enabled(k + 1 < count, egui::Button::new("↓").small()).on_hover_text("Swap colour with the next key").clicked() {
+                            swap = Some((k, k + 1));
+                        }
+                        if ui.add_enabled(count > 1, egui::Button::new("×").small()).on_hover_text("Remove this key").clicked() {
                             remove = Some(k);
                         }
-                    });
+                    })).inner.response;
+                    if selected == Some(k) {
+                        ui.painter().rect_stroke(row.rect.expand(2.0), 3.0, ui.visuals().selection.stroke, egui::StrokeKind::Outside);
+                    }
+                }
+                if let Some((a, b)) = swap {
+                    let col = keys[a].1;
+                    keys[a].1 = keys[b].1;
+                    keys[b].1 = col;
+                    selected = Some(b);
+                    changed = true;
                 }
                 if let Some(k) = remove {
-                    edited.remove(k);
+                    keys.remove(k);
+                    selected = selected.and_then(|s| match s.cmp(&k) {
+                        std::cmp::Ordering::Less => Some(s),
+                        std::cmp::Ordering::Equal => None,
+                        std::cmp::Ordering::Greater => Some(s - 1),
+                    });
                     changed = true;
                 }
                 if ui.button("+ Add key").on_hover_text("A new key halfway along the widest gap").clicked() {
                     let mut at = 0.5;
                     let mut gap = -1.0;
-                    let mut sorted = keys.clone();
-                    sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-                    for w in sorted.windows(2) {
+                    for w in keys.windows(2) {
                         if w[1].0 - w[0].0 > gap {
                             gap = w[1].0 - w[0].0;
                             at = (w[0].0 + w[1].0) * 0.5;
                         }
                     }
-                    edited.push((at, ramp_at(&keys, at)));
+                    let col = sample(&keys, at);
+                    let k = keys.partition_point(|key| key.0 <= at);
+                    keys.insert(k, (at, col));
+                    selected = Some(k);
                     changed = true;
                 }
+
+                let steps = r.width().ceil() as usize;
+                for i in 0..steps {
+                    let t = (i as f32 + 0.5) / steps as f32;
+                    let c = sample(&keys, t);
+                    let x0 = r.left() + r.width() * i as f32 / steps as f32;
+                    let x1 = r.left() + r.width() * (i + 1) as f32 / steps as f32;
+                    let rect = egui::Rect::from_min_max(egui::pos2(x0, r.top()), egui::pos2(x1, r.bottom()));
+                    ui.painter().rect_filled(rect, 0.0, lin_to_color32([c[0], c[1], c[2], 1.0]));
+                }
+                for (k, (p, col)) in keys.iter().enumerate() {
+                    let x = x_at(*p);
+                    let y = markers.top();
+                    let stroke = if selected == Some(k) { ui.visuals().selection.stroke } else { ui.visuals().widgets.inactive.fg_stroke };
+                    ui.painter().add(egui::Shape::convex_polygon(
+                        vec![egui::pos2(x, y), egui::pos2(x + 5.0, y + 9.0), egui::pos2(x - 5.0, y + 9.0)],
+                        lin_to_color32([col[0], col[1], col[2], 1.0]), stroke,
+                    ));
+                }
+                if let Some(k) = selected {
+                    ui.data_mut(|d| d.insert_temp(select_id, k));
+                } else {
+                    ui.data_mut(|d| d.remove::<usize>(select_id));
+                }
                 if changed {
-                    new_keys = Some(edited);
+                    new_keys = Some(keys);
                 }
             });
         }
@@ -726,13 +795,18 @@ impl App {
         if edit_spline {
             self.open_spline_editor(id);
         }
-        if let Some(keys) = new_keys {
+        if new_keys.is_some() || new_style.is_some() {
             if !self.edit_open {
                 self.snap();
                 self.edit_open = true;
             }
             if let Some(n) = self.g.nodes.get_mut(&id) {
-                native::set_gradient_keys(n, &keys);
+                if let Some(keys) = new_keys {
+                    native::set_gradient_keys(n, &keys);
+                }
+                if let Some(style) = new_style {
+                    native::set_gradient_style(n, style);
+                }
             }
             self.dirty = true;
         }

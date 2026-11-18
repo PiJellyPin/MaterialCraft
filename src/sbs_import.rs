@@ -1896,7 +1896,10 @@ impl Cx {
                 c
             }
             "gradient" => {
+                use crate::sbs_native::{GradientStyle, GRADIENT_STYLE_PARAM};
                 let mut c = Conv::new("colorize", Level::Info).slot("input1", "in");
+                let style = GradientStyle::from_value(cval(p, GRADIENT_STYLE_PARAM).map(|v| v.num()).unwrap_or(0.0));
+                c.num("interp", style as u32 as f32);
                 c.num("addressing", if int("addressingrepeat", 0) != 0 { 1.0 } else { 0.0 });
                 let keys: Vec<(f32, [f32; 4])> = arrays
                     .iter()

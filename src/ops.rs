@@ -2115,39 +2115,46 @@ pub fn resize_to(t: &Tex, w: usize, h: usize) -> Tex {
 }
 
 // ---------- gradient map with alpha, addressing and smoothness ----------
+/// Sample sorted RGBA keys, extending the end colours beyond the ramp. `interp` as in `colorize_ex`.
+pub fn ramp_at(keys: &[(f32, [f32; 4])], t: f32, interp: u32, smoothness: f32) -> [f32; 4] {
+    let Some(first) = keys.first() else { return [t, t, t, 1.0] };
+    if interp == 2 {
+        let next = keys.partition_point(|k| k.0 <= t);
+        return keys[next.saturating_sub(1)].1;
+    }
+    if t <= first.0 {
+        return first.1;
+    }
+    for w in keys.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if t <= b.0 {
+            let f = (t - a.0) / (b.0 - a.0).max(1e-9);
+            let f = match interp {
+                1 => f + (f * f * (3.0 - 2.0 * f) - f) * smoothness,
+                3 => f * f * f * (f * (f * 6.0 - 15.0) + 10.0),
+                _ => f,
+            };
+            return std::array::from_fn(|i| a.1[i] + (b.1[i] - a.1[i]) * f);
+        }
+    }
+    keys[keys.len() - 1].1
+}
+
 /// Gradient map. `stops` are (position, rgb, alpha). `interp`: 0 linear, 1 smooth (`smoothness` blends linear and
 /// smoothstep), 2 step, 3 smoother. `repeat` wraps the input instead of clamping it; `use_alpha` writes the
 /// gradient's alpha into the result (otherwise the input's alpha is kept).
 pub fn colorize_ex(t: &Tex, stops: &[(f32, [f32; 3], f32)], interp: u32, smoothness: f32, repeat: bool, use_alpha: bool) -> Tex {
-    let mut st: Vec<(f32, [f32; 3], f32)> = stops.to_vec();
-    st.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let mut keys: Vec<_> = stops.iter().map(|&(p, [r, g, b], a)| (p, [r, g, b, a])).collect();
+    keys.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
     let sm = smoothness.clamp(0.0, 1.0);
     t.map(|p| {
-        let mut g = lum(p);
-        g = if repeat { g.rem_euclid(1.0) } else { g.clamp(0.0, 1.0) };
-        let out = |c: [f32; 3], a: f32| [c[0], c[1], c[2], if use_alpha { a } else { p[3] }];
-        if st.is_empty() {
-            return [g, g, g, p[3]];
+        let g = lum(p);
+        let g = if repeat { g.rem_euclid(1.0) } else { g.clamp(0.0, 1.0) };
+        let mut c = ramp_at(&keys, g, interp, sm);
+        if !use_alpha || keys.is_empty() {
+            c[3] = p[3];
         }
-        if g <= st[0].0 {
-            return out(st[0].1, st[0].2);
-        }
-        for i in 1..st.len() {
-            if g <= st[i].0 {
-                let (a, b) = (st[i - 1], st[i]);
-                let mut f = (g - a.0) / (b.0 - a.0).max(1e-9);
-                f = match interp {
-                    1 => f + (f * f * (3.0 - 2.0 * f) - f) * sm,
-                    2 => 0.0,
-                    3 => f * f * f * (f * (f * 6.0 - 15.0) + 10.0),
-                    _ => f,
-                };
-                let l = |x: f32, y: f32| x + (y - x) * f;
-                return out([l(a.1[0], b.1[0]), l(a.1[1], b.1[1]), l(a.1[2], b.1[2])], l(a.2, b.2));
-            }
-        }
-        let e = st[st.len() - 1];
-        out(e.1, e.2)
+        c
     })
 }
 

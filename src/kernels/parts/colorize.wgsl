@@ -12,16 +12,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (n > 0u) {
         let s0 = u.x[0];
         var res = vec4<f32>(s0.y, s0.z, s0.w, select(p.w, u.x[1].x, use_a));
-        var found = g <= s0.x;
+        let interp = u32(P(0u));
+        var found = g < s0.x || (interp != 2u && g == s0.x);
         for (var k = 1u; k < n; k = k + 1u) {
             if (found) { break; }
             let sb = u.x[2u * k];
-            if (g <= sb.x) {
+            if (g < sb.x || (interp != 2u && g == sb.x)) {
                 let sa = u.x[2u * (k - 1u)];
                 let ab = u.x[2u * k + 1u].x;
                 let aa = u.x[2u * (k - 1u) + 1u].x;
                 var f = (g - sa.x) / max(sb.x - sa.x, 1e-9);
-                let interp = u32(P(0u));
                 if (interp == 1u) {
                     f = f + (f * f * (3.0 - 2.0 * f) - f) * P(1u);
                 } else if (interp == 2u) {
