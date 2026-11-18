@@ -1393,6 +1393,10 @@ impl App {
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(vec2(158.0, h), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 egui::ScrollArea::vertical().id_salt("libtree").auto_shrink([false, false]).show(ui, |ui| {
+                    let selection_id = ui.make_persistent_id("lib_selection");
+                    let previous = ui.data(|data| data.get_temp::<String>(selection_id));
+                    let selected_parent = previous.filter(|cat| *cat != self.lib_cat)
+                        .and_then(|_| self.lib_cat.split_once('/').map(|(name, _)| name.to_owned()));
                     for (name, subs) in LIB_TREE {
                         let sel = self.lib_cat == *name;
                         let icon = if *name == "Favorites" { "*  " } else { "" };
@@ -1401,8 +1405,8 @@ impl App {
                                 self.lib_cat = name.to_string();
                             }
                         } else {
-                            let open = self.lib_cat.starts_with(name);
-                            egui::CollapsingHeader::new(egui::RichText::new(*name).strong()).default_open(true).open(if open { Some(true) } else { None }).show(ui, |ui| {
+                            let open = (selected_parent.as_deref() == Some(*name)).then_some(true);
+                            egui::CollapsingHeader::new(egui::RichText::new(*name).strong()).default_open(true).open(open).show(ui, |ui| {
                                 for sub in *subs {
                                     let full = format!("{name}/{sub}");
                                     if ui.selectable_label(self.lib_cat == full, format!("   {sub}")).clicked() {
@@ -1410,13 +1414,9 @@ impl App {
                                     }
                                 }
                             });
-                            let hdr_resp = ui.interact(ui.min_rect(), Id::new(("libcat", *name)), Sense::hover());
-                            let _ = hdr_resp;
-                            if sel {
-                                // clicking the header text selects the whole group via the first sub-category
-                            }
                         }
                     }
+                    ui.data_mut(|data| data.insert_temp(selection_id, self.lib_cat.clone()));
                 });
             });
             ui.separator();
