@@ -101,10 +101,18 @@ impl App {
             }
         }
         let pan_mode = mods.alt;
-        if resp.dragged_by(PointerButton::Middle) || (resp.dragged_by(PointerButton::Primary) && pan_mode && (self.connecting.is_none() && self.connecting_in.is_none())) {
+        // A graph item can own the egui drag, so follow the middle button from its canvas press origin.
+        let (middle_down, middle_origin) = ui.input(|i| {
+            let down = i.pointer.button_down(PointerButton::Middle);
+            let origin = i.pointer.press_origin().filter(|_| down && i.pointer.is_decidedly_dragging());
+            (down, origin)
+        });
+        if middle_origin.is_some_and(|p| rect.contains(p) && ui.ctx().layer_id_at(p) == Some(ui.layer_id())) {
+            self.pan += ui.input(|i| i.pointer.delta());
+        } else if !middle_down && resp.dragged_by(PointerButton::Primary) && pan_mode && (self.connecting.is_none() && self.connecting_in.is_none()) {
             self.pan += resp.drag_delta();
         }
-        if resp.drag_started_by(PointerButton::Primary) && !pan_mode && (self.connecting.is_none() && self.connecting_in.is_none()) {
+        if !middle_down && resp.drag_started_by(PointerButton::Primary) && !pan_mode && (self.connecting.is_none() && self.connecting_in.is_none()) {
             self.rubber = pointer;
             if !mods.shift {
                 self.sel.clear();
@@ -158,7 +166,7 @@ impl App {
             painter.rect_stroke(r, egui::CornerRadius::same((4.0 * z) as u8), Stroke::new(if selected { 2.0_f32 } else { 1.0_f32 }, if selected { Color32::from_rgb(60, 200, 170) } else { base.gamma_multiply(0.8) }), egui::StrokeKind::Inside);
             painter.text(title.left_center() + vec2(8.0 * z, 0.0), Align2::LEFT_CENTER, &c.text, FontId::proportional(13.0 * z), Color32::WHITE);
             let tr = ui.interact(title, Id::new(("cmt", ci)), Sense::click_and_drag());
-            if tr.drag_started() {
+            if !middle_down && tr.drag_started_by(PointerButton::Primary) {
                 self.snap();
                 let cr = Rect::from_min_size(pos2(c.pos[0], c.pos[1]), vec2(c.size[0], c.size[1]));
                 self.comment_members = self.g.nodes.iter().filter(|(_, n)| cr.contains(pos2(n.pos[0] + CARD * 0.5, n.pos[1] + CARD_H * 0.5))).map(|(i, _)| *i).collect();
@@ -169,7 +177,7 @@ impl App {
                 self.sel_comment = Some(ci);
                 self.sel.clear();
             }
-            if tr.dragged() {
+            if !middle_down && tr.dragged_by(PointerButton::Primary) {
                 let d = tr.drag_delta() / z;
                 self.g.comments[ci].pos[0] += d.x;
                 self.g.comments[ci].pos[1] += d.y;
@@ -184,10 +192,10 @@ impl App {
             let handle = Rect::from_min_size(r.max - hs, hs);
             painter.rect_filled(handle, egui::CornerRadius::same((2.0) as u8), base.gamma_multiply(0.7));
             let hr = ui.interact(handle, Id::new(("cmtr", ci)), Sense::drag());
-            if hr.drag_started() {
+            if !middle_down && hr.drag_started_by(PointerButton::Primary) {
                 self.snap();
             }
-            if hr.dragged() {
+            if !middle_down && hr.dragged_by(PointerButton::Primary) {
                 let d = hr.drag_delta() / z;
                 self.g.comments[ci].size[0] = (self.g.comments[ci].size[0] + d.x).max(80.0);
                 self.g.comments[ci].size[1] = (self.g.comments[ci].size[1] + d.y).max(50.0);
@@ -408,7 +416,7 @@ impl App {
 
             // interaction: card
             let nr = ui.interact(card, Id::new(("node", id)), Sense::click_and_drag());
-            if nr.drag_started() {
+            if !middle_down && nr.drag_started_by(PointerButton::Primary) {
                 self.snap();
                 if !self.sel.contains(&id) {
                     if !(mods.shift || mods.command) {
@@ -423,13 +431,13 @@ impl App {
                     self.view_pending = true;
                 }
             }
-            if nr.dragged() && (self.connecting.is_none() && self.connecting_in.is_none()) {
+            if !middle_down && nr.dragged_by(PointerButton::Primary) && (self.connecting.is_none() && self.connecting_in.is_none()) {
                 let d = nr.drag_delta() / z;
                 let drag_id = Id::new("node_drag_origin");
                 if self.snap_nodes && self.snap_grid >= 1.0 {
                     // the pointer moves freely; the nodes land on the grid: every node's start position plus the
                     // total drag so far, rounded
-                    let (mut total, origin): (Vec2, Vec<(u32, [f32; 2])>) = if nr.drag_started() {
+                    let (mut total, origin): (Vec2, Vec<(u32, [f32; 2])>) = if nr.drag_started_by(PointerButton::Primary) {
                         (Vec2::ZERO, self.sel.iter().filter_map(|k| self.g.nodes.get(k).map(|n| (*k, n.pos))).collect())
                     } else {
                         ui.ctx().data(|dt| dt.get_temp(drag_id)).unwrap_or((Vec2::ZERO, Vec::new()))
@@ -581,7 +589,7 @@ impl App {
                         painter.text(op + vec2(9.0 * z, 0.0), Align2::LEFT_CENTER, usage_label(oname), FontId::proportional(10.5 * z.max(0.7)), Color32::from_gray(175));
                     }
                     let pr = ui.interact(Rect::from_center_size(op, Vec2::splat(14.0 * z)), Id::new(("out", id, oi)), Sense::drag());
-                    if pr.drag_started() {
+                    if !middle_down && pr.drag_started_by(PointerButton::Primary) {
                         self.connecting = Some(id);
                         self.connecting_out = Some(oname.clone());
                         self.relink_all = mods.shift && !self.children_of(id, Some(oname.as_str())).is_empty();
@@ -592,7 +600,7 @@ impl App {
                 out_ports.push((id, None, op));
                 painter.circle(op, if s.dot { 3.5 } else { 4.8 } * z, pin_fill(pins.get(&id).copied().unwrap_or(materialcraft::graph::Pin::Gray)), Stroke::new(1.0_f32, Color32::BLACK));
                 let pr = ui.interact(Rect::from_center_size(op, Vec2::splat(14.0 * z)), Id::new(("out", id)), Sense::drag());
-                if pr.drag_started() {
+                if !middle_down && pr.drag_started_by(PointerButton::Primary) {
                     self.connecting = Some(id);
                     self.connecting_out = None;
                     self.relink_all = mods.shift && !self.children_of(id, None).is_empty();
@@ -604,7 +612,7 @@ impl App {
                 ports.push((id, *slot, ip));
                 painter.circle(ip, 4.5 * z, if s.kind == "sbs:output" { Color32::from_rgb(70, 210, 180) } else if *required { Color32::from_rgb(210, 210, 210) } else { Color32::from_rgb(60, 60, 60) }, Stroke::new(1.2_f32, Color32::from_rgb(190, 190, 190)));
                 let ir = ui.interact(Rect::from_center_size(ip, Vec2::splat(14.0 * z)), Id::new(("in", id, i)), Sense::drag());
-                if ir.drag_started() {
+                if !middle_down && ir.drag_started_by(PointerButton::Primary) {
                     let had = self.g.nodes.get(&id).and_then(|nd| nd.ins.get(*slot).copied());
                     if let Some(old) = had {
                         self.snap();
