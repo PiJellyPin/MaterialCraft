@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.PiJellyPin.MaterialCraft</id>
+  <name>MaterialCraft</name>
+  <summary>Author procedural materials with a node graph</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <developer id="io.github.pijellypin">
+    <name>PiJellyPin and MaterialCraft contributors</name>
+  </developer>
+  <description>
+    <p>Create physically based materials in a visual node editor. Start from a template or build a graph from scratch, preview the material in 2D and 3D, and export its texture maps.</p>
+    <p>Render materials from the command line or automate editing through the optional control interface.</p>
+  </description>
+  <url type="homepage">https://github.com/PiJellyPin/MaterialCraft</url>
+  <launchable type="desktop-id">io.github.PiJellyPin.MaterialCraft.desktop</launchable>
+  <categories>
+    <category>Graphics</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.6.0" date="2026-11-03"/>
+  </releases>
+</component>

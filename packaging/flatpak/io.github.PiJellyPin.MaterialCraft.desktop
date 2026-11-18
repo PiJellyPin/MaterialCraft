@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=MaterialCraft
+Comment=Procedural, node-based material authoring
+Exec=materialcraft-gui
+Icon=io.github.PiJellyPin.MaterialCraft
+Categories=Graphics;2DGraphics;3DGraphics;
+Terminal=false

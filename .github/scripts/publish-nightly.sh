@@ -5,6 +5,7 @@ name="MaterialCraft_${VERSION}"
 assets=(
     "${name}_x86_64-linux.AppImage"
     "${name}_x86_64-linux.deb"
+    "${name}_x86_64-linux.flatpak"
     "${name}_x86_64-linux.rpm"
     "${name}_x86_64-linux.tar.gz"
     "${name}_x64-windows.zip"
