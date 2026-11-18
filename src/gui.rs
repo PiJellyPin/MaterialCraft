@@ -492,6 +492,9 @@ struct App {
     pkg_sel: usize,
     unsaved_name: String,
     confirm_close: Option<usize>,
+    confirm_quit: bool,
+    discard_confirmed: bool,
+    quit_save_error: Option<String>,
     /// the rename box of the Explorer: (package index, graph, new name being typed)
     rename_graph: Option<(usize, String, String)>,
     /// the "Save as template" box: (package index, graph or None for its main graph, template name being typed)
@@ -651,6 +654,9 @@ impl App {
             pkg_sel: 0,
             unsaved_name: "Unsaved Package".into(),
             confirm_close: None,
+            confirm_quit: false,
+            discard_confirmed: false,
+            quit_save_error: None,
             rename_graph: None,
             save_tmpl: None,
             dirty: true,
@@ -781,6 +787,9 @@ impl App {
         self.pkg_active = 0;
         self.pkg_sel = 0;
         self.confirm_close = None;
+        self.confirm_quit = false;
+        self.discard_confirmed = false;
+        self.quit_save_error = None;
     }
 
     fn pkg_title(&self, i: usize) -> String {
@@ -1543,22 +1552,7 @@ impl App {
     }
 
     fn save_as(&mut self) {
-        self.save_package_as(None);
-    }
-
-    /// Save the package under a new name.
-    fn save_package_as(&mut self, suggest: Option<PathBuf>) {
-        let stem = suggest
-            .as_ref()
-            .or(self.file.as_ref())
-            .and_then(|p| p.file_stem())
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| self.gname());
-        let mut dlg = rfd::FileDialog::new().add_filter("SBS package", &["sbs"]).set_file_name(format!("{stem}.sbs"));
-        if let Some(dir) = suggest.as_ref().or(self.file.as_ref()).and_then(|p| p.parent()) {
-            dlg = dlg.set_directory(dir);
-        }
-        if let Some(p) = dlg.save_file() {
+        if let Some(p) = package_save_path(self.file.as_deref(), &self.gname()) {
             self.save_to(p);
         }
     }

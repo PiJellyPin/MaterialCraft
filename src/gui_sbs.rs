@@ -8,6 +8,22 @@
 use materialcraft::sbs_defs::{self as sdefs, Fam, PTy};
 use materialcraft::sbs_native::{self as native, PVal};
 
+fn package_save_path(file: Option<&std::path::Path>, fallback_stem: &str) -> Option<PathBuf> {
+    let stem = file.and_then(|p| p.file_stem()).map(|s| s.to_string_lossy()).unwrap_or_else(|| fallback_stem.into());
+    let mut dlg = rfd::FileDialog::new().add_filter("SBS package", &["sbs"]).set_file_name(format!("{stem}.sbs"));
+    if let Some(dir) = file.and_then(|p| p.parent()) {
+        dlg = dlg.set_directory(dir);
+    }
+    dlg.save_file()
+}
+
+fn write_sbs_package(g: &Graph, p: PathBuf) -> Result<PathBuf, String> {
+    let p = if is_sbs(&p) { p } else { p.with_extension("sbs") };
+    let text = native::save_text(g)?;
+    materialcraft::safeio::write_file(&p, text.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(p)
+}
+
 /// Interned names for the editor's `&'static str` sockets (a package's own input names are only known at run time).
 fn intern(s: &str) -> &'static str {
     static SET: std::sync::OnceLock<Mutex<BTreeSet<&'static str>>> = std::sync::OnceLock::new();
@@ -222,13 +238,8 @@ impl App {
     /// Write an `.sbs` package (the graph on screen and everything else of the package).
     fn save_sbs(&mut self, p: PathBuf) {
         self.goto_root();
-        let p = if is_sbs(&p) { p } else { p.with_extension("sbs") };
-        let text = match native::save_text(&self.g) {
-            Ok(t) => t,
-            Err(e) => return self.status(format!("Save failed: {e}"), false),
-        };
-        match materialcraft::safeio::write_file(&p, text.as_bytes()) {
-            Ok(()) => {
+        match write_sbs_package(&self.g, p) {
+            Ok(p) => {
                 self.status(format!("Saved {}", p.display()), true);
                 self.push_recent(&p);
                 self.file = Some(p);

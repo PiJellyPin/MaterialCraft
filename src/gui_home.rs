@@ -1128,6 +1128,68 @@ impl App {
         }
     }
 
+    fn unsaved_packages(&self) -> Vec<usize> {
+        (0..self.pkgs.len().max(1)).filter(|&i| self.pkg_dirty(i)).collect()
+    }
+
+    fn save_for_quit(&mut self, i: usize) -> Result<(), String> {
+        let name = self.pkg_title(i);
+        let cancelled = || format!("Save cancelled for '{name}'.");
+        if let Some(Some(pkg)) = self.pkgs.get_mut(i) {
+            let stem = native::graph_name(&pkg.g);
+            let path = pkg.path.clone().or_else(|| package_save_path(None, if stem.is_empty() { "Graph" } else { &stem })).ok_or_else(cancelled)?;
+            let path = write_sbs_package(&pkg.g, path).map_err(|e| format!("Could not save '{name}': {e}"))?;
+            pkg.name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            pkg.path = Some(path.clone());
+            pkg.modified = false;
+            self.push_recent(&path);
+        } else {
+            let path = self.file.clone().or_else(|| package_save_path(None, &self.gname())).ok_or_else(cancelled)?;
+            self.save_to(path);
+            if self.modified {
+                return Err(format!("{name}: {}", self.status.0));
+            }
+        }
+        Ok(())
+    }
+
+    fn confirm_quit_ui(&mut self, ctx: &egui::Context) {
+        let unsaved = self.unsaved_packages();
+        let (save, discard, cancel) = egui::Modal::new(Id::new("confirm_quit")).show(ctx, |ui| {
+            ui.heading("Close MaterialCraft");
+            ui.label("Save changes before closing?");
+            egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
+                for &i in &unsaved {
+                    ui.label(self.pkg_title(i));
+                }
+            });
+            if let Some(error) = &self.quit_save_error {
+                ui.label(error);
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| (ui.button("Save").clicked(), ui.button("Don't Save").clicked(), ui.button("Cancel").clicked())).inner
+        }).inner;
+        if save {
+            for i in unsaved {
+                if let Err(error) = self.save_for_quit(i) {
+                    self.quit_save_error = Some(error);
+                    ctx.request_repaint();
+                    return;
+                }
+            }
+        }
+        if save || discard || cancel {
+            self.confirm_quit = false;
+            self.quit_save_error = None;
+            self.discard_confirmed = discard;
+            if save || discard {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            } else {
+                ctx.request_repaint();
+            }
+        }
+    }
+
     // ------------------------------------------------------------ explorer
     fn explorer_ui(&mut self, ui: &mut egui::Ui) {
         self.ws_init();
@@ -2299,9 +2361,42 @@ impl App {
     }
 }
 
+fn should_prompt_on_quit(unsaved: &[usize], discard_confirmed: bool) -> bool {
+    !unsaved.is_empty() && !discard_confirmed
+}
+
+#[test]
+fn quit_prompt_decision() {
+    assert!(!should_prompt_on_quit(&[], false));
+    assert!(!should_prompt_on_quit(&[], true));
+    assert!(should_prompt_on_quit(&[0], false));
+    assert!(should_prompt_on_quit(&[0, 2], false));
+    assert!(!should_prompt_on_quit(&[0, 2], true));
+}
+
 impl eframe::App for App {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if ctx.input(|i| i.viewport().close_requested()) && should_prompt_on_quit(&self.unsaved_packages(), self.discard_confirmed) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            if !self.confirm_quit {
+                self.confirm_quit = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            }
+        }
+        craft_quit::on_close_request(ctx);
+    }
+
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = &root.ctx().clone();
+        if self.confirm_quit {
+            // Keep editor shortcuts and queued actions from changing the packages during the prompt.
+            self.confirm_quit_ui(ctx);
+            return;
+        }
+        if ctx.input(|i| i.viewport().close_requested()) {
+            return;
+        }
         self.sync_search_dirs();
         // packages dropped from the OS onto the window open in the workspace
         let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
