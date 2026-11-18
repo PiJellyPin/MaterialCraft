@@ -2822,6 +2822,12 @@ fn bind_functions(id: u32, n: &Node, ctx: &Ctx) -> Result<Node, Error> {
             }
         }
         let v = prog.run(&env, [0.5, 0.5]).map_err(|e| Error::BadParam(id, format!("{k}: {e}")))?;
+        let v = match (n.strs.get(&format!("fl.{param}")), &v) {
+            (Some(mask), crate::func::Value::Num(num)) if num.lanes > 1 => {
+                crate::func::swizzle(&v, mask).map_err(|e| Error::BadParam(id, format!("{k}: {e}")))?
+            }
+            _ => v,
+        };
         match v {
             crate::func::Value::Str(s) => {
                 out.strs.insert(param.to_string(), s.to_string());

@@ -206,8 +206,8 @@ impl App {
                 slots: node_slots(n, &self.g.subgraphs),
                 ins: n.ins.iter().map(|(k, v)| (k.clone(), *v)).collect(),
                 pos: n.pos,
-                // the graph a node opens: a graph node's graph, an FX-Map's pattern graph
-                graph_name: n.strs.get("#graph").or_else(|| n.strs.get("graph")).cloned().or_else(|| n.strs.get("#fx").and_then(|f| f.split(',').find(|x| !x.is_empty()).map(str::to_string))),
+                // the graph a node opens when double-clicked
+                graph_name: n.strs.get("#graph").or_else(|| n.strs.get("graph")).cloned().or_else(|| n.strs.get("#fx").and_then(|f| f.split(',').find(|x| !x.is_empty()).map(str::to_string))).or_else(|| native::package_call_target(n)),
                 dot: n.kind == "sbs:passthrough",
                 outs: sd_outs(n, &self.g.subgraphs),
                 in_out: n.in_out.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
@@ -467,8 +467,10 @@ impl App {
                 }
             }
             if nr.double_clicked() {
-                if let (Some(g), "sbs:graph" | "sbs:fxmaps") = (&s.graph_name, s.kind.as_str()) {
-                    acts.push(Act::EnterSub(g.clone()));
+                match (&s.graph_name, s.kind.as_str()) {
+                    (Some(g), "sbs:graph" | "sbs:fxmaps") => acts.push(Act::EnterSub(g.clone())),
+                    (Some(g), "sbs:fn:instance") => acts.push(self.package_graph_tab(g)),
+                    _ => {}
                 }
             }
             if nr.secondary_clicked() {
@@ -791,6 +793,10 @@ impl App {
                     });
                 }
             });
+            if ui.button("New Function").clicked() {
+                acts.push(Act::NewFunctionIn(self.pkg_active));
+                ui.close();
+            }
             if ui.button("Add Comment    C").clicked() {
                 acts.push(Act::Comment);
                 ui.close();
@@ -1019,10 +1025,11 @@ impl App {
                     }
                     materialcraft::sbs_native::create_graph(g, &name, "function")?;
                     made = Some(name.clone());
-                    Ok(format!("Created function '{name}': add function nodes, then make one the result"))
+                    Ok(format!("Created function '{name}'. Add nodes and mark one as the result."))
                 });
                 if let Some(n) = made {
-                    self.enter_sub(&n);
+                    self.open_graph_tab(&n);
+                    self.lib_cat = "Package functions".into();
                 }
             }
             Act::SwitchPkg(i) => self.switch_pkg(i),
@@ -1054,7 +1061,10 @@ impl App {
             }
             Act::ExportGraphFile(i, name) => self.export_graph_file(i, name),
             Act::AddGraphFile(i) => self.add_graph_file(i),
-            Act::RenameGraph(i, name) => self.rename_graph = Some((i, name.clone(), name)),
+            Act::RenameGraph(i, name) => {
+                let short = name.rsplit('/').next().unwrap_or(&name).to_string();
+                self.rename_graph = Some((i, name, short));
+            }
             Act::DeleteGraph(i, name) => {
                 let main = |a: &Self| a.parents.first().map(|p| &p.0).unwrap_or(&a.g).meta.get("identifier").cloned();
                 self.switch_pkg(i);
@@ -1080,9 +1090,10 @@ impl App {
         egui::Window::new("Rename graph").collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
             ui.label(format!("New name for '{old}' (letters, digits and _); every node that uses it follows."));
             let r = ui.add(egui::TextEdit::singleline(&mut new).desired_width(260.0));
-            r.request_focus();
-            if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            if (r.has_focus() || r.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 ok = true;
+            } else {
+                r.request_focus();
             }
             ui.horizontal(|ui| {
                 ok |= ui.button("Rename").clicked();
@@ -1090,12 +1101,18 @@ impl App {
             });
         });
         if ok {
-            let (o, n) = (old.clone(), new.trim().to_string());
-            self.graph_edit(i, move |g| g.rename_graph(&o, &n).map(|_| format!("Renamed '{o}' to '{n}'")));
-            let n = new.trim().to_string();
-            for t in self.graph_tabs.iter_mut() {
-                if *t == old {
-                    *t = n.clone();
+            self.switch_pkg(i);
+            let tab = self.graph_tabs.iter().position(|t| t == &old);
+            let mut renamed = None;
+            self.graph_edit(i, |g| {
+                let n = native::rename_graph(g, &old, new.trim())?;
+                let msg = format!("Renamed '{old}' to '{n}'");
+                renamed = Some(n);
+                Ok(msg)
+            });
+            if let (Some(i), Some(n)) = (tab, renamed) {
+                if !self.graph_tabs.contains(&n) {
+                    self.graph_tabs.insert(i.min(self.graph_tabs.len()), n);
                 }
             }
         } else if !cancel {

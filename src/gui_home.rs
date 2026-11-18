@@ -326,11 +326,15 @@ fn explorer_icon(ui: &mut egui::Ui, ic: Ic) {
 }
 
 /// A graph row in the Explorer: graph icon, name, and (expandable) its outputs. Returns the name's response.
-fn graph_row(ui: &mut egui::Ui, name: &str, outs: &[String], selected: bool, key: (&str, String)) -> egui::Response {
+fn graph_row(ui: &mut egui::Ui, name: &str, outs: &[String], selected: bool, key: (&str, String), function: bool) -> egui::Response {
     let id = ui.make_persistent_id(("grow", key.0, key.1));
     let mut resp = None;
     let head = |ui: &mut egui::Ui, resp: &mut Option<egui::Response>| {
-        explorer_icon(ui, Ic::GraphIcon);
+        if function {
+            ui.label(egui::RichText::new("ƒ").strong().color(kind_color("sbs:fn:instance")));
+        } else {
+            explorer_icon(ui, Ic::GraphIcon);
+        }
         let txt = if selected { egui::RichText::new(name).strong().color(Color32::WHITE) } else { egui::RichText::new(name) };
         *resp = Some(ui.add(egui::Label::new(txt).selectable(false).sense(Sense::click_and_drag())));
     };
@@ -640,6 +644,7 @@ const LIB_TREE: &[(&str, &[&str])] = &[
     ("Pattern builders", &[]),
     ("Logic nodes", &[]),
     ("Function library", materialcraft::libfuncs::CATEGORIES),
+    ("Package functions", &[]),
     ("Generators", &["Noises", "Patterns", "Shapes"]),
     ("Filters", &["Adjustments", "Blur and warp", "Transform", "Effects", "Masks and regions"]),
     ("Material tools", &[]),
@@ -1166,18 +1171,20 @@ impl App {
             for i in 0..n_pkgs {
                 let is_active = i == self.pkg_active;
                 let label = format!("{}{}", self.pkg_title(i), if self.pkg_modified(i) { "*" } else { "" });
-                // graphs of this package: (name, outputs, is the package's main graph)
-                let (main_name, graphs): (String, Vec<(String, Vec<String>, bool)>) = {
-                    let root: &Graph = match self.pkgs.get(i) {
-                        Some(Some(p)) => &p.g,
-                        _ => self.parents.first().map(|p| &p.0).unwrap_or(&self.g),
+                let graphs = {
+                    let root = if is_active {
+                        self.parents.first().map(|p| &p.0).unwrap_or(&self.g)
+                    } else {
+                        let Some(Some(p)) = self.pkgs.get(i) else { continue };
+                        &p.g
                     };
-                    let main = root.meta.get("identifier").cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| "Graph".into());
-                    let mut v = vec![(main.clone(), root.output_idents(), true)];
-                    v.extend(root.subgraphs.iter().filter(|(_, s)| materialcraft::sbs_native::listed(s)).map(|(k, s)| (k.clone(), s.output_idents(), false)));
-                    (main, v)
+                    let main = materialcraft::sbs_native::graph_name(root);
+                    let view = if is_active { &self.g } else { root };
+                    let mut rows = vec![(main.clone(), root.output_idents(), true, native::is_package_function(root))];
+                    rows.extend(native::all_graphs(view).into_iter().filter(|(k, g)| k != &main && native::listed(g))
+                        .map(|(k, g)| (k, g.output_idents(), false, native::is_package_function(g))));
+                    rows
                 };
-                let _ = main_name;
                 let id = ui.make_persistent_id(("pkg", i));
                 let selected = self.pkg_sel == i;
                 egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
@@ -1224,7 +1231,7 @@ impl App {
                     .body(|ui| {
                         // graphs kept in folders of the package are listed under their folder
                         let mut last_folder: Option<String> = None;
-                        for (name, outs, is_main) in &graphs {
+                        for (name, outs, is_main, function) in &graphs {
                             let on = is_active && if *is_main { current.is_none() } else { current.as_deref() == Some(name.as_str()) };
                             let folder = name.rsplit_once('/').map(|(f, _)| f.to_string());
                             if folder != last_folder {
@@ -1237,13 +1244,13 @@ impl App {
                                 Some((_, short)) => format!("   {short}"),
                                 None => name.clone(),
                             };
-                            let r = graph_row(ui, &shown, outs, on, ("pkg", format!("{i}/{is_main}/{name}")));
+                            let r = graph_row(ui, &shown, outs, on, ("pkg", format!("{i}/{is_main}/{name}")), *function);
                             let sub = if *is_main { None } else { Some(name.clone()) };
                             if r.dragged() {
                                 if is_active {
-                                    // a graph of this package becomes a node that runs it (when it may run here)
-                                    r.dnd_set_drag_payload(format!("subgraph: {name}"));
-                                } else {
+                                    let key = if *function { format!("Call {name}") } else { format!("subgraph: {name}") };
+                                    r.dnd_set_drag_payload(key);
+                                } else if !*function {
                                     r.dnd_set_drag_payload(GraphDrag(i, name.clone(), sub.clone()));
                                 }
                             }
@@ -1336,19 +1343,33 @@ impl App {
 
     // ------------------------------------------------------------ library
     fn lib_items(&self, search: &str) -> Vec<Entry> {
-        let all = self.entries();
+        let mut all = self.entries();
+        let can_call = self.g.graph_kind() == "function";
+        let cat = self.lib_cat.as_str();
         let s = search.to_lowercase();
+        if !s.is_empty() || cat == "Package functions" || cat == "Favorites" {
+            all.retain(|e| e.cat != "Package functions");
+            all.extend(self.package_function_entries());
+        }
+        if !can_call && (!s.is_empty() || cat == "Logic nodes" || cat == "Favorites") {
+            all.extend(Self::palette_entries(Fam::Function));
+        }
+        if !can_call && (!s.is_empty() || cat.starts_with("Function library") || cat == "Favorites") {
+            all.extend(Self::builtin_function_entries());
+        }
         if !s.is_empty() {
             return all.into_iter().filter(|e| e.label.to_lowercase().contains(&s) || e.doc.to_lowercase().contains(&s)).collect();
         }
-        let cat = self.lib_cat.clone();
-        // a library function: a call node with the function's path
+        if cat == "Package functions" {
+            return all.into_iter().filter(|e| e.cat == cat).collect();
+        }
         let lib_fn = |e: &Entry| e.kind == "sbs:fn:instance" && e.sub.is_some();
+        if cat == "Logic nodes" {
+            return all.into_iter().filter(|e| e.kind.starts_with("sbs:fn:") && !lib_fn(e)).collect();
+        }
         if let Some(sub) = cat.strip_prefix("Function library/") {
             return all.into_iter().filter(|e| lib_fn(e) && e.cat == sub).collect();
         }
-        // a function or pattern graph takes only its own family of nodes: all of its atomic ones, whatever the
-        // folder (the library functions have their own folders)
         if matches!(self.g.graph_kind(), "function" | "fxmap") && cat != "Favorites" {
             return all.into_iter().filter(|e| !lib_fn(e)).collect();
         }
@@ -1357,11 +1378,10 @@ impl App {
             .filter(|e| {
                 let k = e.kind.as_str();
                 let structure = matches!(k, "sbs:input" | "sbs:output" | "sbs:graph" | "sbs:passthrough");
-                match cat.as_str() {
+                match cat {
                     "Favorites" => self.favorites.contains(&e.label),
                     "Structure" => structure,
                     "Core nodes" => !k.starts_with("sbs:lib:") && !k.starts_with("sbs:fn:") && !k.starts_with("sbs:fx:") && !structure,
-                    "Logic nodes" => k.starts_with("sbs:fn:"),
                     "Pattern builders" => k.starts_with("sbs:fx:"),
                     c if k.starts_with("sbs:lib:") => {
                         let (m, sub) = sd_lib_group(k);
@@ -1435,14 +1455,26 @@ impl App {
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
                         for e in &items {
-                            let (rect, resp) = ui.allocate_exact_size(vec2(68.0, 94.0), Sense::click_and_drag());
+                            let package_fn = e.sub.as_deref().and_then(|path| path.strip_prefix("pkg:///"));
+                            let drag = if e.kind.starts_with("sbs:fn:") {
+                                self.g.graph_kind() == "function" && package_fn.is_none_or(|name| {
+                                    !native::graphs_needed(&self.g, name).contains(&native::graph_name(&self.g))
+                                })
+                            } else {
+                                true
+                            };
+                            let sense = if drag { Sense::click_and_drag() } else { Sense::click() };
+                            let (rect, resp) = ui.allocate_exact_size(vec2(68.0, 94.0), sense);
                             let p = ui.painter();
                             if resp.hovered() {
                                 p.rect_filled(rect, 3.0, Color32::from_rgb(58, 58, 58));
                             }
                             let tr = Rect::from_min_size(rect.min + vec2(2.0, 2.0), vec2(64.0, 64.0));
                             // core nodes show their icon, the others a picture of what they make
-                            if !core_icon(p, tr, &e.kind) {
+                            if e.kind.starts_with("sbs:fn:") {
+                                p.rect_filled(tr, 3.0, kind_color(&e.kind).gamma_multiply(0.55));
+                                p.text(tr.center(), Align2::CENTER_CENTER, "ƒ", FontId::proportional(28.0), Color32::WHITE);
+                            } else if !core_icon(p, tr, &e.kind) {
                                 match self.lib_thumbs.get(&e.kind) {
                                     Some(t) => {
                                         p.image(t.id(), tr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
@@ -1456,7 +1488,7 @@ impl App {
                             if self.favorites.contains(&e.label) {
                                 draw_icon(p, tr.right_top() + vec2(-8.0, 8.0), Ic::Star, Color32::from_rgb(90, 220, 190));
                             }
-                            let (l1, l2) = two_lines(&e.label);
+                            let (l1, l2) = two_lines(package_fn.unwrap_or(&e.label));
                             p.text(pos2(rect.center().x, rect.min.y + 70.0), Align2::CENTER_TOP, l1, FontId::proportional(11.0), Color32::from_gray(225));
                             if !l2.is_empty() {
                                 p.text(pos2(rect.center().x, rect.min.y + 82.0), Align2::CENTER_TOP, l2, FontId::proportional(11.0), Color32::from_gray(225));
@@ -1464,7 +1496,16 @@ impl App {
                             if resp.drag_started() {
                                 resp.dnd_set_drag_payload(e.label.clone());
                             }
-                            let resp = resp.on_hover_text(format!("{}\n(drag onto the graph to add)", e.doc));
+                            if let Some(name) = package_fn.filter(|_| resp.double_clicked()) {
+                                self.acts.push(self.package_graph_tab(name));
+                            }
+                            let hint = match (drag, package_fn) {
+                                (true, Some(_)) => "Drag to add a call. Double-click to open.",
+                                (false, Some(_)) => "Double-click to open. Use the parameter’s fn menu to drive a value.",
+                                (true, None) => "Drag onto the graph to add.",
+                                (false, None) => "Open a function graph to add this node.",
+                            };
+                            let resp = resp.on_hover_text(format!("{}\n{hint}", e.doc));
                             resp.context_menu(|ui| {
                                 let fav = self.favorites.contains(&e.label);
                                 if ui.button(if fav { "Remove from favorites" } else { "Add to favorites" }).clicked() {

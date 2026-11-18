@@ -188,6 +188,15 @@ pub fn listed(g: &Graph) -> bool {
     }
 }
 
+/// The reusable functions of the package, including the one currently on screen.
+pub fn package_functions(root: &Graph) -> impl Iterator<Item = (String, &Graph)> {
+    all_graphs(root).into_iter().filter(|(_, g)| is_package_function(g))
+}
+
+pub fn is_package_function(g: &Graph) -> bool {
+    matches!(g.sd.as_ref().map(|s| &s.role), Some(Role::Function))
+}
+
 // ------------------------------------------------------------------------------------------------ reading
 
 fn floats(s: &str) -> Vec<f32> {
@@ -899,7 +908,7 @@ impl<'a> Writer<'a> {
                 let mut fds = Vec::new();
                 for (k, val) in &vals {
                     let PVal::Const { ty, raw, .. } = val else { continue };
-                    let raw = if n.kind == "sbs:fn:instance" && k == "instance" { self.function_path(raw) } else { raw.clone() };
+                    let raw = if n.kind == "sbs:fn:instance" && k == "instance" { self.function_path(n, raw) } else { raw.clone() };
                     let mut fd = XElem::new("funcData");
                     push(&mut fd, v("name", k));
                     let mut cv = XElem::new("constantValue");
@@ -1123,12 +1132,15 @@ impl<'a> Writer<'a> {
 
     /// The path a function call writes: as it is, except a call to a library function added in the editor
     /// (`pkg:///Functions/Math/clamp`, no dependency yet), which names the library package as its dependency.
-    fn function_path(&mut self, raw: &str) -> String {
+    fn function_path(&mut self, n: &Node, raw: &str) -> String {
         let (path, dep) = crate::sbs::split_path(raw);
-        if dep.is_some() || crate::libfuncs::entry(&path).is_none() {
+        let dep = if n.strs.get("#instance_file").is_some_and(|f| f.trim() == "?himself") {
+            self.dependency("?himself")
+        } else if dep.is_none() && crate::libfuncs::entry(&path).is_some() {
+            self.dependency("sbs://functions.sbs")
+        } else {
             return raw.to_string();
-        }
-        let dep = self.dependency("sbs://functions.sbs");
+        };
         format!("pkg:///{}?dependency={dep}", path.trim_start_matches('/'))
     }
 
@@ -1213,7 +1225,7 @@ pub fn sync(root: &Graph) -> Result<XDoc, String> {
             Role::Graph => {
                 seen.insert(gsd.uid.clone());
                 let content = ensure_child(&mut doc.root, "content", &ind, 0);
-                match find_by_uid(content, "graph", &gsd.uid, 1) {
+                match find_by_uid(content, "graph", &gsd.uid, &gsd.path, &ind, 1) {
                     Some((el, depth)) => sync_graph(&mut w, el, name, g, &ind, depth),
                     None => {
                         let el = new_graph_elem(&mut w, name, g);
@@ -1224,7 +1236,7 @@ pub fn sync(root: &Graph) -> Result<XDoc, String> {
             Role::Function => {
                 seen.insert(gsd.uid.clone());
                 let content = ensure_child(&mut doc.root, "content", &ind, 0);
-                match find_by_uid(content, "function", &gsd.uid, 1) {
+                match find_by_uid(content, "function", &gsd.uid, &gsd.path, &ind, 1) {
                     Some((el, depth)) => sync_function(&mut w, el, g, &ind, depth),
                     None => {
                         let el = new_function_elem(&mut w, name, g);
@@ -1327,8 +1339,8 @@ fn set_v_ordered(parent: &mut XElem, tag: &str, value: &str, ind: &Indent, depth
     }
 }
 
-/// The graph or function with this uid somewhere in a content tree (inside groups), and its depth.
-fn find_by_uid<'e>(c: &'e mut XElem, tag: &str, uid: &str, depth: usize) -> Option<(&'e mut XElem, usize)> {
+/// Find an existing graph or function by UID, moving its XML element if the rename changed folders.
+fn find_by_uid<'e>(c: &'e mut XElem, tag: &str, uid: &str, dest: &str, ind: &Indent, depth: usize) -> Option<(&'e mut XElem, usize)> {
     if uid.is_empty() {
         return None;
     }
@@ -1355,13 +1367,36 @@ fn find_by_uid<'e>(c: &'e mut XElem, tag: &str, uid: &str, depth: usize) -> Opti
     if !path(c, tag, uid, &mut p) {
         return None;
     }
+    let (last, parents) = p.split_last()?;
     let d = depth + p.len();
-    let mut cur = c;
-    for i in p {
-        let XNode::Elem(e) = &mut cur.children[i] else { return None };
+    let mut cur = &*c;
+    let mut folder = Vec::new();
+    for &i in parents {
+        let XNode::Elem(e) = &cur.children[i] else { return None };
+        if e.name.eq_ignore_ascii_case("group") {
+            folder.push(e.v("identifier").unwrap_or_default());
+        }
         cur = e;
     }
-    Some((cur, d))
+    fn at<'e>(mut c: &'e mut XElem, indices: &[usize]) -> Option<&'e mut XElem> {
+        for &i in indices {
+            let XNode::Elem(e) = &mut c.children[i] else { return None };
+            c = e;
+        }
+        Some(c)
+    }
+    if folder.join("/") == dest.rsplit_once('/').map_or("", |(folder, _)| folder) {
+        return Some((at(c, &p)?, d));
+    }
+    let XNode::Elem(el) = &cur.children[*last] else { return None };
+    let el = el.clone();
+    at(c, parents)?.remove_where(|e| e.name.eq_ignore_ascii_case(tag) && e.v("uid").as_deref() == Some(uid));
+    insert_in_folder(c, dest, el, ind, depth);
+    p.clear();
+    if !path(c, tag, uid, &mut p) {
+        return None;
+    }
+    Some((at(c, &p)?, depth + p.len()))
 }
 
 fn remove_unseen(c: &mut XElem, seen: &BTreeSet<String>) {
@@ -2251,7 +2286,11 @@ pub fn slots(n: &Node, lib: &BTreeMap<String, Graph>) -> Vec<String> {
         "sbs:input" => Vec::new(),
         // a call to a library function: its inputs (the links of a call to anything else are all it shows)
         "sbs:fn:instance" => {
-            let mut v: Vec<String> = library_call(n).map(|e| e.inputs.iter().map(|(id, _)| id.to_string()).collect()).unwrap_or_default();
+            let mut v: Vec<String> = if let Some(g) = package_call_target(n).and_then(|name| lib.get(&name)).filter(|g| is_package_function(g)) {
+                inputs_info(g).into_iter().map(|i| i.id).collect()
+            } else {
+                library_call(n).map(|e| e.inputs.iter().map(|(id, _)| id.to_string()).collect()).unwrap_or_default()
+            };
             for k in n.ins.keys() {
                 if !v.contains(k) {
                     v.push(k.clone());
@@ -2329,11 +2368,25 @@ pub fn label(n: &Node, g: &Graph) -> String {
             g.sd.as_ref().and_then(|s| s.input_identifier(&uid)).unwrap_or_else(|| "Input".into())
         }
         "sbs:graph" => n.strs.get("#graph").map(|p| p.rsplit('/').next().unwrap_or(p).to_string()).unwrap_or_else(|| "Graph".into()),
-        "sbs:fn:instance" if library_call(n).is_some() => library_call(n).map(|e| e.label.to_string()).unwrap_or_default(),
+        "sbs:fn:instance" => library_call(n).map(|e| e.label.to_string()).or_else(|| package_call_target(n)).unwrap_or_else(|| "Instance".into()),
         k => match node_def(n) {
             Some(d) => d.label.to_string(),
             None => k.rsplit([':', '/']).next().map(sbs_defs::label_of).unwrap_or_default(),
         },
+    }
+}
+
+/// A same-package function call, with or without an explicit self dependency.
+pub fn package_call_target(n: &Node) -> Option<String> {
+    if n.kind != "sbs:fn:instance" || library_call(n).is_some() {
+        return None;
+    }
+    let PVal::Const { raw, .. } = PVal::dec(n.strs.get("instance")?)? else { return None };
+    let (path, dep) = crate::sbs::split_path(&raw);
+    match n.strs.get("#instance_file").map(|file| file.trim()) {
+        Some("?himself") => Some(path),
+        None if dep.is_none() => Some(path),
+        _ => None,
     }
 }
 
@@ -2352,15 +2405,22 @@ pub fn library_call(n: &Node) -> Option<&'static crate::libfuncs::Entry> {
 }
 
 /// A new node of a native kind. `graph` is a graph of the package for `sbs:graph` (an instance of it), or the
-/// path of a library function for `sbs:fn:instance` (`Functions/Math/clamp`: a call to it; saving names the
-/// library package as its dependency).
+/// path of a library function for `sbs:fn:instance`. A `pkg:///` prefix selects a function in this package.
 pub fn new_node(kind: &str, graph: Option<&str>, pos: [f32; 2]) -> Node {
     let mut n = Node { kind: kind.to_string(), pos, ..Default::default() };
     match (kind, graph) {
         ("sbs:graph", _) => {
             n.strs.insert("#graph".into(), graph.unwrap_or_default().to_string());
         }
-        ("sbs:fn:instance", Some(path)) => set_value(&mut n, "instance", Some(PVal::Const { ty: PTy::S, raw: format!("pkg:///{path}"), rel: None })),
+        ("sbs:fn:instance", Some(path)) => {
+            let raw = if path.starts_with("pkg:///") {
+                n.strs.insert("#instance_file".into(), "?himself".into());
+                path.to_string()
+            } else {
+                format!("pkg:///{path}")
+            };
+            set_value(&mut n, "instance", Some(PVal::Const { ty: PTy::S, raw, rel: None }));
+        }
         _ => {}
     }
     n
@@ -2669,10 +2729,6 @@ fn copy_inline(lib: &mut BTreeMap<String, Graph>, from: &str, to: &str, role: Ro
 /// Drive parameter `param` of node `node` of graph `owner` by a new function graph holding one constant of the
 /// parameter's current value (the format's way to start a function). Returns the function graph's name.
 pub fn make_function(lib: &mut BTreeMap<String, Graph>, pkg: Arc<SdPackage>, owner: &str, node: u32, param: &str, current: &PVal) -> String {
-    let name = format!("{owner}/{node}/{param}");
-    let mut g = Graph::default();
-    g.meta.insert("kind".into(), "function".into());
-    g.meta.insert("identifier".into(), name.clone());
     let (ty, raw) = match current {
         PVal::Const { ty, raw, .. } => (*ty, raw.clone()),
         PVal::Dyn { .. } => (PTy::F(1), "0".into()),
@@ -2686,12 +2742,38 @@ pub fn make_function(lib: &mut BTreeMap<String, Graph>, pkg: Arc<SdPackage>, own
     };
     let mut n = Node { kind: sbs_defs::kind_of(Fam::Function, &f), ..Default::default() };
     n.strs.insert(f.clone(), PVal::Const { ty, raw, rel: None }.enc());
-    g.nodes.insert(1, n);
+    insert_inline_function(lib, pkg, owner, node, param, n)
+}
+
+fn insert_inline_function(lib: &mut BTreeMap<String, Graph>, pkg: Arc<SdPackage>, owner: &str, node: u32, param: &str, result: Node) -> String {
+    let name = format!("{owner}/{node}/{param}");
+    let mut g = Graph::default();
+    g.meta.insert("kind".into(), "function".into());
+    g.meta.insert("identifier".into(), name.clone());
+    g.nodes.insert(1, result);
     let mut sd = SdGraph::new(Role::Param { owner: owner.to_string(), node, param: param.to_string() }, &name, pkg);
     sd.root = Some(1);
     g.sd = Some(Box::new(sd));
     lib.insert(name.clone(), g);
     name
+}
+
+/// Drive a parameter through an inline call. Unconnected arguments use the function’s defaults.
+pub fn drive_with_package_function(root: &mut Graph, node: u32, param: &str, current: &PVal, target: &str) -> Result<String, String> {
+    let function = root.subgraphs.get(target).filter(|g| is_package_function(g)).ok_or("No such package function")?;
+    if function.sd.as_ref().and_then(|s| s.root).is_none_or(|id| !function.nodes.contains_key(&id)) {
+        return Err("Choose a function with a result".into());
+    }
+    let pkg = root.sd.as_ref().ok_or("Not an .sbs package")?.pkg.clone();
+    let owner = graph_name(root);
+    let n = root.nodes.get_mut(&node).ok_or("No such node")?;
+    let call = new_node("sbs:fn:instance", Some(&format!("pkg:///{target}")), [0.0, 0.0]);
+    let name = insert_inline_function(&mut root.subgraphs, pkg, &owner, node, param, call);
+    let rel = match current {
+        PVal::Const { rel, .. } | PVal::Dyn { rel, .. } => rel.clone(),
+    };
+    set_value(n, param, Some(PVal::Dyn { graph: name.clone(), rel }));
+    Ok(name)
 }
 
 /// Add a compositing graph or a function to the package. `kind`: graph (empty), material (the usual material
@@ -3035,7 +3117,12 @@ pub fn drop_owner(subgraphs: &mut BTreeMap<String, Graph>, owner: &Graph) {
 
 /// The graphs of package `root` that use graph `name` as a node.
 pub fn graph_users(root: &Graph, name: &str) -> Vec<String> {
-    all_graphs(root).into_iter().filter(|(k, g)| k != name && g.nodes.values().any(|n| n.kind == "sbs:graph" && n.strs.get("#graph").map(|t| t == name).unwrap_or(false))).map(|(k, _)| k).collect()
+    all_graphs(root).into_iter().filter(|(k, g)| {
+        k != name && g.nodes.values().any(|n| {
+            (n.kind == "sbs:graph" && n.strs.get("#graph").is_some_and(|t| t == name))
+                || package_call_target(n).as_deref() == Some(name)
+        })
+    }).map(|(k, _)| k).collect()
 }
 
 fn for_each_graph_mut(root: &mut Graph, mut f: impl FnMut(&mut Graph)) {
@@ -3082,12 +3169,19 @@ fn rename_unchecked(root: &mut Graph, old: &str, new: &str) -> Result<(), String
         }
         root.subgraphs.insert(new.clone(), g);
     }
+    let is_function = all_graphs(root).get(&new).is_some_and(|g| is_package_function(g));
     let (o, n) = (old.to_string(), new.clone());
     for_each_graph_mut(root, |g| {
         for node in g.nodes.values_mut() {
             if node.kind == "sbs:graph" && node.strs.get("#graph") == Some(&o) {
                 node.strs.insert("#graph".into(), n.clone());
                 node.strs.remove("#path");
+            }
+            if is_function && package_call_target(node).as_deref() == Some(old) {
+                if let Some(PVal::Const { ty, rel, .. }) = node.strs.get("instance").and_then(|v| PVal::dec(v)) {
+                    set_value(node, "instance", Some(PVal::Const { ty, raw: format!("pkg:///{new}"), rel }));
+                    node.strs.insert("#instance_file".into(), "?himself".into());
+                }
             }
         }
     });
@@ -3112,14 +3206,11 @@ pub fn graphs_needed(root: &Graph, name: &str) -> BTreeSet<String> {
             if let Some(fx) = n.strs.get("#fx") {
                 todo.extend(fx.split(',').filter(|x| !x.is_empty()).map(str::to_string));
             }
-            for v in values(n).into_values() {
-                match v {
-                    PVal::Dyn { graph, .. } => todo.push(graph),
-                    // a function called by path
-                    PVal::Const { raw, .. } if raw.starts_with("pkg:///") => todo.push(crate::sbs::split_path(&raw).0.trim_start_matches("pkg:///").to_string()),
-                    _ => {}
-                }
-            }
+            todo.extend(package_call_target(n));
+            todo.extend(values(n).into_values().filter_map(|v| match v {
+                PVal::Dyn { graph, .. } => Some(graph),
+                _ => None,
+            }));
         }
     }
     keep
