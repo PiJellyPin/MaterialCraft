@@ -554,6 +554,7 @@ impl App {
                 }
             });
         }
+        let mut levels_new_edit = false;
         // ---- Levels: Designer's histogram with its handles
         if node.kind == "sbs:levels" {
             let vals = native::values(&node);
@@ -561,18 +562,25 @@ impl App {
                 match vals.get(k) {
                     Some(v @ PVal::Const { .. }) => {
                         let n = v.nums();
-                        [n.first().copied().unwrap_or(d), n.get(1).copied().unwrap_or(d), n.get(2).copied().unwrap_or(d), n.get(3).copied().unwrap_or(d)]
+                        std::array::from_fn(|i| n.get(if n.len() == 1 && i < 3 { 0 } else { i }).copied().unwrap_or(d))
                     }
                     _ => [d; 4],
                 }
             };
             let mut lv = LevelsVals { in_lo: read("levelinlow", 0.0), in_mid: read("levelinmid", 0.5), in_hi: read("levelinhigh", 1.0), out_lo: read("leveloutlow", 0.0), out_hi: read("levelouthigh", 1.0) };
+            let before = lv;
             let src_px = node.ins.get("input1").and_then(|s| self.thumb_px.get(s)).cloned();
             let chan_id = Id::new(("sd_levels_chan", id));
             let mut chan = ui.ctx().data(|d| d.get_temp::<usize>(chan_id)).unwrap_or(0);
-            let mut changed = false;
+            let mut reset = false;
             egui::CollapsingHeader::new(egui::RichText::new("SPECIFIC PARAMETERS").strong()).id_salt(("sd_lvl", id)).default_open(true).show(ui, |ui| {
-                ui.label(egui::RichText::new("Levels Histogram").color(Color32::from_gray(205)));
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Levels Histogram").color(Color32::from_gray(205)));
+                    reset = ui.small_button("Reset").on_hover_text("Restore all Levels parameters to their defaults").clicked();
+                });
+                if reset {
+                    return;
+                }
                 egui::ComboBox::from_id_salt(("sd_levels_chan_cb", id)).width(ui.available_width() - 12.0).selected_text(LEVELS_CHANNELS[chan]).show_ui(ui, |ui| {
                     for (i, c) in LEVELS_CHANNELS.iter().enumerate() {
                         if ui.selectable_label(chan == i, *c).clicked() {
@@ -582,7 +590,7 @@ impl App {
                 });
                 ui.ctx().data_mut(|d| d.insert_temp(chan_id, chan));
                 ui.add_space(4.0);
-                changed |= levels_widget(ui, ("sd_levels_w", id), &mut lv, chan, src_px.as_deref());
+                levels_new_edit |= levels_widget(ui, ("sd_levels_w", id), &mut lv, chan, src_px.as_deref());
                 ui.add_space(4.0);
                 // the numbers, for exact values
                 let lane = if chan == 0 { 0 } else { chan - 1 };
@@ -591,10 +599,12 @@ impl App {
                         ui.label(egui::RichText::new(label).color(Color32::from_gray(170)));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let mut x = v[lane];
-                            if ui.add(egui::DragValue::new(&mut x).range(0.0..=1.0).speed(0.002).fixed_decimals(3)).changed() {
+                            let r = ui.add(egui::DragValue::new(&mut x).range(0.0..=1.0).clamp_existing_to_range(false).speed(0.002).fixed_decimals(3));
+                            if r.changed() {
                                 set_lane(v, chan, x);
-                                changed = true;
+                                levels_new_edit |= !r.dragged();
                             }
+                            levels_new_edit |= r.drag_started();
                         });
                     });
                 };
@@ -606,11 +616,26 @@ impl App {
                 let mut clamp = read("clampinterm", 1.0)[0] != 0.0;
                 if ui.checkbox(&mut clamp, "Clamp in term").on_hover_text("Clamp the values between low and high before the output range").changed() {
                     sets.push(("clampinterm".to_string(), Some(PVal::Const { ty: PTy::B, raw: (clamp as i32).to_string(), rel: Some("0".into()) })));
+                    levels_new_edit = true;
                 }
             });
-            if changed {
-                for (k, v) in [("levelinlow", lv.in_lo), ("levelinmid", lv.in_mid), ("levelinhigh", lv.in_hi), ("leveloutlow", lv.out_lo), ("levelouthigh", lv.out_hi)] {
-                    sets.push((k.to_string(), Some(PVal::Const { ty: PTy::F(4), raw: format!("{} {} {} {}", v[0], v[1], v[2], v[3]), rel: Some("0".into()) })));
+            for (k, v, old) in [
+                ("levelinlow", lv.in_lo, before.in_lo),
+                ("levelinmid", lv.in_mid, before.in_mid),
+                ("levelinhigh", lv.in_hi, before.in_hi),
+                ("leveloutlow", lv.out_lo, before.out_lo),
+                ("levelouthigh", lv.out_hi, before.out_hi),
+            ] {
+                if reset && vals.contains_key(k) {
+                    sets.push((k.into(), None));
+                } else if v != old {
+                    sets.push((k.into(), Some(PVal::of_nums(PTy::F(4), &v, Some("0".into())))));
+                }
+            }
+            if reset {
+                levels_new_edit = true;
+                if vals.contains_key("clampinterm") {
+                    sets.push(("clampinterm".into(), None));
                 }
             }
         }
@@ -861,6 +886,10 @@ impl App {
                 }
                 self.dirty = true;
             }
+        }
+        // Each Levels gesture gets its own snapshot, even if another edit left the group open.
+        if levels_new_edit {
+            self.edit_open = false;
         }
         if !sets.is_empty() || !strs.is_empty() {
             if !self.edit_open {
@@ -1222,6 +1251,7 @@ impl App {
 
 const LEVELS_CHANNELS: &[&str] = &["Luminance Channel", "Red Channel", "Green Channel", "Blue Channel", "Alpha Channel"];
 
+#[derive(Clone, Copy)]
 struct LevelsVals {
     in_lo: [f32; 4],
     in_mid: [f32; 4],
@@ -1243,7 +1273,7 @@ fn set_lane(v: &mut [f32; 4], chan: usize, x: f32) {
 }
 
 /// Designer's Levels control: the histogram of the input with the three input handles above it and the two output
-/// handles below. `src` is the input's thumbnail (RGBA, linear, THUMB x THUMB). Returns true when a handle moved.
+/// handles below. `src` is the input's thumbnail (RGBA, linear, THUMB x THUMB). Returns true when a new edit starts.
 fn levels_widget(ui: &mut egui::Ui, id_src: (&str, u32), lv: &mut LevelsVals, chan: usize, src: Option<&[u8]>) -> bool {
     let lane = if chan == 0 { 0 } else { chan - 1 };
     let full_w = ui.available_width() - 12.0;
@@ -1284,7 +1314,7 @@ fn levels_widget(ui: &mut egui::Ui, id_src: (&str, u32), lv: &mut LevelsVals, ch
         let g = (t0 * 255.0) as u8;
         painter.rect_filled(Rect::from_min_max(pos2(ramp.left() + ramp.width() * t0, ramp.top()), pos2(ramp.left() + ramp.width() * t1 + 0.5, ramp.bottom())), 0.0, Color32::from_gray(g));
     }
-    let mut changed = false;
+    let mut new_edit = false;
     let x_of = |v: f32| hist.left() + v.clamp(0.0, 1.0) * hist.width();
     let v_of = |x: f32| ((x - hist.left()) / hist.width()).clamp(0.0, 1.0);
     // handles: (value, y of the tip, points up?, fill)
@@ -1312,16 +1342,17 @@ fn levels_widget(ui: &mut egui::Ui, id_src: (&str, u32), lv: &mut LevelsVals, ch
         let r = ui.interact(hit, base.with(name), Sense::click_and_drag());
         let stroke = if r.hovered() || r.dragged() { Color32::WHITE } else { Color32::from_gray(60) };
         painter.add(egui::Shape::convex_polygon(tri, fill, Stroke::new(1.0_f32, stroke)));
+        new_edit |= r.drag_started();
         if r.dragged() {
             if let Some(p) = r.interact_pointer_pos() {
                 let nv = v_of(p.x);
                 match name {
                     "in_lo" => {
-                        let nv = nv.min(hi - 0.002);
+                        let nv = nv.min((hi - 0.002).max(0.0));
                         set_lane(&mut lv.in_lo, chan, nv);
                     }
                     "in_hi" => {
-                        let nv = nv.max(lo + 0.002);
+                        let nv = nv.max((lo + 0.002).min(1.0));
                         set_lane(&mut lv.in_hi, chan, nv);
                     }
                     "in_mid" => {
@@ -1331,7 +1362,6 @@ fn levels_widget(ui: &mut egui::Ui, id_src: (&str, u32), lv: &mut LevelsVals, ch
                     "out_lo" => set_lane(&mut lv.out_lo, chan, nv),
                     _ => set_lane(&mut lv.out_hi, chan, nv),
                 }
-                changed = true;
             }
         }
         if r.double_clicked() {
@@ -1347,8 +1377,8 @@ fn levels_widget(ui: &mut egui::Ui, id_src: (&str, u32), lv: &mut LevelsVals, ch
                 "out_lo" => set_lane(&mut lv.out_lo, chan, d),
                 _ => set_lane(&mut lv.out_hi, chan, d),
             }
-            changed = true;
+            new_edit = true;
         }
     }
-    changed
+    new_edit
 }

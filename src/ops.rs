@@ -310,6 +310,36 @@ pub fn sharpen(t: &Tex, radius: f32, amount: f32) -> Tex {
 }
 
 // ---------- tonal ----------
+pub(crate) const LEVELS_PARAMS: [(&str, [&str; 4], f32); 5] = [
+    ("low", ["low_r", "low_g", "low_b", "low_a"], 0.0),
+    ("high", ["high_r", "high_g", "high_b", "high_a"], 1.0),
+    ("gamma", ["gamma_r", "gamma_g", "gamma_b", "gamma_a"], 1.0),
+    ("out_low", ["out_low_r", "out_low_g", "out_low_b", "out_low_a"], 0.0),
+    ("out_high", ["out_high_r", "out_high_g", "out_high_b", "out_high_a"], 1.0),
+];
+
+pub(crate) fn channel_levels(t: &Tex, [lo, hi, gamma, out_lo, out_hi]: [[f32; 4]; 5], clamp_interm: bool) -> Tex {
+    let span: [f32; 4] = std::array::from_fn(|i| {
+        let d = hi[i] - lo[i];
+        if d >= 0.0 { d.max(1e-6) } else { d.min(-1e-6) }
+    });
+    let power = gamma.map(|g| 1.0 / g.max(1e-3));
+    let alpha_identity = [lo[3], hi[3], gamma[3], out_lo[3], out_hi[3]] == [0.0, 1.0, 1.0, 0.0, 1.0];
+    t.map(|p| std::array::from_fn(|i| {
+        if i == 3 && alpha_identity {
+            return p[i];
+        }
+        let mut v = (p[i] - lo[i]) / span[i];
+        if clamp_interm {
+            v = v.clamp(0.0, 1.0);
+        }
+        if (power[i] - 1.0).abs() >= 1e-6 {
+            v = v.abs().powf(power[i]).copysign(v);
+        }
+        out_lo[i] + (out_hi[i] - out_lo[i]) * v
+    }))
+}
+
 pub fn levels(t: &Tex, in_lo: f32, in_hi: f32, gamma: f32, out_lo: f32, out_hi: f32) -> Tex {
     let d = if in_hi >= in_lo { (in_hi - in_lo).max(1e-6) } else { (in_hi - in_lo).min(-1e-6) };
     let g = 1.0 / gamma.max(1e-3);
