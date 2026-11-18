@@ -92,7 +92,7 @@ impl App {
             if let Some(id) = node.filter(|id| self.g.nodes.contains_key(id)) {
                 self.sel.clear();
                 self.sel.insert(id);
-                self.active = Some(id);
+                self.set_active(Some(id));
                 // centre the node at a readable zoom
                 let pos = self.g.nodes[&id].pos;
                 let c = self.canvas_rect;

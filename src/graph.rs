@@ -3826,6 +3826,13 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
         "sharpen" => ops::sharpen(tex("in")?, f("radius", 2.0) * rs, f("amount", 1.0)),
         "levels" => {
             let t = tex("in")?;
+            if f("channel_levels", 0.0) > 0.5 {
+                let params = ops::LEVELS_PARAMS.map(|(key, lanes, def)| {
+                    let rgb = f(key, def);
+                    std::array::from_fn(|i| f(lanes[i], if i == 3 { def } else { rgb }))
+                });
+                return Ok(ops::channel_levels(t, params, f("clamp_interm", 1.0) > 0.5));
+            }
             let (mut lo, mut hi) = (f("low", 0.0), f("high", 1.0));
             if f("auto", 0.0) > 0.5 {
                 let (mn, mx) = t.px.iter().fold((1.0f32, 0.0f32), |a, p| (a.0.min(lum(*p)), a.1.max(lum(*p))));

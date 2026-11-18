@@ -1393,6 +1393,10 @@ impl App {
         ui.horizontal_top(|ui| {
             ui.allocate_ui_with_layout(vec2(158.0, h), egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 egui::ScrollArea::vertical().id_salt("libtree").auto_shrink([false, false]).show(ui, |ui| {
+                    let selection_id = ui.make_persistent_id("lib_selection");
+                    let previous = ui.data(|data| data.get_temp::<String>(selection_id));
+                    let selected_parent = previous.filter(|cat| *cat != self.lib_cat)
+                        .and_then(|_| self.lib_cat.split_once('/').map(|(name, _)| name.to_owned()));
                     for (name, subs) in LIB_TREE {
                         let sel = self.lib_cat == *name;
                         let icon = if *name == "Favorites" { "*  " } else { "" };
@@ -1401,8 +1405,8 @@ impl App {
                                 self.lib_cat = name.to_string();
                             }
                         } else {
-                            let open = self.lib_cat.starts_with(name);
-                            egui::CollapsingHeader::new(egui::RichText::new(*name).strong()).default_open(true).open(if open { Some(true) } else { None }).show(ui, |ui| {
+                            let open = (selected_parent.as_deref() == Some(*name)).then_some(true);
+                            egui::CollapsingHeader::new(egui::RichText::new(*name).strong()).default_open(true).open(open).show(ui, |ui| {
                                 for sub in *subs {
                                     let full = format!("{name}/{sub}");
                                     if ui.selectable_label(self.lib_cat == full, format!("   {sub}")).clicked() {
@@ -1410,13 +1414,9 @@ impl App {
                                     }
                                 }
                             });
-                            let hdr_resp = ui.interact(ui.min_rect(), Id::new(("libcat", *name)), Sense::hover());
-                            let _ = hdr_resp;
-                            if sel {
-                                // clicking the header text selects the whole group via the first sub-category
-                            }
                         }
                     }
+                    ui.data_mut(|data| data.insert_temp(selection_id, self.lib_cat.clone()));
                 });
             });
             ui.separator();
@@ -1488,10 +1488,22 @@ impl App {
     // ------------------------------------------------------------ 2D view
     fn view2d_panel(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing = vec2(6.0, 4.0);
-        let title = match self.active.and_then(|a| self.g.nodes.get(&a).map(|n| (a, materialcraft::sbs_native::label(n, &self.g)))) {
-            Some((id, k)) => format!("{k} #{id} - 2D VIEW"),
-            None => "2D VIEW".into(),
+        let target = self.view2d_target();
+        let node = target.and_then(|(id, _)| self.g.nodes.get(&id).map(|n| (id, n)));
+        let node_id = node.map(|(id, _)| id);
+        let locked = self.view2d_lock.is_some();
+        let outs = node.filter(|_| self.g.graph_kind() == "texture").map(|(_, n)| sd_outs(n, &self.g.subgraphs)).unwrap_or_default();
+        // A graph instance's default is chosen by the evaluator and can differ from its first socket.
+        let first_is_default = node.is_some_and(|(_, n)| n.kind != "sbs:graph");
+        let out = target.and_then(|(_, out)| out).and_then(|out| outs.iter().find(|o| *o == out))
+            .or_else(|| outs.first().filter(|_| first_is_default));
+        let node = node.map(|(id, n)| (id, native::label(n, &self.g)));
+        let title = match (node, out) {
+            (Some((id, k)), Some(out)) => format!("{k} #{id} : {out} - 2D VIEW"),
+            (Some((id, k)), None) => format!("{k} #{id} - 2D VIEW"),
+            (None, _) => "2D VIEW".into(),
         };
+        let title = if locked { format!("{title} [locked]") } else { title };
         if panel_header(ui, &title, true) {
             self.show[3] = false;
         }
@@ -1543,6 +1555,19 @@ impl App {
         }
         ui.horizontal(|ui| {
             ui.add_space(4.0);
+            if let Some(id) = node_id.filter(|_| !outs.is_empty()) {
+                let shown = out.map_or_else(|| "Default".to_string(), |out| usage_label(out));
+                egui::ComboBox::from_id_salt("preview_output").width(75.0).selected_text(egui::RichText::new(shown).small()).show_ui(ui, |ui| {
+                    if !first_is_default && ui.selectable_label(out.is_none(), "Default").clicked() {
+                        self.set_preview_output(id, None);
+                    }
+                    for name in &outs {
+                        if ui.selectable_label(out == Some(name), usage_label(name)).clicked() {
+                            self.set_preview_output(id, Some(name.clone()));
+                        }
+                    }
+                });
+            }
             ui.small(format!("{} x {} (RGBA, {}bpc)", self.tex2d_size.0, self.tex2d_size.1, if self.g.meta.get("output_format").map(|s| s == "16").unwrap_or(false) { 16 } else { 8 }));
             if let Some((lo, hi)) = self.tex2d_range {
                 if lo <= hi {
@@ -1558,6 +1583,13 @@ impl App {
                 if icon_btn(ui, Ic::Frame, "Fit to view (double-click)", true).clicked() {
                     self.z2d = 1.0;
                     self.pan2d = Vec2::ZERO;
+                }
+                if let Some(id) = node_id {
+                    if ui.selectable_label(locked, egui::RichText::new("Pin").small())
+                        .on_hover_text(if locked { "Unlock 2D view" } else { "Lock in 2D view" }).clicked()
+                    {
+                        self.toggle_view2d_lock(id);
+                    }
                 }
                 let before = self.tile_preview;
                 if icon_btn(ui, Ic::Grid, "Tile 2x2 preview", true).clicked() {
@@ -2507,7 +2539,7 @@ impl eframe::App for App {
             self.maps_size = 0;
             self.spawn_eval(first, Pass::Interactive);
         } else if self.view_pending && self.job.is_none() {
-            // only the selection moved: show that node's picture from the cache, leave everything else alone
+            // only the 2D preview target changed: show its picture from the cache
             self.view_pending = false;
             self.view_only_next = true;
             let size = self.pass_size.max(self.first_tier());

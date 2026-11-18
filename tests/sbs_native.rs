@@ -690,3 +690,35 @@ fn a_graph_node_applies_a_preset_of_its_graph() {
     let out = sbs_native::save_text(&mat).unwrap();
     assert!(out.contains("label=\"Halfway\" usertags=\"mine\"") && out.contains("<unknown keep=\"1\"/>") && out.contains("identifier=\"gone\""), "{out}");
 }
+
+#[test]
+fn sbs_levels_low_parameters_change_the_output() {
+    let mut g = sbs_native::new_package("levels", 16);
+    let mut src = Node { kind: "sbs:uniform".into(), ..Default::default() };
+    sbs_native::set_value(&mut src, "outputcolor", Some(PVal::of_nums(PTy::F(4), &[0.5; 4], Some("0".into()))));
+    g.nodes.insert(1, src);
+
+    let mut levels = Node { kind: "sbs:levels".into(), ..Default::default() };
+    levels.ins.insert("input1".into(), 1);
+    g.nodes.insert(2, levels);
+
+    assert!(near(g.evaluate_node(2, 16).unwrap().px[0], [0.5; 4]));
+    for (param, ty, values, expected) in [
+        ("levelinlow", PTy::F(1), &[0.25][..], [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0, 0.5]),
+        ("leveloutlow", PTy::F(1), &[0.25][..], [0.625, 0.625, 0.625, 0.5]),
+        ("levelinlow", PTy::F(4), &[0.0, 0.25, 0.0, 0.25][..], [0.5, 1.0 / 3.0, 0.5, 1.0 / 3.0]),
+        ("leveloutlow", PTy::F(4), &[0.0, 0.25, 0.0, 0.25][..], [0.5, 0.625, 0.5, 0.625]),
+    ] {
+        sbs_native::set_value(g.nodes.get_mut(&2).unwrap(), param, Some(PVal::of_nums(ty, values, Some("0".into()))));
+        let got = g.evaluate_node(2, 16).unwrap().px[0];
+        assert!(near(got, expected), "{param} {ty:?}: {got:?}, expected {expected:?}");
+        sbs_native::set_value(g.nodes.get_mut(&2).unwrap(), param, None);
+        assert!(near(g.evaluate_node(2, 16).unwrap().px[0], [0.5; 4]));
+    }
+
+    let n = g.nodes.get_mut(&2).unwrap();
+    sbs_native::set_value(n, "levelinlow", Some(PVal::of_nums(PTy::F(1), &[0.75], None)));
+    assert!(near(g.evaluate_node(2, 16).unwrap().px[0], [0.0, 0.0, 0.0, 0.5]));
+    sbs_native::set_value(g.nodes.get_mut(&2).unwrap(), "clampinterm", Some(PVal::of_nums(PTy::B, &[0.0], None)));
+    assert!(near(g.evaluate_node(2, 16).unwrap().px[0], [-1.0, -1.0, -1.0, 0.5]));
+}

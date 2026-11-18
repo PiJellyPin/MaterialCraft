@@ -1835,18 +1835,27 @@ impl Cx {
                 c.lin(p, "leveloutlow", 0.0, "out_low", 1.0, 0.0);
                 c.lin(p, "levelouthigh", 1.0, "out_high", 1.0, 0.0);
                 // the mid point m maps to 0.5: out = in^(1/gamma) with gamma = ln m / ln 0.5
-                let mid = cval(p, "levelinmid").map(|v| v.num()).unwrap_or(0.5).clamp(0.001, 0.999);
-                c.num("gamma", mid.ln() / 0.5f32.ln());
+                let gamma = |mid: f32| mid.clamp(0.001, 0.999).ln() / 0.5f32.ln();
+                c.num("gamma", gamma(cval(p, "levelinmid").map(Val::num).unwrap_or(0.5)));
                 if dynv(p, "levelinmid").is_some() {
                     c.approx("a function-driven mid level is not carried over");
                 }
-                for k in ["levelinlow", "levelinhigh", "levelinmid", "leveloutlow", "levelouthigh"] {
-                    if let Some(v) = cval(p, k) {
-                        if v.len() >= 3 && (v.at(0) != v.at(1) || v.at(1) != v.at(2)) {
-                            c.approx("per-channel levels: the red channel's values are used for all channels");
-                            break;
+                for ((param, keys, def), sd) in crate::ops::LEVELS_PARAMS.into_iter().zip(["levelinlow", "levelinhigh", "levelinmid", "leveloutlow", "levelouthigh"]) {
+                    if let Some(v) = cval(p, sd).filter(|v| v.len() > 1) {
+                        let convert = |x| if param == "gamma" { gamma(x) } else { x };
+                        let base = convert(v.num());
+                        for (i, key) in keys.into_iter().take(v.len()).enumerate().skip(1) {
+                            let x = convert(v.at(i));
+                            if x != if i == 3 { def } else { base } {
+                                c.num(key, x);
+                                c.num("channel_levels", 1.0);
+                            }
                         }
                     }
+                }
+                if int("clampinterm", 1) == 0 {
+                    c.num("channel_levels", 1.0);
+                    c.num("clamp_interm", 0.0);
                 }
                 c
             }
@@ -1896,7 +1905,10 @@ impl Cx {
                 c
             }
             "gradient" => {
+                use crate::sbs_native::{GradientStyle, GRADIENT_STYLE_PARAM};
                 let mut c = Conv::new("colorize", Level::Info).slot("input1", "in");
+                let style = GradientStyle::from_value(cval(p, GRADIENT_STYLE_PARAM).map(|v| v.num()).unwrap_or(0.0));
+                c.num("interp", style as u32 as f32);
                 c.num("addressing", if int("addressingrepeat", 0) != 0 { 1.0 } else { 0.0 });
                 let keys: Vec<(f32, [f32; 4])> = arrays
                     .iter()

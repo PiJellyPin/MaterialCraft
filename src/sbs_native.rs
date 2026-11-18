@@ -2136,6 +2136,9 @@ pub fn params_of(n: &Node, lib: &BTreeMap<String, Graph>) -> Vec<ParamInfo> {
     }
     // values the node has that its type does not list (kept, shown last)
     for (k, v) in &vals {
+        if n.kind == "sbs:gradient" && k == GRADIENT_STYLE_PARAM {
+            continue;
+        }
         if !out.iter().any(|x| &x.id == k) {
             let ty = match v {
                 PVal::Const { ty, .. } => *ty,
@@ -2159,7 +2162,38 @@ pub fn set_value(n: &mut Node, name: &str, v: Option<PVal>) {
     }
 }
 
-/// The colour keys of a Gradient Map node: (position, colour), in the order the file keeps them. A node without keys of its own has
+// The atomic definition has no interpolation parameter. Use a distinct name so
+// older readers can use the standard ramp with their default interpolation.
+pub(crate) const GRADIENT_STYLE_PARAM: &str = "materialcraft_gradient_style";
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GradientStyle {
+    Linear = 0,
+    Smooth = 1,
+    Constant = 2,
+}
+
+impl GradientStyle {
+    pub(crate) fn from_value(v: f32) -> Self {
+        match v {
+            1.0 => Self::Smooth,
+            2.0 => Self::Constant,
+            _ => Self::Linear,
+        }
+    }
+}
+
+pub fn gradient_style(n: &Node) -> GradientStyle {
+    let v = n.strs.get(GRADIENT_STYLE_PARAM).and_then(|v| PVal::dec(v)).and_then(|v| v.nums().first().copied());
+    GradientStyle::from_value(v.unwrap_or(0.0))
+}
+
+pub fn set_gradient_style(n: &mut Node, style: GradientStyle) {
+    let value = (style != GradientStyle::Linear).then(|| PVal::of_nums(PTy::I(1), &[style as u32 as f32], Some("0".into())));
+    set_value(n, GRADIENT_STYLE_PARAM, value);
+}
+
+/// The colour keys of a Gradient Map node, sorted by position. A node without keys of its own has
 /// the format's default black-to-white ramp.
 pub fn gradient_keys(n: &Node) -> Vec<(f32, [f32; 4])> {
     let mut keys: Vec<(f32, [f32; 4])> = n
@@ -2190,12 +2224,14 @@ pub fn gradient_keys(n: &Node) -> Vec<(f32, [f32; 4])> {
     if keys.is_empty() {
         keys = vec![(0.0, [0.0, 0.0, 0.0, 1.0]), (1.0, [1.0, 1.0, 1.0, 1.0])];
     }
+    keys.sort_by(|a, b| a.0.total_cmp(&b.0));
     keys
 }
 
 /// Set the colour keys of a Gradient Map node (written as the format's `gradientrgba` array).
 pub fn set_gradient_keys(n: &mut Node, keys: &[(f32, [f32; 4])]) {
-    let keys: Vec<(f32, [f32; 4])> = keys.iter().map(|(p, c)| (if p.is_finite() { p.clamp(0.0, 1.0) } else { 0.0 }, c.map(|x| if x.is_finite() { x } else { 0.0 }))).collect();
+    let mut keys: Vec<(f32, [f32; 4])> = keys.iter().map(|(p, c)| (if p.is_finite() { p.clamp(0.0, 1.0) } else { 0.0 }, c.map(|x| if x.is_finite() { x } else { 0.0 }))).collect();
+    keys.sort_by(|a, b| a.0.total_cmp(&b.0));
     // the array keeps the uid it had
     let uid = n.strs.get("#arrays").and_then(|x| XDoc::parse(x).ok()).and_then(|d| d.root.elems().find_map(|a| a.v("uid"))).unwrap_or_else(|| "1".into());
     let param = |name: &str, el: XElem| {
@@ -2223,6 +2259,38 @@ pub fn set_gradient_keys(n: &mut Node, keys: &[(f32, [f32; 4])]) {
     let mut arrays = XElem::new("paramsArrays");
     push(&mut arrays, a);
     n.strs.insert("#arrays".into(), arrays.to_xml());
+}
+
+#[cfg(test)]
+#[test]
+fn gradient_map_styles_round_trip_and_sample() {
+    use GradientStyle::{Constant, Linear, Smooth};
+
+    let black = [0.0, 0.0, 0.0, 1.0];
+    let grey = [0.5, 0.5, 0.5, 1.0];
+    let white = [1.0; 4];
+    let mut g = new_package("gradient_test", 32);
+    let id = 100;
+    g.nodes.insert(id, new_node("sbs:gradient", None, [0.0; 2]));
+    set_gradient_keys(g.nodes.get_mut(&id).unwrap(), &[(1.0, white), (0.0, black), (0.5, grey)]);
+
+    for (style, quarter) in [(Smooth, 0.078125), (Constant, 0.0), (Linear, 0.125)] {
+        set_gradient_style(g.nodes.get_mut(&id).unwrap(), style);
+        let (reopened, _) = load(&save_text(&g).unwrap(), None).unwrap();
+        let node = reopened.nodes.values().find(|n| n.kind == "sbs:gradient").unwrap();
+        assert_eq!(gradient_style(node), style);
+        let keys = gradient_keys(node);
+        assert_eq!(keys, [(0.0, black), (0.5, grey), (1.0, white)]);
+
+        let lowered = lower(&reopened).unwrap();
+        let colorize = lowered.graph.nodes.values().find(|n| n.kind == "colorize").unwrap();
+        let interp = colorize.nums["interp"] as u32;
+        assert_eq!(interp, style as u32);
+        let sample = |t| crate::ops::ramp_at(&keys, t, interp, 1.0);
+        assert_eq!(sample(0.125), [quarter, quarter, quarter, 1.0]);
+        assert_eq!(sample(0.5), grey);
+        assert_eq!(sample(1.0), white);
+    }
 }
 
 /// A constant for parameter `p` from numbers, with the inheritance the format writes on node values.

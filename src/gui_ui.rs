@@ -101,10 +101,18 @@ impl App {
             }
         }
         let pan_mode = mods.alt;
-        if resp.dragged_by(PointerButton::Middle) || (resp.dragged_by(PointerButton::Primary) && pan_mode && (self.connecting.is_none() && self.connecting_in.is_none())) {
+        // A graph item can own the egui drag, so follow the middle button from its canvas press origin.
+        let (middle_down, middle_origin) = ui.input(|i| {
+            let down = i.pointer.button_down(PointerButton::Middle);
+            let origin = i.pointer.press_origin().filter(|_| down && i.pointer.is_decidedly_dragging());
+            (down, origin)
+        });
+        if middle_origin.is_some_and(|p| rect.contains(p) && ui.ctx().layer_id_at(p) == Some(ui.layer_id())) {
+            self.pan += ui.input(|i| i.pointer.delta());
+        } else if !middle_down && resp.dragged_by(PointerButton::Primary) && pan_mode && (self.connecting.is_none() && self.connecting_in.is_none()) {
             self.pan += resp.drag_delta();
         }
-        if resp.drag_started_by(PointerButton::Primary) && !pan_mode && (self.connecting.is_none() && self.connecting_in.is_none()) {
+        if !middle_down && resp.drag_started_by(PointerButton::Primary) && !pan_mode && (self.connecting.is_none() && self.connecting_in.is_none()) {
             self.rubber = pointer;
             if !mods.shift {
                 self.sel.clear();
@@ -158,7 +166,7 @@ impl App {
             painter.rect_stroke(r, egui::CornerRadius::same((4.0 * z) as u8), Stroke::new(if selected { 2.0_f32 } else { 1.0_f32 }, if selected { Color32::from_rgb(60, 200, 170) } else { base.gamma_multiply(0.8) }), egui::StrokeKind::Inside);
             painter.text(title.left_center() + vec2(8.0 * z, 0.0), Align2::LEFT_CENTER, &c.text, FontId::proportional(13.0 * z), Color32::WHITE);
             let tr = ui.interact(title, Id::new(("cmt", ci)), Sense::click_and_drag());
-            if tr.drag_started() {
+            if !middle_down && tr.drag_started_by(PointerButton::Primary) {
                 self.snap();
                 let cr = Rect::from_min_size(pos2(c.pos[0], c.pos[1]), vec2(c.size[0], c.size[1]));
                 self.comment_members = self.g.nodes.iter().filter(|(_, n)| cr.contains(pos2(n.pos[0] + CARD * 0.5, n.pos[1] + CARD_H * 0.5))).map(|(i, _)| *i).collect();
@@ -169,7 +177,7 @@ impl App {
                 self.sel_comment = Some(ci);
                 self.sel.clear();
             }
-            if tr.dragged() {
+            if !middle_down && tr.dragged_by(PointerButton::Primary) {
                 let d = tr.drag_delta() / z;
                 self.g.comments[ci].pos[0] += d.x;
                 self.g.comments[ci].pos[1] += d.y;
@@ -184,10 +192,10 @@ impl App {
             let handle = Rect::from_min_size(r.max - hs, hs);
             painter.rect_filled(handle, egui::CornerRadius::same((2.0) as u8), base.gamma_multiply(0.7));
             let hr = ui.interact(handle, Id::new(("cmtr", ci)), Sense::drag());
-            if hr.drag_started() {
+            if !middle_down && hr.drag_started_by(PointerButton::Primary) {
                 self.snap();
             }
-            if hr.dragged() {
+            if !middle_down && hr.dragged_by(PointerButton::Primary) {
                 let d = hr.drag_delta() / z;
                 self.g.comments[ci].size[0] = (self.g.comments[ci].size[0] + d.x).max(80.0);
                 self.g.comments[ci].size[1] = (self.g.comments[ci].size[1] + d.y).max(50.0);
@@ -408,7 +416,7 @@ impl App {
 
             // interaction: card
             let nr = ui.interact(card, Id::new(("node", id)), Sense::click_and_drag());
-            if nr.drag_started() {
+            if !middle_down && nr.drag_started_by(PointerButton::Primary) {
                 self.snap();
                 if !self.sel.contains(&id) {
                     if !(mods.shift || mods.command) {
@@ -419,17 +427,17 @@ impl App {
                 }
                 self.sel_comment = None;
                 if self.active != Some(id) {
-                    self.active = Some(id);
-                    self.view_pending = true;
+                    self.set_active(Some(id));
+                    self.view_pending |= self.view2d_lock.is_none();
                 }
             }
-            if nr.dragged() && (self.connecting.is_none() && self.connecting_in.is_none()) {
+            if !middle_down && nr.dragged_by(PointerButton::Primary) && (self.connecting.is_none() && self.connecting_in.is_none()) {
                 let d = nr.drag_delta() / z;
                 let drag_id = Id::new("node_drag_origin");
                 if self.snap_nodes && self.snap_grid >= 1.0 {
                     // the pointer moves freely; the nodes land on the grid: every node's start position plus the
                     // total drag so far, rounded
-                    let (mut total, origin): (Vec2, Vec<(u32, [f32; 2])>) = if nr.drag_started() {
+                    let (mut total, origin): (Vec2, Vec<(u32, [f32; 2])>) = if nr.drag_started_by(PointerButton::Primary) {
                         (Vec2::ZERO, self.sel.iter().filter_map(|k| self.g.nodes.get(k).map(|n| (*k, n.pos))).collect())
                     } else {
                         ui.ctx().data(|dt| dt.get_temp(drag_id)).unwrap_or((Vec2::ZERO, Vec::new()))
@@ -451,8 +459,10 @@ impl App {
                     }
                 }
             }
+            let graph_instance = matches!(s.kind.as_str(), "sbs:graph" | "sbs:fxmaps");
+            let toggle_preview = nr.double_clicked() && !graph_instance && self.g.graph_kind() == "texture";
             if nr.clicked() {
-                if mods.shift || mods.command {
+                if !toggle_preview && (mods.shift || mods.command) {
                     if !self.sel.remove(&id) {
                         self.sel.insert(id);
                     }
@@ -462,12 +472,14 @@ impl App {
                 }
                 self.sel_comment = None;
                 if self.active != Some(id) {
-                    self.active = Some(id);
-                    self.view_pending = true;
+                    self.set_active(Some(id));
+                    self.view_pending |= self.view2d_lock.is_none();
                 }
             }
-            if nr.double_clicked() {
-                if let (Some(g), "sbs:graph" | "sbs:fxmaps") = (&s.graph_name, s.kind.as_str()) {
+            if toggle_preview {
+                self.toggle_view2d_lock(id);
+            } else if graph_instance && nr.double_clicked() {
+                if let Some(g) = &s.graph_name {
                     acts.push(Act::EnterSub(g.clone()));
                 }
             }
@@ -476,8 +488,8 @@ impl App {
                 self.sel_links.clear();
                 if !self.sel.contains(&id) {
                     self.sel = [id].into_iter().collect();
-                    self.active = Some(id);
-                    self.view_pending = true;
+                    self.set_active(Some(id));
+                    self.view_pending |= self.view2d_lock.is_none();
                 }
             }
             if let Some(e) = &err {
@@ -542,6 +554,14 @@ impl App {
                         }
                     }
                 });
+                if self.g.graph_kind() == "texture" {
+                    let locked = self.view2d_lock.as_ref().is_some_and(|(node, _)| *node == id);
+                    let label = if locked { "Unlock 2D view" } else { "Lock in 2D view" };
+                    if ui.button(label).clicked() {
+                        self.toggle_view2d_lock(id);
+                        ui.close();
+                    }
+                }
                 if is_material {
                     let label = if shown_3d { "Show graph outputs in 3D view" } else { "Show in 3D view" };
                     if ui.button(label).clicked() {
@@ -577,14 +597,24 @@ impl App {
                         _ => pins.get(&id).copied().unwrap_or(materialcraft::graph::Pin::Gray),
                     };
                     painter.circle(op, 4.8 * z, if used { Color32::from_rgb(70, 210, 180) } else { pin_fill(opin) }, Stroke::new(1.0_f32, Color32::BLACK));
+                    if self.view_node() == Some(id) && self.view_output().map_or(oi == 0 && s.kind != "sbs:graph", |out| out == oname) {
+                        painter.circle_stroke(op, 7.0 * z, Stroke::new(1.0, Color32::from_rgb(110, 225, 200)));
+                    }
                     if z >= 0.45 {
                         painter.text(op + vec2(9.0 * z, 0.0), Align2::LEFT_CENTER, usage_label(oname), FontId::proportional(10.5 * z.max(0.7)), Color32::from_gray(175));
                     }
-                    let pr = ui.interact(Rect::from_center_size(op, Vec2::splat(14.0 * z)), Id::new(("out", id, oi)), Sense::drag());
-                    if pr.drag_started() {
+                    let pr = ui.interact(Rect::from_center_size(op, Vec2::splat(14.0 * z)), Id::new(("out", id, oi)), Sense::click_and_drag());
+                    if !middle_down && pr.drag_started_by(PointerButton::Primary) {
                         self.connecting = Some(id);
                         self.connecting_out = Some(oname.clone());
                         self.relink_all = mods.shift && !self.children_of(id, Some(oname.as_str())).is_empty();
+                    } else if !middle_down && pr.clicked_by(PointerButton::Primary) {
+                        self.sel = [id].into_iter().collect();
+                        self.sel_links.clear();
+                        self.sel_comment = None;
+                        self.view_pending |= self.view2d_lock.is_none() && self.active != Some(id);
+                        self.set_active(Some(id));
+                        self.set_preview_output(id, Some(oname.clone()));
                     }
                 }
             } else if s.kind != "sbs:output" {
@@ -592,7 +622,7 @@ impl App {
                 out_ports.push((id, None, op));
                 painter.circle(op, if s.dot { 3.5 } else { 4.8 } * z, pin_fill(pins.get(&id).copied().unwrap_or(materialcraft::graph::Pin::Gray)), Stroke::new(1.0_f32, Color32::BLACK));
                 let pr = ui.interact(Rect::from_center_size(op, Vec2::splat(14.0 * z)), Id::new(("out", id)), Sense::drag());
-                if pr.drag_started() {
+                if !middle_down && pr.drag_started_by(PointerButton::Primary) {
                     self.connecting = Some(id);
                     self.connecting_out = None;
                     self.relink_all = mods.shift && !self.children_of(id, None).is_empty();
@@ -604,7 +634,7 @@ impl App {
                 ports.push((id, *slot, ip));
                 painter.circle(ip, 4.5 * z, if s.kind == "sbs:output" { Color32::from_rgb(70, 210, 180) } else if *required { Color32::from_rgb(210, 210, 210) } else { Color32::from_rgb(60, 60, 60) }, Stroke::new(1.2_f32, Color32::from_rgb(190, 190, 190)));
                 let ir = ui.interact(Rect::from_center_size(ip, Vec2::splat(14.0 * z)), Id::new(("in", id, i)), Sense::drag());
-                if ir.drag_started() {
+                if !middle_down && ir.drag_started_by(PointerButton::Primary) {
                     let had = self.g.nodes.get(&id).and_then(|nd| nd.ins.get(*slot).copied());
                     if let Some(old) = had {
                         self.snap();
@@ -744,8 +774,8 @@ impl App {
                         }
                     }
                     if self.active.is_none() {
-                        self.active = self.sel.iter().next().copied();
-                        self.view_pending = true;
+                        self.set_active(self.sel.iter().next().copied());
+                        self.view_pending |= self.view2d_lock.is_none();
                     }
                     self.rubber = None;
                 }
@@ -918,8 +948,8 @@ impl App {
             Act::SwapLinks => self.swap_links(),
             Act::SelectAll => {
                 self.sel = self.g.nodes.keys().copied().collect();
-                self.active = self.sel.iter().next().copied();
-                self.view_pending = true;
+                self.set_active(self.sel.iter().next().copied());
+                self.view_pending |= self.view2d_lock.is_none();
             }
             Act::Comment => self.add_comment(),
             Act::EnterSub(n) => {
@@ -1501,6 +1531,7 @@ impl App {
                     ("Delete", "delete selection (nodes or links)"),
                     ("Click a link", "select it (Shift+click adds)"),
                     ("X", "swap connections: two selected links, or a node's first two inputs"),
+                    ("Double-click a texture node", "lock or unlock the 2D view"),
                     ("Double-click a graph node", "open its graph"),
                     ("Ctrl+S / Ctrl+O", "save / open"),
                 ] {

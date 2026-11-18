@@ -339,6 +339,10 @@ pub(super) fn run(n: &Node, ins: &Ins, sz: (usize, usize), ctx: &Ctx, out_idx: u
             gpu::directional_blur_g(&a, f("angle", 0.0), inten * an * 4.0 / 512.0)
         }
         "levels" => {
+            if f("channel_levels", 0.0) > 0.5 {
+                // The scalar shader shares one curve across RGB and passes alpha through.
+                return None;
+            }
             if f("auto", 0.0) > 0.5 {
                 // the range comes from the picture itself: found on the device, never read back
                 let t = dev("in")?;
