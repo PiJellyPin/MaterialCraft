@@ -1015,7 +1015,9 @@ pub(super) fn run(n: &Node, ins: &Ins, sz: (usize, usize), ctx: &Ctx, out_idx: u
         "height_blend" => {
             let (bg, fg) = (dev("bg")?, dev("fg")?);
             let m = odev("mask")?;
-            callc(opc::HEIGHT_BLEND, &[m.is_some() as u32 as f32, f("opacity", 1.0), f("contrast", 0.5), (f("output", 0.0) > 0.5) as u32 as f32], &[&bg, &fg, m.as_ref().unwrap_or(&bg)])
+            let mask_out = out_idx >= 1 || f("output", 0.0) > 0.5;
+            let p = [m.is_some() as u32 as f32, f("opacity", 1.0), f("contrast", 0.5), mask_out as u32 as f32, f("height_position", 0.5), f("mode", 0.0)];
+            callc(opc::HEIGHT_BLEND, &p, &[&bg, &fg, m.as_ref().unwrap_or(&bg)])
         }
         "make_it_tile_photo" => {
             let w = f("width", 0.6);

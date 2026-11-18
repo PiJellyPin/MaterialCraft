@@ -126,7 +126,7 @@ pub const SPECS: &[Spec] = &[
     s!("distance", ["in"], [], "distance field of a mask, edges placed between pixels: distance threshold mode(0 inside,1 the format's Distance: 1 on the shape fading outside,2 both)"),
     s!("color_match", ["in"], ["reference", "src_color", "target_color"], "recolour: method(0 statistics transfer from reference,1 colour swap) strength source_mode(0 average,1 colour,2 input) src_r src_g src_b target_mode(0 colour,1 input) target_r target_g target_b custom_variation variation_hue variation_chroma variation_luma use_mask mask_hue_range mask_chroma_range mask_luma_range mask_smoothness"),
     s!("curvature_smooth", ["in"], [], "smooth curvature from a normal map"),
-    s!("height_blend", ["bg", "fg"], ["mask"], "blend two height maps: opacity contrast output"),
+    s!("height_blend", ["bg", "fg"], ["mask"], "blend two height maps (outputs: height, height_mask): height_position contrast mode opacity output"),
     s!("make_it_tile_photo", ["in"], [], "make a photo tile: width width_v sharp sharp_v warp warp_v seed"),
     s!("make_it_tile_patch", ["in"], [], "make an image tile with random patches: mode(0 cells,1 stamped) patches softness octave mask_size mask_precision mask_warp size_x size_y disorder size_var rotation rotation_var bg_r bg_g bg_b bg_a color_var lum_var seed"),
     s!("clamp", ["in"], [], "clamp values: low high apply_alpha"),
@@ -2482,6 +2482,7 @@ pub fn node_outputs(kind: &str) -> &'static [&'static str] {
         "splatter" => &["output", "id", "center", "size", "luminance"],
         "flood_fill_to_position" => &["position", "x", "y"],
         "bevel" => &["height", "normal"],
+        "height_blend" => &["height", "height_mask"],
         "flood_fill_to_bbox_size" => &["size", "width", "height"],
         "frequency_split" => &["low", "high"],
         "bent_normal" => &["normal", "ao"],
@@ -2686,7 +2687,7 @@ pub fn output_pin(kind: &str, out: Option<&str>, any_color_in: bool, n: &Node) -
         // always grayscale
         "to_gray" | "grayscale_conversion" | "normal_to_height" | "ao" | "curvature" | "curvature_smooth" | "distance" | "histogram_range"
         | "histogram_scan" | "histogram_shift" | "threshold" | "flood_fill" | "flood_fill_random" | "flood_fill_gradient" | "edge_detect" | "color_to_mask" | "quantize"
-        | "sobel" | "edge_wear" | "dirt" | "dust" | "bevel" | "channel" => Pin::Gray,
+        | "sobel" | "edge_wear" | "dirt" | "dust" | "bevel" | "height_blend" | "channel" => Pin::Gray,
         // generators with no colour of their own
         "white_noise" | "gaussian_noise" | "perlin" | "fbm" | "clouds" | "voronoi" | "voronoi_fractal" | "bnw_spots" | "crystal" | "directional_noise"
         | "grunge" | "plasma" | "gradient" | "gradient_axial" | "gradient_circular" | "gradient_reflected" | "circle" | "rect" | "polygon" | "shape"
@@ -3570,8 +3571,8 @@ fn compute(id: u32, n: &Node, ins: &BTreeMap<String, Rc<Tex>>, ctx: &Ctx) -> Res
             }
         }
         "height_blend" => {
-            let (h, m) = ops::height_blend(tex("bg")?, tex("fg")?, ins.get("mask").map(|x| x.as_ref()), f("opacity", 1.0), f("contrast", 0.5));
-            if f("output", 0.0) > 0.5 { m } else { h }
+            let (h, m) = ops::height_blend(tex("bg")?, tex("fg")?, ins.get("mask").map(|x| x.as_ref()), f("opacity", 1.0), f("contrast", 0.5), f("height_position", 0.5), f("mode", 0.0) >= 0.5);
+            if f("_out", 0.0) >= 0.5 || f("output", 0.0) > 0.5 { m } else { h }
         }
         "make_it_tile_photo" => {
             let w = f("width", 0.6);

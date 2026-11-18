@@ -276,6 +276,50 @@ fn the_library_material_blend_wires_every_channel_to_its_own_input() {
 }
 
 #[test]
+fn the_library_height_blend_imports_height_and_mask() {
+    let eval = |position: &str, contrast: &str, mode: &str, opacity: &str, masked: bool| {
+        let mut g = sbs_native::new_package("height_test", 16);
+        for (id, raw) in [(1, "0.4 0.4 0.4 1"), (2, "0.5 0.5 0.5 1"), (3, "0.5 0.5 0.5 1")] {
+            let mut n = Node { kind: "sbs:uniform".into(), ..Default::default() };
+            n.strs.insert("outputcolor".into(), PVal::Const { ty: PTy::F(4), raw: raw.into(), rel: None }.enc());
+            g.nodes.insert(id, n);
+        }
+        let mut n = Node { kind: "sbs:lib:height_blend/height_blend".into(), ..Default::default() };
+        n.ins.insert("height_top".into(), 1);
+        n.ins.insert("height_bottom".into(), 2);
+        if masked {
+            n.ins.insert("mask".into(), 3);
+        }
+        for (key, ty, raw) in [("height_position", PTy::F(1), position), ("contrast", PTy::F(1), contrast), ("mode", PTy::I(1), mode), ("opacity", PTy::F(1), opacity)] {
+            n.strs.insert(key.into(), PVal::Const { ty, raw: raw.into(), rel: None }.enc());
+        }
+        g.nodes.insert(4, n);
+        for (id, pin) in [(100, "blended_height"), (101, "height_mask")] {
+            let mut t = Node { kind: "sbs:passthrough".into(), ..Default::default() };
+            t.ins.insert("input".into(), 4);
+            t.in_out.insert("input".into(), pin.into());
+            g.nodes.insert(id, t);
+        }
+
+        let g = open(&sbs_native::save_text(&g).unwrap());
+        let r = g.evaluate_all_cached_ex(16, &[100, 101], &[], 0, &std::sync::Arc::new(materialcraft::graph::NodeCache::new(16)), None, false, &mut |_| {});
+        let px = |id| r.kept.get(&id).unwrap_or_else(|| panic!("{id}: {:?}", r.errors.get(&id))).px[0][0];
+        (px(100), px(101))
+    };
+
+    let (height, weight) = eval("0.5", "0.5", "0", "1", false);
+    assert!((0.0..=1.0).contains(&weight));
+    assert!((height - weight).abs() > 0.01);
+    assert!((height - (0.5 + (0.4 - 0.5) * weight)).abs() < 2e-3);
+    assert!(eval("0.7", "0.5", "0", "1", false).1 > weight);
+    assert!(eval("0.5", "1", "0", "1", false).1 < 2e-3);
+    assert!(eval("0.7", "1", "0", "1", false).1 > 1.0 - 2e-3);
+    let (height, weight) = eval("0.5", "1", "1", "0.5", true);
+    assert!((weight - 0.25).abs() < 2e-3);
+    assert!((height - 0.6).abs() < 2e-3);
+}
+
+#[test]
 fn the_library_season_filters_read_their_inputs_and_parameters() {
     let cases: [(&str, &[(u32, &str)]); 2] = [
         ("sbs:lib:season_filter/season_filter", &[(100, "diffuse"), (101, "basecolor"), (102, "roughness"), (103, "height")]),
